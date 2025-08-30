@@ -62,6 +62,8 @@ def plan_prompt(text, verbose=False):
         f"1) answering the core prompt in a way most beneficial to the user's needs and goals (implied and explicit)"
         f"2) forward looking at potential challenges and obstacles"
         f"3) ensuring feasibility and clarity in the proposed steps."
+        f"4) ensuring the final answer is clear, logically coherent, and actionable per the rubric."
+        f"5) if the prompt is creative, encouraging imaginative and innovative responses."
     )
     return generate(prompt, temperature=0.25, max_tokens=400, label="PLAN", verbose=verbose)
 
