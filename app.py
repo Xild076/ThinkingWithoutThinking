@@ -88,12 +88,12 @@ st.markdown("""
     .reasoning-header { padding: 10px 14px; font-weight: 600; border-bottom: 1px solid #e5e5e7; background: #f7f7f8; color: #262626; }
     .reasoning-content { padding: 14px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; line-height: 1.4; white-space: pre-wrap; background: #ffffff; color: #262626; }
 
-    .stApp[data-theme="dark"] .user-message { background: #262730 !important; color: #ffffff !important; border-color: #404040 !important; }
-    .stApp[data-theme="dark"] .bot-message { background: #1e1e1e !important; color: #ffffff !important; border-color: #404040 !important; }
-    .stApp[data-theme="dark"] .thinking-box { background: #1e1e1e !important; color: #ffffff !important; border-color: #404040 !important; }
-    .stApp[data-theme="dark"] .reasoning-item { background: #1e1e1e !important; color: #ffffff !important; border-color: #404040 !important; }
-    .stApp[data-theme="dark"] .reasoning-content { background: #1e1e1e !important; color: #ffffff !important; }
-    .stApp[data-theme="dark"] .reasoning-header { background: #262730 !important; color: #ffffff !important; border-color: #404040 !important; }
+    .stApp[data-theme="dark"] .user-message { background: #404040 !important; color: #ffffff !important; border-color: #666666 !important; }
+    .stApp[data-theme="dark"] .bot-message { background: #333333 !important; color: #ffffff !important; border-color: #666666 !important; }
+    .stApp[data-theme="dark"] .thinking-box { background: #333333 !important; color: #ffffff !important; border-color: #666666 !important; }
+    .stApp[data-theme="dark"] .reasoning-item { background: #333333 !important; color: #ffffff !important; border-color: #666666 !important; }
+    .stApp[data-theme="dark"] .reasoning-content { background: #333333 !important; color: #ffffff !important; }
+    .stApp[data-theme="dark"] .reasoning-header { background: #404040 !important; color: #ffffff !important; border-color: #666666 !important; }
     </style>
 """, unsafe_allow_html=True)
 
