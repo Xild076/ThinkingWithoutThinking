@@ -4,7 +4,7 @@ import json
 import streamlit as st
 from src.chain_of_thought import plan_prompt, critique_plan_prompt, fixer_plan_prompt, executer_prompt, scorer_prompt, improver_prompt, digest_prompt, init_model
 
-st.set_page_config(page_title="Thinking Without Thinking", page_icon="🧠", layout="centered")
+st.set_page_config(page_title="Thinking Without Thinking", page_icon="🧠", layout="wide")
 
 if "calls_used" not in st.session_state:
     st.session_state.calls_used = 0
@@ -178,11 +178,6 @@ with st.sidebar:
             else:
                 st.error("❌ Invalid key")
     
-    with st.expander("🔗 Get Google AI API Key"):
-        st.write("1. Visit [Google AI Studio](https://aistudio.google.com/app/apikey)")
-        st.write("2. Sign in and create a new API key")
-        st.write("3. Copy and paste it here")
-    
     st.divider()
     
     # Rate limiting configuration
@@ -203,7 +198,6 @@ with st.sidebar:
         st.rerun()
 
 st.title("Thinking Without Thinking")
-st.caption("Advanced chain-of-thought reasoning with transparency")
 
 for i, msg in enumerate(st.session_state.conversation):
     if 'prompt' in msg:
@@ -333,29 +327,11 @@ if st.session_state.conversation and 'final_response' not in st.session_state.co
         
         # Check for rate limit errors
         if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
-            st.error("🚫 **Rate Limit Exceeded**")
-            st.warning("""
-            The Google API rate limit has been exceeded. This can happen when:
-            - Too many requests are made in a short time
-            - Token quota is exhausted
-            
-            **What to do:**
-            - Wait a minute and try again
-            - Try using shorter prompts to reduce token usage
-            - Consider upgrading your Google API plan for higher limits
-            """)
-            
-            # Extract retry delay if available
-            import re
-            delay_match = re.search(r'retry_delay.*?seconds:\s*(\d+)', error_str)
-            if delay_match:
-                retry_seconds = int(delay_match.group(1))
-                st.info(f"⏱️ Suggested retry delay: {retry_seconds} seconds")
-            
-            msg["final_response"] = "Request failed due to rate limit. Please wait and try again with a shorter prompt."
+            st.error("🚫 Rate limit exceeded. Please wait and try again.")
+            msg["final_response"] = "Request failed due to rate limit. Please wait and try again."
         else:
-            st.error(f"❌ **Unexpected Error**: {error_str}")
-            msg["final_response"] = f"An error occurred while processing your request: {error_str}"
+            st.error(f"❌ Error: {error_str}")
+            msg["final_response"] = f"An error occurred: {error_str}"
     
     progress_container.empty()
     st.rerun()
