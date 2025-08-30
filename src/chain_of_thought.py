@@ -54,16 +54,17 @@ def plan_prompt(text, verbose=False):
         f"Return exactly:\n"
         f"1) Core Instruction: one-sentence directive capturing the task.\n"
         f"2) Constraints: 3-6 bullets (length, tone, audience, must/avoid).\n"
-        f"3) Steps: 4-6 numbered actions the MODEL will take. Must include a dedicated final step for verifying all references and recommendations.\n"
-        f"4) Evidence To Extract: 3-8 concise items or checks.\n"
-        f"5) Rubric: 4-6 pass criteria the final answer must satisfy. Must include a criterion for 'Logical Consistency'.\n"
-        f"6) Output Schema: short spec for the final answer structure.\n"
+        f"3) Personality: Construct a personality that would best engage the user and fulfill their needs.\n"
+        f"4) Steps: 4-6 numbered actions the MODEL will take. Must include a dedicated final step for verifying all references and recommendations.\n"
+        f"5) Evidence To Extract: 3-8 concise items or checks.\n"
+        f"6) Rubric: 4-6 pass criteria the final answer must satisfy. Must include a criterion for 'Logical Consistency'.\n"
+        f"7) Output Schema: short spec for the final answer structure.\n"
     f"Ensure that within the plan, you are:"
-        f"1) answering the core prompt in a way most beneficial to the user's needs and goals (implied and explicit)"
+        f"1) answering the core prompt in a way most beneficial to the user's needs, goals, and specific wishes (implied and explicit)"
         f"2) forward looking at potential challenges and obstacles"
         f"3) ensuring feasibility and clarity in the proposed steps."
         f"4) ensuring the final answer is clear, logically coherent, and actionable per the rubric."
-        f"5) if the prompt is creative, encouraging imaginative and innovative responses."
+        f"5) if the prompt is creative, encouraging imaginative and innovative responses with strong voice and character"
     )
     return generate(prompt, temperature=0.25, max_tokens=400, label="PLAN", verbose=verbose)
 
