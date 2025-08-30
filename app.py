@@ -55,39 +55,45 @@ def build_context_prompt(current_prompt):
 
 st.markdown("""
     <style>
+    /* Ensure text is always visible in both light and dark modes */
     .user-message {
-        background-color: #f7f7f8;
+        background-color: #262730;
+        color: #ffffff;
         padding: 16px;
         border-radius: 18px;
         margin: 8px 0 8px 20%;
-        border: 1px solid #e5e5e7;
+        border: 1px solid #404040;
     }
     .bot-message {
-        background-color: white;
+        background-color: #1e1e1e;
+        color: #ffffff;
         padding: 16px;
         border-radius: 18px;
         margin: 8px 20% 8px 0;
-        border: 1px solid #e5e5e7;
+        border: 1px solid #404040;
     }
     .thinking-box {
-        background-color: #f9f9fb;
-        border: 1px solid #e5e5e7;
+        background-color: #1a1a1a;
+        color: #ffffff;
+        border: 1px solid #404040;
         border-radius: 12px;
         padding: 16px;
         margin: 12px 0;
     }
     .reasoning-item {
-        background-color: #f9f9fb;
-        border: 1px solid #e5e5e7;
+        background-color: #1a1a1a;
+        color: #ffffff;
+        border: 1px solid #404040;
         border-radius: 8px;
         margin: 6px 0;
         overflow: hidden;
     }
     .reasoning-header {
-        background-color: #f1f3f4;
+        background-color: #2d2d2d;
+        color: #ffffff;
         padding: 10px 14px;
         font-weight: 600;
-        border-bottom: 1px solid #e5e5e7;
+        border-bottom: 1px solid #404040;
     }
     .reasoning-content {
         padding: 14px;
@@ -95,6 +101,12 @@ st.markdown("""
         font-size: 13px;
         line-height: 1.4;
         white-space: pre-wrap;
+        color: #ffffff;
+        background-color: #1a1a1a;
+    }
+    /* Override any inherited text colors */
+    .user-message *, .bot-message *, .thinking-box *, .reasoning-item *, .reasoning-content * {
+        color: inherit !important;
     }
     </style>
 """, unsafe_allow_html=True)
