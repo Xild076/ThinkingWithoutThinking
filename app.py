@@ -115,13 +115,30 @@ st.markdown("""
         border-color: #666666 !important; 
     }
     
-    @media (prefers-color-scheme: dark) {
-        .user-message { background: #404040 !important; color: #ffffff !important; border-color: #666666 !important; }
-        .bot-message { background: #333333 !important; color: #ffffff !important; border-color: #666666 !important; }
-        .thinking-box { background: #333333 !important; color: #ffffff !important; border-color: #666666 !important; }
-        .reasoning-item { background: #333333 !important; color: #ffffff !important; border-color: #666666 !important; }
-        .reasoning-content { background: #333333 !important; color: #ffffff !important; }
-        .reasoning-header { background: #404040 !important; color: #ffffff !important; border-color: #666666 !important; }
+    body[data-theme="dark"] .reasoning-item,
+    html[data-theme="dark"] .reasoning-item,
+    [data-theme="dark"] .reasoning-item,
+    .stApp[data-theme="dark"] .reasoning-item { 
+        background: #333333 !important; 
+        color: #ffffff !important; 
+        border-color: #666666 !important; 
+    }
+    
+    body[data-theme="dark"] .reasoning-content,
+    html[data-theme="dark"] .reasoning-content,
+    [data-theme="dark"] .reasoning-content,
+    .stApp[data-theme="dark"] .reasoning-content { 
+        background: #333333 !important; 
+        color: #ffffff !important; 
+    }
+    
+    body[data-theme="dark"] .reasoning-header,
+    html[data-theme="dark"] .reasoning-header,
+    [data-theme="dark"] .reasoning-header,
+    .stApp[data-theme="dark"] .reasoning-header { 
+        background: #404040 !important; 
+        color: #ffffff !important; 
+        border-color: #666666 !important; 
     }
     </style>
 """, unsafe_allow_html=True)
