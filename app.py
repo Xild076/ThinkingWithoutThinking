@@ -15,7 +15,15 @@ primary_key = st.secrets.get("GOOGLE_API_KEY", None)
 
 def parse_json_score(score_raw):
     try:
-        score_data = json.loads(score_raw)
+        s = str(score_raw).strip()
+        if s.startswith("```"):
+            s = s.strip('`')
+            s = s[s.find("\n")+1:] if "\n" in s else s
+        import re as _re
+        m = _re.search(r"\{[\s\S]*\}", s)
+        if m:
+            s = m.group(0)
+        score_data = json.loads(s)
         clarity = score_data.get("clarity", -1)
         logic = score_data.get("logic", -1)
         actionability = score_data.get("actionability", -1)
@@ -73,21 +81,21 @@ def build_context_prompt(current_prompt):
 
 st.markdown("""
     <style>
-    .user-message { background-color: var(--background-color); color: var(--text-color); padding: 16px; border-radius: 18px; margin: 8px 0 8px 20%; border: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent); }
-    .bot-message { background-color: var(--secondary-background-color); color: var(--text-color); padding: 16px; border-radius: 18px; margin: 8px 20% 8px 0; border: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent); }
-    .thinking-box { background-color: var(--secondary-background-color); color: var(--text-color); border: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent); border-radius: 12px; padding: 16px; margin: 12px 0; }
-    .reasoning-item { background-color: var(--secondary-background-color); color: var(--text-color); border: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent); border-radius: 8px; margin: 6px 0; overflow: hidden; }
-    .reasoning-header { background-color: var(--background-color); color: var(--text-color); padding: 10px 14px; font-weight: 600; border-bottom: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent); }
-    .reasoning-content { padding: 14px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; line-height: 1.4; white-space: pre-wrap; color: var(--text-color); background-color: var(--secondary-background-color); }
-    .user-message *, .bot-message *, .thinking-box *, .reasoning-item *, .reasoning-content * { color: inherit !important; }
+    :root { --bubble-max: 1100px; }
+    .user-message { padding: 16px; border-radius: 18px; margin: 8px 0 8px auto; border: 1px solid transparent; max-width: var(--bubble-max); }
+    .bot-message { padding: 16px; border-radius: 18px; margin: 8px auto 8px 0; border: 1px solid transparent; max-width: var(--bubble-max); }
+    .thinking-box { border-radius: 12px; padding: 16px; margin: 12px 0; border: 1px solid transparent; }
+    .reasoning-item { border-radius: 8px; margin: 6px 0; overflow: hidden; border: 1px solid transparent; }
+    .reasoning-header { padding: 10px 14px; font-weight: 600; border-bottom: 1px solid transparent; }
+    .reasoning-content { padding: 14px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; line-height: 1.4; white-space: pre-wrap; }
 
-    .stApp[data-theme="light"] .user-message { background-color: #f7f7f8; color: #262626; border-color: #e5e5e7; }
-    .stApp[data-theme="light"] .bot-message, .stApp[data-theme="light"] .thinking-box, .stApp[data-theme="light"] .reasoning-item, .stApp[data-theme="light"] .reasoning-content { background-color: #ffffff; color: #262626; border-color: #e5e5e7; }
-    .stApp[data-theme="light"] .reasoning-header { background-color: #f7f7f8; color: #262626; border-color: #e5e5e7; }
+    .stApp[data-theme="light"] .user-message { background: #f7f7f8; color: #262626; border-color: #e5e5e7; }
+    .stApp[data-theme="light"] .bot-message, .stApp[data-theme="light"] .thinking-box, .stApp[data-theme="light"] .reasoning-item { background: #ffffff; color: #262626; border-color: #e5e5e7; }
+    .stApp[data-theme="light"] .reasoning-header { background: #f7f7f8; color: #262626; border-color: #e5e5e7; }
 
-    .stApp[data-theme="dark"] .user-message { background-color: #262730; color: #ffffff; border-color: #404040; }
-    .stApp[data-theme="dark"] .bot-message, .stApp[data-theme="dark"] .thinking-box, .stApp[data-theme="dark"] .reasoning-item, .stApp[data-theme="dark"] .reasoning-content { background-color: #1e1e1e; color: #ffffff; border-color: #404040; }
-    .stApp[data-theme="dark"] .reasoning-header { background-color: #262730; color: #ffffff; border-color: #404040; }
+    .stApp[data-theme="dark"] .user-message { background: #262730; color: #ffffff; border-color: #404040; }
+    .stApp[data-theme="dark"] .bot-message, .stApp[data-theme="dark"] .thinking-box, .stApp[data-theme="dark"] .reasoning-item { background: #1e1e1e; color: #ffffff; border-color: #404040; }
+    .stApp[data-theme="dark"] .reasoning-header { background: #262730; color: #ffffff; border-color: #404040; }
     </style>
 """, unsafe_allow_html=True)
 
