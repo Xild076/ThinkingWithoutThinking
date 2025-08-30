@@ -123,7 +123,7 @@ def digest_prompt(text, verbose=False):
 
 def generate(prompt: str, temperature: float = 0.7, max_tokens: int | None = None, top_p: float = 0.95, top_k: int = 40, retries: int = 5, label: str | None = None, verbose: bool = False) -> str:
     model = init_model()
-    max_out = max_tokens or int(os.getenv("GENAI_MAX_OUTPUT_TOKENS", "8192"))
+    max_out = max_tokens or 8192
     cfg = genai.types.GenerationConfig(temperature=temperature, max_output_tokens=max_out, top_p=top_p, top_k=top_k)
     last = None
     start = time.perf_counter()

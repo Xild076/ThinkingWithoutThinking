@@ -81,64 +81,43 @@ def build_context_prompt(current_prompt):
 
 st.markdown("""
     <style>
-    .user-message { padding: 16px; border-radius: 18px; margin: 8px 0; border: 1px solid #e5e5e7; max-width: 800px; background: #f7f7f8; color: #262626; }
-    .bot-message { padding: 16px; border-radius: 18px; margin: 8px 0; border: 1px solid #e5e5e7; max-width: 800px; background: #ffffff; color: #262626; }
-    .thinking-box { border-radius: 12px; padding: 16px; margin: 12px 0; border: 1px solid #e5e5e7; background: #ffffff; color: #262626; }
-    .reasoning-item { border-radius: 8px; margin: 6px 0; overflow: hidden; border: 1px solid #e5e5e7; background: #ffffff; color: #262626; }
-    .reasoning-header { padding: 10px 14px; font-weight: 600; border-bottom: 1px solid #e5e5e7; background: #f7f7f8; color: #262626; }
-    .reasoning-content { padding: 14px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; line-height: 1.4; white-space: pre-wrap; background: #ffffff; color: #262626; }
+    :root, .stApp {
+        --twot-border: rgba(128,128,128,0.25);
+    }
 
-    body[data-theme="dark"] .user-message,
-    html[data-theme="dark"] .user-message,
-    [data-theme="dark"] .user-message,
-    .stApp[data-theme="dark"] .user-message { 
-        background: #404040 !important; 
-        color: #ffffff !important; 
-        border-color: #666666 !important; 
+    .user-message { 
+        padding: 16px; border-radius: 18px; margin: 8px 0; max-width: 800px;
+        background: var(--secondary-background-color); 
+        color: var(--text-color);
+        border: 1px solid var(--twot-border);
     }
-    
-    body[data-theme="dark"] .bot-message,
-    html[data-theme="dark"] .bot-message,
-    [data-theme="dark"] .bot-message,
-    .stApp[data-theme="dark"] .bot-message { 
-        background: #333333 !important; 
-        color: #ffffff !important; 
-        border-color: #666666 !important; 
+    .bot-message { 
+        padding: 16px; border-radius: 18px; margin: 8px 0; max-width: 800px;
+        background: var(--background-color); 
+        color: var(--text-color);
+        border: 1px solid var(--twot-border);
     }
-    
-    body[data-theme="dark"] .thinking-box,
-    html[data-theme="dark"] .thinking-box,
-    [data-theme="dark"] .thinking-box,
-    .stApp[data-theme="dark"] .thinking-box { 
-        background: #333333 !important; 
-        color: #ffffff !important; 
-        border-color: #666666 !important; 
+    .thinking-box { 
+        border-radius: 12px; padding: 16px; margin: 12px 0; 
+        background: var(--background-color); 
+        color: var(--text-color);
+        border: 1px solid var(--twot-border);
     }
-    
-    body[data-theme="dark"] .reasoning-item,
-    html[data-theme="dark"] .reasoning-item,
-    [data-theme="dark"] .reasoning-item,
-    .stApp[data-theme="dark"] .reasoning-item { 
-        background: #333333 !important; 
-        color: #ffffff !important; 
-        border-color: #666666 !important; 
+    .reasoning-item { 
+        border-radius: 8px; margin: 6px 0; overflow: hidden; 
+        border: 1px solid var(--twot-border); 
+        background: var(--background-color); 
+        color: var(--text-color); 
     }
-    
-    body[data-theme="dark"] .reasoning-content,
-    html[data-theme="dark"] .reasoning-content,
-    [data-theme="dark"] .reasoning-content,
-    .stApp[data-theme="dark"] .reasoning-content { 
-        background: #333333 !important; 
-        color: #ffffff !important; 
+    .reasoning-header { 
+        padding: 10px 14px; font-weight: 600; border-bottom: 1px solid var(--twot-border); 
+        background: var(--secondary-background-color); 
+        color: var(--text-color); 
     }
-    
-    body[data-theme="dark"] .reasoning-header,
-    html[data-theme="dark"] .reasoning-header,
-    [data-theme="dark"] .reasoning-header,
-    .stApp[data-theme="dark"] .reasoning-header { 
-        background: #404040 !important; 
-        color: #ffffff !important; 
-        border-color: #666666 !important; 
+    .reasoning-content { 
+        padding: 14px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; line-height: 1.4; white-space: pre-wrap; 
+        background: var(--background-color); 
+        color: var(--text-color); 
     }
     </style>
 """, unsafe_allow_html=True)

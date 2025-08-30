@@ -1,6 +1,6 @@
 # ThinkingWithoutThinking
 
-This is just a fun little project to make a streamlit app that someone simulates "thought" and "chain of reasoning" with prompt engineering. It currently uses the Gemma 27B model, so if you get a google API key, its free to use. Have fun!
+This is just a fun little project to make a streamlit app that somewhat simulates "thought" and "chain of reasoning" with prompt engineering. Its aim is to mirror some aspect of human psychology with how we come up with structured responses to problems. It currently uses the Gemma 27B model, so if you get a google API key, its free to use. Have fun!
 
 ## What It Does
 
@@ -176,9 +176,10 @@ This demonstrates how the system handles complex reasoning tasks while managing 
 
 This project is open source and available under the [MIT License](LICENSE).
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - Built with [Streamlit](https://streamlit.io/)
 - Powered by [Google AI](https://aistudio.google.com/)
+- UI done with the help of Chat GPT :)
 - Uses the Gemma 27B model for reasoning
 - Inspired by chain-of-thought prompting research
