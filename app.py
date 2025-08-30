@@ -73,95 +73,21 @@ def build_context_prompt(current_prompt):
 
 st.markdown("""
     <style>
-    /* Theme-aware styling that adapts to light/dark mode */
-    .user-message {
-        background-color: var(--background-color);
-        color: var(--text-color);
-        padding: 16px;
-        border-radius: 18px;
-        margin: 8px 0 8px 20%;
-        border: 1px solid var(--border-color);
-    }
-    .bot-message {
-        background-color: var(--secondary-background-color);
-        color: var(--text-color);
-        padding: 16px;
-        border-radius: 18px;
-        margin: 8px 20% 8px 0;
-        border: 1px solid var(--border-color);
-    }
-    .thinking-box {
-        background-color: var(--secondary-background-color);
-        color: var(--text-color);
-        border: 1px solid var(--border-color);
-        border-radius: 12px;
-        padding: 16px;
-        margin: 12px 0;
-    }
-    .reasoning-item {
-        background-color: var(--secondary-background-color);
-        color: var(--text-color);
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
-        margin: 6px 0;
-        overflow: hidden;
-    }
-    .reasoning-header {
-        background-color: var(--background-color);
-        color: var(--text-color);
-        padding: 10px 14px;
-        font-weight: 600;
-        border-bottom: 1px solid var(--border-color);
-    }
-    .reasoning-content {
-        padding: 14px;
-        font-family: 'SF Mono', Monaco, monospace;
-        font-size: 13px;
-        line-height: 1.4;
-        white-space: pre-wrap;
-        color: var(--text-color);
-        background-color: var(--secondary-background-color);
-    }
-    
-    /* Light mode colors */
-    [data-theme="light"] {
-        --background-color: #f7f7f8;
-        --secondary-background-color: white;
-        --text-color: #262626;
-        --border-color: #e5e5e7;
-    }
-    
-    /* Dark mode colors */
-    [data-theme="dark"] {
-        --background-color: #262730;
-        --secondary-background-color: #1e1e1e;
-        --text-color: #ffffff;
-        --border-color: #404040;
-    }
-    
-    /* Fallback for Streamlit's automatic theme detection */
-    @media (prefers-color-scheme: light) {
-        :root {
-            --background-color: #f7f7f8;
-            --secondary-background-color: white;
-            --text-color: #262626;
-            --border-color: #e5e5e7;
-        }
-    }
-    
-    @media (prefers-color-scheme: dark) {
-        :root {
-            --background-color: #262730;
-            --secondary-background-color: #1e1e1e;
-            --text-color: #ffffff;
-            --border-color: #404040;
-        }
-    }
-    
-    /* Ensure text color inheritance */
-    .user-message *, .bot-message *, .thinking-box *, .reasoning-item *, .reasoning-content * {
-        color: inherit !important;
-    }
+    .user-message { background-color: var(--background-color); color: var(--text-color); padding: 16px; border-radius: 18px; margin: 8px 0 8px 20%; border: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent); }
+    .bot-message { background-color: var(--secondary-background-color); color: var(--text-color); padding: 16px; border-radius: 18px; margin: 8px 20% 8px 0; border: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent); }
+    .thinking-box { background-color: var(--secondary-background-color); color: var(--text-color); border: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent); border-radius: 12px; padding: 16px; margin: 12px 0; }
+    .reasoning-item { background-color: var(--secondary-background-color); color: var(--text-color); border: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent); border-radius: 8px; margin: 6px 0; overflow: hidden; }
+    .reasoning-header { background-color: var(--background-color); color: var(--text-color); padding: 10px 14px; font-weight: 600; border-bottom: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent); }
+    .reasoning-content { padding: 14px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; line-height: 1.4; white-space: pre-wrap; color: var(--text-color); background-color: var(--secondary-background-color); }
+    .user-message *, .bot-message *, .thinking-box *, .reasoning-item *, .reasoning-content * { color: inherit !important; }
+
+    .stApp[data-theme="light"] .user-message { background-color: #f7f7f8; color: #262626; border-color: #e5e5e7; }
+    .stApp[data-theme="light"] .bot-message, .stApp[data-theme="light"] .thinking-box, .stApp[data-theme="light"] .reasoning-item, .stApp[data-theme="light"] .reasoning-content { background-color: #ffffff; color: #262626; border-color: #e5e5e7; }
+    .stApp[data-theme="light"] .reasoning-header { background-color: #f7f7f8; color: #262626; border-color: #e5e5e7; }
+
+    .stApp[data-theme="dark"] .user-message { background-color: #262730; color: #ffffff; border-color: #404040; }
+    .stApp[data-theme="dark"] .bot-message, .stApp[data-theme="dark"] .thinking-box, .stApp[data-theme="dark"] .reasoning-item, .stApp[data-theme="dark"] .reasoning-content { background-color: #1e1e1e; color: #ffffff; border-color: #404040; }
+    .stApp[data-theme="dark"] .reasoning-header { background-color: #262730; color: #ffffff; border-color: #404040; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -200,10 +126,8 @@ with st.sidebar:
 st.title("Thinking Without Thinking")
 
 for i, msg in enumerate(st.session_state.conversation):
-    if 'prompt' in msg:
-        st.markdown(f"<div class='user-message'><strong>You</strong><br>{msg['prompt']}</div>", unsafe_allow_html=True)
-    
     if 'final_response' in msg:
+        st.markdown(f"<div class='user-message'><strong>You</strong><br>{msg['prompt']}</div>", unsafe_allow_html=True)
         st.markdown(f"<div class='bot-message'><strong>Reasoning Gemma</strong><br>{msg['final_response']}</div>", unsafe_allow_html=True)
         if msg.get('plan'):
             with st.expander("🔍 View reasoning steps"):
