@@ -219,7 +219,7 @@ def chain_of_thought(text, print_chain_of_thought=False):
             clarity = logic = actionability = -1
     
     improved_response = None
-    if composite_score < 80 or (logic != -1 and logic < 6):
+    if composite_score < 90 or (logic != -1 and logic < 6):
         improved_response = improver_prompt(ctx, response, fixed_plan, score_raw, verbose=print_chain_of_thought)
     
     if print_chain_of_thought:

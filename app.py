@@ -265,7 +265,7 @@ if st.session_state.conversation and 'final_response' not in st.session_state.co
         show_progress(current_step, "complete")
         
         final_response = resp
-        if composite_score < 80 or (logic != -1 and logic < 6):
+        if composite_score < 90 or (logic != -1 and logic < 6):
             current_step = 6
             show_progress(current_step, "active")
             improved = improver_prompt(context_prompt, resp, fixed, score_raw, verbose=False)
