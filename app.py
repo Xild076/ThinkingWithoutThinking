@@ -81,20 +81,15 @@ def build_context_prompt(current_prompt):
 
 st.markdown("""
     <style>
-    :root { --bubble-max: 1100px; }
-    .user-message { padding: 16px; border-radius: 18px; margin: 8px 0 8px auto; border: 1px solid transparent; max-width: var(--bubble-max); }
-    .bot-message { padding: 16px; border-radius: 18px; margin: 8px auto 8px 0; border: 1px solid transparent; max-width: var(--bubble-max); }
-    .thinking-box { border-radius: 12px; padding: 16px; margin: 12px 0; border: 1px solid transparent; }
-    .reasoning-item { border-radius: 8px; margin: 6px 0; overflow: hidden; border: 1px solid transparent; }
-    .reasoning-header { padding: 10px 14px; font-weight: 600; border-bottom: 1px solid transparent; }
-    .reasoning-content { padding: 14px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; line-height: 1.4; white-space: pre-wrap; }
-
-    .stApp[data-theme="light"] .user-message { background: #f7f7f8; color: #262626; border-color: #e5e5e7; }
-    .stApp[data-theme="light"] .bot-message, .stApp[data-theme="light"] .thinking-box, .stApp[data-theme="light"] .reasoning-item { background: #ffffff; color: #262626; border-color: #e5e5e7; }
-    .stApp[data-theme="light"] .reasoning-header { background: #f7f7f8; color: #262626; border-color: #e5e5e7; }
+    .user-message { padding: 16px; border-radius: 18px; margin: 8px 0; border: 1px solid #e5e5e7; max-width: 800px; background: #f7f7f8; }
+    .bot-message { padding: 16px; border-radius: 18px; margin: 8px 0; border: 1px solid #e5e5e7; max-width: 800px; background: #ffffff; }
+    .thinking-box { border-radius: 12px; padding: 16px; margin: 12px 0; border: 1px solid #e5e5e7; background: #ffffff; }
+    .reasoning-item { border-radius: 8px; margin: 6px 0; overflow: hidden; border: 1px solid #e5e5e7; background: #ffffff; }
+    .reasoning-header { padding: 10px 14px; font-weight: 600; border-bottom: 1px solid #e5e5e7; background: #f7f7f8; }
+    .reasoning-content { padding: 14px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; line-height: 1.4; white-space: pre-wrap; background: #ffffff; }
 
     .stApp[data-theme="dark"] .user-message { background: #262730; color: #ffffff; border-color: #404040; }
-    .stApp[data-theme="dark"] .bot-message, .stApp[data-theme="dark"] .thinking-box, .stApp[data-theme="dark"] .reasoning-item { background: #1e1e1e; color: #ffffff; border-color: #404040; }
+    .stApp[data-theme="dark"] .bot-message, .stApp[data-theme="dark"] .thinking-box, .stApp[data-theme="dark"] .reasoning-item, .stApp[data-theme="dark"] .reasoning-content { background: #1e1e1e; color: #ffffff; border-color: #404040; }
     .stApp[data-theme="dark"] .reasoning-header { background: #262730; color: #ffffff; border-color: #404040; }
     </style>
 """, unsafe_allow_html=True)
@@ -114,7 +109,6 @@ with st.sidebar:
     
     st.divider()
     
-    # Rate limiting configuration
     with st.expander("⚙️ Advanced Settings"):
         st.slider("Rate limit safety delay (seconds)", 
                  min_value=0, max_value=120, value=30, step=5,
@@ -203,9 +197,8 @@ if st.session_state.conversation and 'final_response' not in st.session_state.co
     try:
         context_prompt = build_context_prompt(prompt_text)
         
-        # Apply user-configured rate limiting
         if st.session_state.get("rate_limit_delay", 30) > 0:
-            time.sleep(st.session_state.rate_limit_delay / 6)  # Distribute delay across steps
+            time.sleep(st.session_state.rate_limit_delay / 6)
         
         current_step = 1
         show_progress(current_step, "active")
@@ -257,7 +250,6 @@ if st.session_state.conversation and 'final_response' not in st.session_state.co
     except Exception as e:
         error_str = str(e)
         
-        # Check for rate limit errors
         if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
             st.error("🚫 Rate limit exceeded. Please wait and try again.")
             msg["final_response"] = "Request failed due to rate limit. Please wait and try again."
