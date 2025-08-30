@@ -1,5 +1,6 @@
 import os
 import time
+import json
 import streamlit as st
 from src.chain_of_thought import plan_prompt, critique_plan_prompt, fixer_plan_prompt, executer_prompt, scorer_prompt, improver_prompt, digest_prompt, init_model
 
@@ -11,6 +12,23 @@ if "conversation" not in st.session_state:
     st.session_state.conversation = []
 
 primary_key = st.secrets.get("GOOGLE_API_KEY", None)
+
+def parse_json_score(score_raw):
+    try:
+        score_data = json.loads(score_raw)
+        clarity = score_data.get("clarity", -1)
+        logic = score_data.get("logic", -1)
+        actionability = score_data.get("actionability", -1)
+        feedback = score_data.get("feedback", "No feedback provided")
+        composite_score = (clarity * 2 + logic * 4 + actionability * 2) / 8 * 10
+        return clarity, logic, actionability, feedback, composite_score
+    except (json.JSONDecodeError, KeyError):
+        try:
+            parts = score_raw.split(" | ")
+            feedback, composite_score = parts[0], int(parts[1])
+            return -1, -1, -1, feedback, composite_score
+        except (ValueError, IndexError):
+            return -1, -1, -1, score_raw, -1
 
 def configure_api_key():
     key = primary_key
@@ -289,20 +307,21 @@ if st.session_state.conversation and 'final_response' not in st.session_state.co
         
         current_step = 5
         show_progress(current_step, "active")
-        sc = scorer_prompt(context_prompt, resp, verbose=False)
-        try:
-            parts = sc.split(" | ")
-            feedback, score_int = parts[0], int(parts[1])
-        except (ValueError, IndexError):
-            feedback, score_int = sc, -1
-        msg["score"] = f"{feedback}\n\nScore: {score_int}"
+        score_raw = scorer_prompt(context_prompt, resp, verbose=False)
+        clarity, logic, actionability, feedback, composite_score = parse_json_score(score_raw)
+        
+        if clarity != -1:
+            msg["score"] = f"**Clarity:** {clarity}/10, **Logic:** {logic}/10, **Actionability:** {actionability}/10\n\n**Feedback:** {feedback}\n\n**Composite Score:** {composite_score:.1f}/100"
+        else:
+            msg["score"] = f"{feedback}\n\n**Score:** {composite_score:.1f}/100"
+        
         show_progress(current_step, "complete")
         
         final_response = resp
-        if score_int < 80:
+        if composite_score < 80 or (logic != -1 and logic < 6):
             current_step = 6
             show_progress(current_step, "active")
-            improved = improver_prompt(context_prompt, resp, fixed, feedback, verbose=False)
+            improved = improver_prompt(context_prompt, resp, fixed, score_raw, verbose=False)
             msg["improved"] = improved
             final_response = improved
             show_progress(current_step, "complete")
