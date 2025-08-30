@@ -35,21 +35,15 @@ def init_model(model_name: str | None = None):
     return genai.GenerativeModel(name)
 
 def estimate_tokens(text: str) -> int:
-    """Rough token estimation (1 token ≈ 4 characters for most models)"""
     return len(text) // 4
 
 def check_rate_limit_budget(prompts: list[str], max_tokens_per_minute: int = 15000) -> float:
-    """
-    Estimate if we're likely to hit rate limits and suggest delay.
-    Returns suggested delay in seconds.
-    """
     total_estimated_tokens = sum(estimate_tokens(prompt) for prompt in prompts)
-    if total_estimated_tokens > max_tokens_per_minute * 0.8:  # 80% threshold
-        # Suggest spacing out requests over time
-        return 60.0  # Wait a full minute
-    elif total_estimated_tokens > max_tokens_per_minute * 0.6:  # 60% threshold
-        return 30.0  # Wait 30 seconds
-    return 0.0  # No delay needed
+    if total_estimated_tokens > max_tokens_per_minute * 0.8:
+        return 60.0
+    elif total_estimated_tokens > max_tokens_per_minute * 0.6:
+        return 30.0
+    return 0.0
 
 def plan_prompt(text, verbose=False):
     prompt = (
@@ -105,7 +99,7 @@ def scorer_prompt(text, response, verbose=False):
         f"Return ONLY in this exact JSON format: {{\"clarity\": <0-10>, \"logic\": <0-10>, \"actionability\": <0-10>, \"feedback\": \"<short feedback <= 200 chars>\"}}\n\n"
         f"SCORING GUIDE:\n"
         f"- clarity: How easy is the response to understand?\n"
-        f"- logic: Is the response internally consistent? Are all references (e.g., 'Essay #1') correct and do recommendations make logical sense? A single contradiction means a score of 0-2.\n"
+        f"- logic: Is the response internally consistent? Are all references correct and do recommendations make logical sense? A single contradiction means a score of 0-2.\n"
         f"- actionability: Can the user act on this feedback effectively?\n\n"
         f"PROMPT:\n{text}\n\nRESPONSE:\n{response}"
     )
@@ -150,37 +144,31 @@ def generate(prompt: str, temperature: float = 0.7, max_tokens: int | None = Non
             last = e
             error_str = str(e)
             
-            # Check for rate limit (429) errors
             if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
-                # Extract retry delay from error message if available
                 retry_delay = None
                 delay_match = re.search(r'retry_delay.*?seconds:\s*(\d+)', error_str)
                 if delay_match:
                     retry_delay = int(delay_match.group(1))
                 else:
-                    # Extract quota value if available for intelligent backoff
                     quota_match = re.search(r'quota_value:\s*(\d+)', error_str)
                     if quota_match:
                         quota_limit = int(quota_match.group(1))
-                        # For token quotas, use longer delays
                         retry_delay = 60 if quota_limit > 1000 else 30
                     else:
-                        retry_delay = 60  # Default for rate limits
+                        retry_delay = 60
                 
                 if verbose and label:
                     print(f"{C.CRIT}⚠️  {label}: Rate limit hit. Waiting {retry_delay}s before retry {i+1}/{retries}{C.RESET}")
                 
-                if i < retries - 1:  # Don't sleep on last attempt
+                if i < retries - 1:
                     time.sleep(retry_delay)
                     continue
             
-            # For other errors, use exponential backoff
             if i == retries - 1:
                 if verbose and label:
                     print(f"{C.CRIT}✗ {label}: failed after {retries} attempts: {error_str[:120]}...{C.RESET}")
                 raise
             
-            # Exponential backoff for non-rate-limit errors
             base_delay = 1.5 * (2 ** i) * random.uniform(0.75, 1.25)
             if verbose and label:
                 print(f"{C.CRIT}⏳ {label}: backing off {base_delay:.2f}s (attempt {i+1}/{retries}): {error_str[:80]}...{C.RESET}")
@@ -195,7 +183,6 @@ def chain_of_thought(text, print_chain_of_thought=False):
     use_digest = len(text) > int(os.getenv("COT_DIGEST_THRESHOLD_CHARS", "1500"))
     ctx = digest_prompt(text, verbose=print_chain_of_thought) if use_digest else text
     
-    # Proactive rate limit checking
     planned_prompts = [
         f"plan_prompt: {ctx[:200]}...",
         f"critique_plan_prompt: {ctx[:100]}...",
@@ -215,17 +202,14 @@ def chain_of_thought(text, print_chain_of_thought=False):
     response = executer_prompt(ctx, fixed_plan, verbose=print_chain_of_thought)
     score_raw = scorer_prompt(ctx, response, verbose=print_chain_of_thought)
     
-    # Parse JSON score format
     try:
         score_data = json.loads(score_raw)
         clarity = score_data.get("clarity", -1)
         logic = score_data.get("logic", -1)
         actionability = score_data.get("actionability", -1)
         score_feedback = score_data.get("feedback", "No feedback provided")
-        # Calculate composite score (logic weighted heavily)
         composite_score = (clarity * 2 + logic * 4 + actionability * 2) / 8 * 10
     except (json.JSONDecodeError, KeyError):
-        # Fallback to old format if JSON parsing fails
         try:
             parts = score_raw.split(" | ")
             score_feedback, composite_score = parts[0], int(parts[1])
@@ -235,7 +219,6 @@ def chain_of_thought(text, print_chain_of_thought=False):
             clarity = logic = actionability = -1
     
     improved_response = None
-    # Trigger improvement if composite score < 80 OR logic score < 6
     if composite_score < 80 or (logic != -1 and logic < 6):
         improved_response = improver_prompt(ctx, response, fixed_plan, score_raw, verbose=print_chain_of_thought)
     

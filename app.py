@@ -81,16 +81,19 @@ def build_context_prompt(current_prompt):
 
 st.markdown("""
     <style>
-    .user-message { padding: 16px; border-radius: 18px; margin: 8px 0; border: 1px solid #e5e5e7; max-width: 800px; background: #f7f7f8; }
-    .bot-message { padding: 16px; border-radius: 18px; margin: 8px 0; border: 1px solid #e5e5e7; max-width: 800px; background: #ffffff; }
-    .thinking-box { border-radius: 12px; padding: 16px; margin: 12px 0; border: 1px solid #e5e5e7; background: #ffffff; }
-    .reasoning-item { border-radius: 8px; margin: 6px 0; overflow: hidden; border: 1px solid #e5e5e7; background: #ffffff; }
-    .reasoning-header { padding: 10px 14px; font-weight: 600; border-bottom: 1px solid #e5e5e7; background: #f7f7f8; }
-    .reasoning-content { padding: 14px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; line-height: 1.4; white-space: pre-wrap; background: #ffffff; }
+    .user-message { padding: 16px; border-radius: 18px; margin: 8px 0; border: 1px solid #e5e5e7; max-width: 800px; background: #f7f7f8; color: #262626; }
+    .bot-message { padding: 16px; border-radius: 18px; margin: 8px 0; border: 1px solid #e5e5e7; max-width: 800px; background: #ffffff; color: #262626; }
+    .thinking-box { border-radius: 12px; padding: 16px; margin: 12px 0; border: 1px solid #e5e5e7; background: #ffffff; color: #262626; }
+    .reasoning-item { border-radius: 8px; margin: 6px 0; overflow: hidden; border: 1px solid #e5e5e7; background: #ffffff; color: #262626; }
+    .reasoning-header { padding: 10px 14px; font-weight: 600; border-bottom: 1px solid #e5e5e7; background: #f7f7f8; color: #262626; }
+    .reasoning-content { padding: 14px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; line-height: 1.4; white-space: pre-wrap; background: #ffffff; color: #262626; }
 
-    .stApp[data-theme="dark"] .user-message { background: #262730; color: #ffffff; border-color: #404040; }
-    .stApp[data-theme="dark"] .bot-message, .stApp[data-theme="dark"] .thinking-box, .stApp[data-theme="dark"] .reasoning-item, .stApp[data-theme="dark"] .reasoning-content { background: #1e1e1e; color: #ffffff; border-color: #404040; }
-    .stApp[data-theme="dark"] .reasoning-header { background: #262730; color: #ffffff; border-color: #404040; }
+    .stApp[data-theme="dark"] .user-message { background: #262730 !important; color: #ffffff !important; border-color: #404040 !important; }
+    .stApp[data-theme="dark"] .bot-message { background: #1e1e1e !important; color: #ffffff !important; border-color: #404040 !important; }
+    .stApp[data-theme="dark"] .thinking-box { background: #1e1e1e !important; color: #ffffff !important; border-color: #404040 !important; }
+    .stApp[data-theme="dark"] .reasoning-item { background: #1e1e1e !important; color: #ffffff !important; border-color: #404040 !important; }
+    .stApp[data-theme="dark"] .reasoning-content { background: #1e1e1e !important; color: #ffffff !important; }
+    .stApp[data-theme="dark"] .reasoning-header { background: #262730 !important; color: #ffffff !important; border-color: #404040 !important; }
     </style>
 """, unsafe_allow_html=True)
 
