@@ -88,12 +88,41 @@ st.markdown("""
     .reasoning-header { padding: 10px 14px; font-weight: 600; border-bottom: 1px solid #e5e5e7; background: #f7f7f8; color: #262626; }
     .reasoning-content { padding: 14px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; line-height: 1.4; white-space: pre-wrap; background: #ffffff; color: #262626; }
 
-    .stApp[data-theme="dark"] .user-message { background: #404040 !important; color: #ffffff !important; border-color: #666666 !important; }
-    .stApp[data-theme="dark"] .bot-message { background: #333333 !important; color: #ffffff !important; border-color: #666666 !important; }
-    .stApp[data-theme="dark"] .thinking-box { background: #333333 !important; color: #ffffff !important; border-color: #666666 !important; }
-    .stApp[data-theme="dark"] .reasoning-item { background: #333333 !important; color: #ffffff !important; border-color: #666666 !important; }
-    .stApp[data-theme="dark"] .reasoning-content { background: #333333 !important; color: #ffffff !important; }
-    .stApp[data-theme="dark"] .reasoning-header { background: #404040 !important; color: #ffffff !important; border-color: #666666 !important; }
+    body[data-theme="dark"] .user-message,
+    html[data-theme="dark"] .user-message,
+    [data-theme="dark"] .user-message,
+    .stApp[data-theme="dark"] .user-message { 
+        background: #404040 !important; 
+        color: #ffffff !important; 
+        border-color: #666666 !important; 
+    }
+    
+    body[data-theme="dark"] .bot-message,
+    html[data-theme="dark"] .bot-message,
+    [data-theme="dark"] .bot-message,
+    .stApp[data-theme="dark"] .bot-message { 
+        background: #333333 !important; 
+        color: #ffffff !important; 
+        border-color: #666666 !important; 
+    }
+    
+    body[data-theme="dark"] .thinking-box,
+    html[data-theme="dark"] .thinking-box,
+    [data-theme="dark"] .thinking-box,
+    .stApp[data-theme="dark"] .thinking-box { 
+        background: #333333 !important; 
+        color: #ffffff !important; 
+        border-color: #666666 !important; 
+    }
+    
+    @media (prefers-color-scheme: dark) {
+        .user-message { background: #404040 !important; color: #ffffff !important; border-color: #666666 !important; }
+        .bot-message { background: #333333 !important; color: #ffffff !important; border-color: #666666 !important; }
+        .thinking-box { background: #333333 !important; color: #ffffff !important; border-color: #666666 !important; }
+        .reasoning-item { background: #333333 !important; color: #ffffff !important; border-color: #666666 !important; }
+        .reasoning-content { background: #333333 !important; color: #ffffff !important; }
+        .reasoning-header { background: #404040 !important; color: #ffffff !important; border-color: #666666 !important; }
+    }
     </style>
 """, unsafe_allow_html=True)
 
