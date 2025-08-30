@@ -55,45 +55,45 @@ def build_context_prompt(current_prompt):
 
 st.markdown("""
     <style>
-    /* Ensure text is always visible in both light and dark modes */
+    /* Theme-aware styling that adapts to light/dark mode */
     .user-message {
-        background-color: #262730;
-        color: #ffffff;
+        background-color: var(--background-color);
+        color: var(--text-color);
         padding: 16px;
         border-radius: 18px;
         margin: 8px 0 8px 20%;
-        border: 1px solid #404040;
+        border: 1px solid var(--border-color);
     }
     .bot-message {
-        background-color: #1e1e1e;
-        color: #ffffff;
+        background-color: var(--secondary-background-color);
+        color: var(--text-color);
         padding: 16px;
         border-radius: 18px;
         margin: 8px 20% 8px 0;
-        border: 1px solid #404040;
+        border: 1px solid var(--border-color);
     }
     .thinking-box {
-        background-color: #1a1a1a;
-        color: #ffffff;
-        border: 1px solid #404040;
+        background-color: var(--secondary-background-color);
+        color: var(--text-color);
+        border: 1px solid var(--border-color);
         border-radius: 12px;
         padding: 16px;
         margin: 12px 0;
     }
     .reasoning-item {
-        background-color: #1a1a1a;
-        color: #ffffff;
-        border: 1px solid #404040;
+        background-color: var(--secondary-background-color);
+        color: var(--text-color);
+        border: 1px solid var(--border-color);
         border-radius: 8px;
         margin: 6px 0;
         overflow: hidden;
     }
     .reasoning-header {
-        background-color: #2d2d2d;
-        color: #ffffff;
+        background-color: var(--background-color);
+        color: var(--text-color);
         padding: 10px 14px;
         font-weight: 600;
-        border-bottom: 1px solid #404040;
+        border-bottom: 1px solid var(--border-color);
     }
     .reasoning-content {
         padding: 14px;
@@ -101,10 +101,46 @@ st.markdown("""
         font-size: 13px;
         line-height: 1.4;
         white-space: pre-wrap;
-        color: #ffffff;
-        background-color: #1a1a1a;
+        color: var(--text-color);
+        background-color: var(--secondary-background-color);
     }
-    /* Override any inherited text colors */
+    
+    /* Light mode colors */
+    [data-theme="light"] {
+        --background-color: #f7f7f8;
+        --secondary-background-color: white;
+        --text-color: #262626;
+        --border-color: #e5e5e7;
+    }
+    
+    /* Dark mode colors */
+    [data-theme="dark"] {
+        --background-color: #262730;
+        --secondary-background-color: #1e1e1e;
+        --text-color: #ffffff;
+        --border-color: #404040;
+    }
+    
+    /* Fallback for Streamlit's automatic theme detection */
+    @media (prefers-color-scheme: light) {
+        :root {
+            --background-color: #f7f7f8;
+            --secondary-background-color: white;
+            --text-color: #262626;
+            --border-color: #e5e5e7;
+        }
+    }
+    
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --background-color: #262730;
+            --secondary-background-color: #1e1e1e;
+            --text-color: #ffffff;
+            --border-color: #404040;
+        }
+    }
+    
+    /* Ensure text color inheritance */
     .user-message *, .bot-message *, .thinking-box *, .reasoning-item *, .reasoning-content * {
         color: inherit !important;
     }
