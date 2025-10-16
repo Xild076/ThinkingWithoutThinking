@@ -631,7 +631,7 @@ _init_state()
 if st.session_state.get("show_info_popup", True) and not st.session_state.get("info_popup_shown", False):
     @st.dialog("Welcome to Thinking Without Thinking!", width="large")
     def show_info():
-        st.markdown(f"""
+        st.markdown("""
         ### What is this?
 
         **Thinking Without Thinking (TWT)** is an agentic AI reasoning pipeline that breaks down complex queries into multiple thinking steps, similar to how Chain-of-Thought or Tree-of-Thought models work. However, unlike Chain-of-Thought or Tree-of-Thought, this system is made up entirely of prompting and is extremely discrete in its implementation, making it both more structured, accurate, and explainable.
