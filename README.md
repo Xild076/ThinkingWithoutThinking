@@ -1,189 +1,84 @@
-# ThinkingWithoutThinking
+# Thinking Without Thinking
 
-This is just a fun little project to make a streamlit app that somewhat simulates "thought" and "chain of reasoning" with prompt engineering. Its aim is to mirror some aspect of human psychology with how we come up with structured responses to problems. It currently uses the Gemma 27B model, so if you get a google API key, its free to use. 
+This is just a fun little project to make a streamlit app that somewhat simulates "thought" and "chain of reasoning" with prompt engineering. Its aim is to mirror some aspect of human psychology with how we come up with structured responses to problems. It currently uses the Gemma 27B model, so if you get a google API key, its free to use.
 
 I took heavy inspiration from an old GPT prompt engineering widget where it asked the LLM to critique itself. However, instead of single-prompt analysis which has the caveat of severe biases, I implemented a cross-prompt analysis. While its more computationally expensive, it's also a much more accurate version of the prompt engineering.
 
-Anyways, have fun!
+## What it Does
 
-## What It Does
+ThinkingWithoutThinking implements a sophisticated multi-step reasoning system that breaks down complex problems into structured thinking processes. The system uses a systematic thinking approach with multiple thinking "blocks" to synthesize a final, high quality response to user queries.
 
-ThinkingWithoutThinking implements a sophisticated multi-step reasoning system that breaks down complex problems into structured thinking processes. The system uses a chain-of-thought approach with multiple AI agents that plan, critique, fix, execute, score, and improve responses to ensure high-quality, logically consistent outputs.
+## Core Features
 
-## Features
+1. **Agentic Reasoning Pipeline:** Decomposes complex prompts into a logical sequence of steps—planning, web research, code execution, and synthesis—managed by a central orchestrator.
+2. **Executable Code Tool:** A sandboxed Python environment that can write and run code to perform data analysis, mathematical calculations, and generate visualizations.
+3. **Live Web Search:** Implements a web search and content extraction tool to answer questions with relevant information, grounding responses.
+4. **Self-Correction:** Features feedback loops at every critical stage: initial outputs are critiqued and then refined by a built-in process.
+5. **Transparency:** The Streamlit UI provides a complete, interactive trace of the agent's reasoning process. Inspect every tool's input/output, view generated code, and understand exactly how the final answer was produced.
 
-### **Multi-Step Reasoning Chain**
-- **Plan**: Creates a structured execution plan
-- **Critique**: Reviews the plan for potential issues
-- **Fix**: Refines the plan based on critique
-- **Execute**: Implements the plan to generate a response
-- **Score**: Evaluates the response across multiple dimensions
-- **Improve**: Enhances the response if needed
+## How it works
 
-### **Advanced Scoring System**
-- **Multi-dimensional evaluation**: Clarity, Logic, Actionability
-- **Logic-weighted scoring**: Prioritizes logical consistency
-- **Smart improvement triggers**: Automatic enhancement for low logic scores
-- **Visual score breakdown**: Clear display of individual dimension scores
+The pipeline follows a structured, four-phase process for every query:
+- **Phase 1:** Plan & Route (Meta-Reasoning)
+    - **Plan Creation:** The system first generates a high-level, human-readable strategy to address the user's prompt. This plan is then critiqued and refined in a self-correction step.
+    - **Routing:** The refined plan is translated into a machine-readable sequence of "blocks" (e.g., use_internet_tool -> use_code_tool -> synthesize_final_answer), creating a custom pipeline tailored to the specific query.
+- **Phase 2:** Execute (Tool Use)
+    - The pipeline executes each block in sequence.
+        - The Internet Tool scrapes web pages for relevant information.
+        - The Code Tool writes and runs Python code to analyze data or create plots.
+        - The Creative Idea Generation Tool uses high temperature to create creative concepts 
+    - The output of each block is stored in a shared context, allowing subsequent blocks to build on previous results.
+**Phase 3:** Synthesize & Refine (Answer Generation)
+    - The SynthesizeFinalAnswerBlock gathers all the information from the context from tool use.
+    - The block generates a comprehensive, user-facing answer in Markdown.
+    - This initial answer is then passed to a Scorer prompt, which rates it on clarity, logic, and actionability.
+    - Finally, an Improver prompt refines the response based on the scorer's feedback, producing the final, polished result.
+**Phase 4:** Present (User Interface)
+The entire process is visualized in an interactive Streamlit dashboard. Users can see live progress, inspect each step, and view the final answer with any generated artifacts like charts.
 
-### **Robust Error Handling**
-- **Rate limit protection**: Automatic retry with intelligent backoff
-- **Quota management**: Proactive token usage estimation
-- **User-friendly errors**: Clear explanations instead of technical jargon
-- **Graceful degradation**: Continues working even with API issues
-
-### **Clean User Interface**
-- **Streamlit interface**: Modern, responsive web interface
-- **Interactive trace view**: Optional display of reasoning steps
-- **Real-time feedback**: Progress indicators and status updates
-- **Dark theme**: Easy on the eyes for extended use
-
-## How to use
+## Usage
 
 ### Prerequisites
-- Python 3.8+
-- Google AI API key (free tier available)
+- Python 3.12
+- A Google Generative AI API Key (https://aistudio.google.com/api-keys, free tier works)
 
 ### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/yourusername/ThinkingWithoutThinking.git
-   cd ThinkingWithoutThinking
-   ```
-
-2. **Set up virtual environment**
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Get your Google AI API key**
-   - Visit [Google AI Studio](https://aistudio.google.com/app/apikey)
-   - Sign in and create a new API key
-   - Copy the key for the next step
-
-5. **Configure your API key**
-   
-   **Option 1: Environment Variable**
-   ```bash
-   export GOOGLE_API_KEY="your-api-key-here"
-   ```
-   
-   **Option 2: Streamlit Secrets** (Recommended for deployment)
-   ```bash
-   mkdir .streamlit
-   echo 'GOOGLE_API_KEY = "your-api-key-here"' > .streamlit/secrets.toml
-   ```
-   
-   **Option 3: In-App Configuration**
-   - Use the sidebar in the app to enter your key
-
-### Running the App
-
-**Streamlit Interface:**
 ```bash
+git clone https://github.com/your-username/ThinkingWithoutThinking.git
+cd ThinkingWithoutThinking
+
+python -m venv .venv
+# On macOS/Linux
+source .venv/bin/activate
+# On Windows
+# .venv\Scripts\activate
+
+pip install -r requirements.txt
+```
+
+### Configure API Key
+
+1. Use the Streamlit UI (recommended): You can enter your API key in the sidebar to use.
+2. Set an environmental variable:
+```bash
+# On macOS/Linux
+export GOOGLE_API_KEY="your-api-key"
+
+# On Windows (PowerShell)
+$Env:GOOGLE_API_KEY = "your-api-key"
+```
+
+### Usage
+1. Use the live app: https://thinking-gemma.streamlit.app/
+2. Use the Streamlit UI: 
+```bash 
 streamlit run app.py
 ```
-
-**Command Line Interface:**
+3. Use the CLI:
 ```bash
-python -m src.chain_of_thought "Your question here"
+python -m src.main "GRAPH the function y = x^3 - 2x^2 + 5 for x from -10 to 10"
 ```
-
-## 📁 Project Structure
-
-```
-ThinkingWithoutThinking/
-├── src/
-│   ├── __init__.py
-│   ├── app.py                 # Alternative Streamlit interface
-│   └── chain_of_thought.py    # Core reasoning engine
-├── app.py                     # Main Streamlit application
-├── test_logical_consistency.py # Test suite for logical consistency
-├── requirements.txt           # Python dependencies
-└── README.md                 # This file
-```
-
-## 🔧 Configuration
-
-### Environment Variables
-- `GOOGLE_API_KEY`: Your Google AI API key
-- `GENAI_MODEL`: Model to use (default: "gemma-3-27b-it")
-- `GENAI_MAX_OUTPUT_TOKENS`: Maximum tokens per request (default: 8192)
-- `COT_DIGEST_THRESHOLD_CHARS`: When to summarize long inputs (default: 1500)
-
-### App Settings
-- **Rate limit safety delay**: 0-120 seconds between requests
-- **Auto-retry on rate limits**: Enable/disable automatic retries
-- **Show chain of thought**: Toggle detailed reasoning trace
-
-## 🧪 Testing
-
-Run the logical consistency test:
-```bash
-python test_logical_consistency.py
-```
-
-This demonstrates how the system handles complex reasoning tasks while managing rate limits effectively.
-
-## How It Works
-
-### The Reasoning Chain
-
-1. **Digest** (for long inputs): Summarizes the prompt
-2. **Plan**: Creates a structured execution plan with verification steps
-3. **Critique**: Identifies potential issues and logical risks
-4. **Fix**: Refines the plan based on critique feedback
-5. **Execute**: Implements the plan to generate the response
-6. **Score**: Evaluates using JSON format with multiple dimensions
-7. **Improve**: Enhances the response if logic score is low
-
-### Scoring Methodology
-
-```json
-{
-  "clarity": 8,
-  "logic": 3,
-  "actionability": 7,
-  "feedback": "Response is clear but contains logical inconsistencies..."
-}
-```
-
-**Composite Score**: `(clarity × 2 + logic × 4 + actionability × 2) ÷ 8 × 10`
-
-**Improvement Triggers**: 
-- Composite score < 80, OR
-- Logic score < 6
-
-### Rate Limiting Protection
-
-- **Smart detection**: Recognizes 429 errors and quota limits
-- **Intelligent backoff**: Uses API-suggested retry delays
-- **Proactive prevention**: Estimates token usage before requests
-- **User controls**: Configurable delays and retry behavior
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is open source and available under the [MIT License](LICENSE).
-
-## Acknowledgments
-
-- Built with [Streamlit](https://streamlit.io/)
-- Powered by [Google AI](https://aistudio.google.com/)
-- UI done with the help of Chat GPT :)
-- Uses the Gemma 27B model for reasoning
-- Inspired by chain-of-thought prompting research
+Contributions, issues, and feature requests are welcome! Feel free to open an issue to discuss your ideas or submit a pull request.

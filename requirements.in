@@ -1,0 +1,17 @@
+google-genai
+python-dotenv
+streamlit
+requests
+beautifulsoup4
+trafilatura
+newspaper3k
+lxml
+numpy
+pandas
+scipy
+sympy
+matplotlib
+seaborn
+scikit-learn
+pytest
+pip-tools
