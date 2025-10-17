@@ -25,31 +25,6 @@ st.set_page_config(
 # File to store usage data
 USAGE_FILE = ROOT_DIR / ".usage_data.json"
 
-def _load_usage_data() -> dict:
-    """Load usage tracking data."""
-    # We persist only whether a custom API key was configured across server
-    # restarts. The free 'uses' counter is intentionally NOT persisted so it
-    # resets whenever a new instance or session starts.
-    if USAGE_FILE.exists():
-        try:
-            with open(USAGE_FILE, 'r') as f:
-                data = json.load(f)
-                return {"has_custom_key": bool(data.get("has_custom_key", False))}
-        except Exception:
-            pass
-    return {"has_custom_key": False}
-
-def _save_usage_data(data: dict):
-    """Save usage tracking data."""
-    try:
-        # Only persist the presence of a custom API key across instances.
-        to_write = {"has_custom_key": bool(data.get("has_custom_key", False))}
-        with open(USAGE_FILE, 'w') as f:
-            json.dump(to_write, f)
-    except:
-        pass
-
-
 def _init_state() -> None:
     st.session_state.setdefault("conversations", [])
     st.session_state.setdefault("selected_blocks", {})
@@ -63,11 +38,13 @@ def _init_state() -> None:
     # don't display it repeatedly on reruns.
     st.session_state.setdefault("info_popup_shown", False)
 
-    # Load persisted settings (only has_custom_key). Initialize 'uses' to 0
-    # so free uses reset when a new instance or session starts.
-    persisted = _load_usage_data()
-    st.session_state.setdefault("usage_data", {"uses": 0, "has_custom_key": persisted.get("has_custom_key", False)})
+    # API key is per-session only (not persisted across restarts).
+    # Each user session is independent and doesn't affect other instances.
     st.session_state.setdefault("custom_api_key", "")
+    
+    # Usage tracking - free uses counter resets every session
+    st.session_state.setdefault("usage_data", {"uses": 0})
+    
     st.session_state.setdefault("settings", {
         "creative_temperature": 1.2,
         "synthesis_temperature": 0.6,
@@ -684,40 +661,45 @@ with st.sidebar:
     # API Key Section
     st.subheader("🔑 API Key")
     usage_data = st.session_state["usage_data"]
+    custom_api_key = st.session_state.get("custom_api_key", "").strip()
     
-    if usage_data["has_custom_key"] or st.session_state.get("custom_api_key"):
-        st.success("✅ Custom API key active - Unlimited uses!")
+    if custom_api_key:
+        st.success("✅ Session API key active - Unlimited uses!")
     else:
-        uses_left = max(0, 3 - usage_data["uses"])
+        uses_left = max(0, 3 - usage_data.get("uses", 0))
         if uses_left > 0:
-            st.info(f"🆓 Free tier: {uses_left} use(s) remaining")
+            st.info(f"🆓 Free tier: {uses_left} use(s) remaining (or use secret API)")
         else:
-            st.error("❌ Free uses exhausted. Please add an API key to continue.")
+            st.error("❌ Free uses exhausted. Add an API key or use secret API in sidebar.")
     
     api_key_input = st.text_input(
-        "Google AI API Key",
+        "Google AI API Key (session-only)",
         type="password",
         value=st.session_state.get("custom_api_key", ""),
-        help="Get a free key at https://aistudio.google.com/apikey",
-        placeholder="Enter your API key..."
+        help="Leave empty to use secret API. Changes only affect this session.",
+        placeholder="Leave empty to use secret API..."
     )
     
+    # Update API key for this session if input changed
     if api_key_input != st.session_state.get("custom_api_key", ""):
         st.session_state["custom_api_key"] = api_key_input
-        if api_key_input:
-            utility.set_api_key(api_key_input)
-            usage_data["has_custom_key"] = True
-            _save_usage_data(usage_data)
-            st.success("API key saved!")
-            st.rerun()
+        
+        if api_key_input and api_key_input.strip():
+            # User provided a custom API key
+            utility.set_api_key(api_key_input.strip())
+            st.success("✅ API key updated for this session!")
         else:
-            utility.set_api_key(None)
-            usage_data["has_custom_key"] = False
-            _save_usage_data(usage_data)
+            # User cleared the field - use secret API (environment variable)
+            utility.set_api_key(None)  # This makes get_api_key() fall back to env var
+            st.info("ℹ️ Using secret API from environment")
+        
+        st.rerun()
     
-    # Set API key on startup if available
-    if st.session_state.get("custom_api_key"):
-        utility.set_api_key(st.session_state["custom_api_key"])
+    # Ensure API key is set on each render
+    if custom_api_key:
+        utility.set_api_key(custom_api_key)
+    else:
+        utility.set_api_key(None)
     
     st.divider()
     
@@ -791,12 +773,12 @@ if st.session_state.get("current_prompt"):
 prompt_input = st.chat_input("Ask the pipeline...")
 
 if prompt_input:
-    # Check usage limits
+    # Check usage limits (only for free tier - no custom API key in this session)
     usage_data = st.session_state["usage_data"]
-    has_api_key = usage_data.get("has_custom_key", False) or st.session_state.get("custom_api_key", "")
+    has_api_key = st.session_state.get("custom_api_key", "").strip()
     
     if not has_api_key and usage_data.get("uses", 0) >= 3:
-        st.error("⚠️ You've used all 3 free queries. Please add your Google AI API key in the sidebar to continue.")
+        st.error("⚠️ You've used all 3 free queries. Add an API key in sidebar or use secret API.")
         st.stop()
     
     # Build intelligent conversation context by extracting relevant info from history
@@ -819,12 +801,9 @@ if st.session_state.get("current_prompt") and not st.session_state.get("processi
         try:
             result = _run_pipeline(st.session_state["current_prompt"], st.session_state["verbose"])
             
-            # Increment usage count only on success (if no custom API key)
-            usage_data = st.session_state["usage_data"]
-            if not usage_data.get("has_custom_key", False):
-                usage_data["uses"] = usage_data.get("uses", 0) + 1
-                st.session_state["usage_data"] = usage_data
-                _save_usage_data(usage_data)
+            # Increment usage count only on success (if no custom API key this session)
+            if not st.session_state.get("custom_api_key", "").strip():
+                st.session_state["usage_data"]["uses"] = st.session_state["usage_data"].get("uses", 0) + 1
                 
         except Exception as exc:  # pragma: no cover - UI feedback
             st.session_state.last_error = str(exc)
