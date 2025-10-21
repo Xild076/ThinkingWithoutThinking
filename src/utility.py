@@ -281,16 +281,67 @@ def generate_text(text, model='models/gemma-3-27b-it', temperature=0.7, max_toke
     raise RuntimeError(f"Failed to generate text after {max_retries} attempts")
 
 def online_query_tool(query, article_num):
-    """Fetch and summarize articles based on a query."""
+    """Fetch and summarize articles based on a query.
+    
+    CRITICAL: If fetching fails, returns explicit failure message instead of hallucinating data.
+    This prevents the LLM from making up article content when web access is unavailable.
+    """
     logger.info(f"Starting online query for: '{query}' with {article_num} articles")
     
     links = retrieve_links([query], amount=article_num)
     logger.info(f"Retrieved {len(links)} links for query")
     
-    articles = extract_many_article_details(links)
-    logger.info(f"Successfully extracted {len(articles)} article details")
+    # Check if we have NO links - explicit failure mode
+    if not links:
+        logger.error(f"FETCH FAILURE: Could not retrieve any links for query: '{query}'")
+        failure_message = (
+            f"⚠️ WEB FETCH FAILED: Could not retrieve search results for '{query}'\n\n"
+            f"Possible reasons:\n"
+            f"  • Network connectivity issue\n"
+            f"  • Search service temporarily unavailable\n"
+            f"  • Query may be blocked or rate-limited\n\n"
+            f"ACTION: Please try a different query or rephrase your request. "
+            f"Do NOT attempt to fabricate article content or sources."
+        )
+        logger.warning(f"Returning explicit failure message: {failure_message[:100]}...")
+        return {
+            'summary': failure_message,
+            'articles': [],
+            'fetch_status': 'FAILED',
+            'error': 'No links retrieved'
+        }
     
+    articles = extract_many_article_details(links)
+    logger.info(f"Successfully extracted {len(articles)} article details from {len(links)} links")
+    
+    # Check if extraction yielded NO valid articles despite having links
     article_texts = [article['text'] for article in articles if article and 'text' in article]
+    if not article_texts:
+        logger.error(f"EXTRACTION FAILURE: Retrieved {len(links)} links but could not extract article content")
+        failure_message = (
+            f"⚠️ EXTRACTION FAILED: Retrieved {len(links)} search results but could not extract article content\n\n"
+            f"Possible reasons:\n"
+            f"  • Articles are behind paywalls or access-restricted\n"
+            f"  • Content format could not be parsed\n"
+            f"  • Websites blocked automatic content extraction\n\n"
+            f"Links found (but content unavailable):\n"
+        )
+        for i, link in enumerate(links[:5], 1):
+            failure_message += f"  {i}. {link}\n"
+        if len(links) > 5:
+            failure_message += f"  ... and {len(links) - 5} more links\n"
+        failure_message += (
+            f"\nACTION: Try accessing these links directly, or use a different search query. "
+            f"Do NOT make up article content based on the links."
+        )
+        logger.warning(f"Returning explicit extraction failure message")
+        return {
+            'summary': failure_message,
+            'articles': links,  # Return links for reference but no content
+            'fetch_status': 'EXTRACTION_FAILED',
+            'error': 'Could not extract article content'
+        }
+    
     total_chars = sum(len(t) for t in article_texts)
     logger.debug(f"Total article text length: {total_chars:,} characters")
     
@@ -318,15 +369,27 @@ def online_query_tool(query, article_num):
     
     logger.info(f"Prepared {len(truncated_texts)} articles for summarization ({current_total:,} chars, ~{current_total//4:,} tokens)")
     
-    summary = generate_text(
-        f"""# Articles: 
-{"\n\n".join(truncated_texts)}
+    # Summarization prompt with explicit anti-hallucination instruction
+    summary_prompt = f"""# Articles Retrieved Successfully:
+{chr(10).join(truncated_texts)}
 
-You are a helpful assistant. Summarize the above articles into a concise summary, highlighting key points and relevant information."""
-    )
+Your task: Summarize the above articles into a concise summary, highlighting key points and relevant information.
+
+CRITICAL INSTRUCTION: 
+- ONLY reference information explicitly present in the articles above
+- Do NOT add any external knowledge or fill in gaps with assumptions
+- If key information is missing, explicitly state "[INFORMATION UNAVAILABLE]" 
+- Do NOT fabricate author names, dates, statistics, or other details not in the text"""
+    
+    summary = generate_text(summary_prompt)
     
     logger.info("Online query completed successfully")
-    return {'summary': summary, 'articles': articles}
+    return {
+        'summary': summary,
+        'articles': articles,
+        'fetch_status': 'SUCCESS',
+        'error': None
+    }
 
 
 def evaluate_ideas_via_client(prompt_text: str, ideas: List[str], criteria: str, model: str = 'models/gemma-3-27b-it') -> Dict[str, Any]:
@@ -381,14 +444,111 @@ def evaluate_ideas_via_client(prompt_text: str, ideas: List[str], criteria: str,
             pass
 
 def retrieve_links(keywords, amount=10):
-    """Retrieve news article links from Google News based on keywords."""
+    """Retrieve news article links from Google News based on keywords.
+    
+    DUAL STRATEGY: 
+    1. Try Google News RSS (more reliable)
+    2. Fallback to HTML scraping if RSS fails
+    """
     logger.info(f"Starting link retrieval for keywords: {keywords}")
     logger.info(f"Requested amount: {amount}")
     
+    # Strategy 1: Try Google News RSS first (more reliable)
+    rss_results = _try_google_news_rss(keywords, amount)
+    if rss_results:
+        logger.info(f"Successfully retrieved {len(rss_results)} links from Google News RSS")
+        return rss_results
+    
+    logger.info("RSS approach failed, falling back to HTML scraping...")
+    
+    # Strategy 2: Fallback to HTML scraping
+    return _try_google_news_html_scraping(keywords, amount)
+
+
+def _try_google_news_rss(keywords, amount=10):
+    """Try to get news links from Google News RSS feed."""
+    try:
+        import xml.etree.ElementTree as ET
+        
+        # Google News RSS URL format
+        search_query = '+'.join([quote_plus(k) for k in keywords])
+        rss_url = f"https://news.google.com/rss/search?q={search_query}&hl=en-US&gl=US&ceid=US:en"
+        logger.info(f"Trying Google News RSS: {rss_url}")
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        response = requests.get(rss_url, headers=headers, timeout=10)
+        logger.info(f"RSS response status: {response.status_code}")
+        
+        if response.status_code != 200:
+            logger.warning(f"RSS feed returned status {response.status_code}")
+            return []
+        
+        # Parse RSS XML
+        root = ET.fromstring(response.content)
+        
+        # Find all item links in the RSS feed
+        results = []
+        for item in root.findall('.//item'):
+            link_elem = item.find('link')
+            if link_elem is not None and link_elem.text:
+                url = link_elem.text.strip()
+                
+                # Google News RSS URLs are redirects - we need to resolve them to get actual URLs
+                # Format: https://news.google.com/rss/articles/CBMi...
+                # We'll try to extract the real URL by following the redirect
+                if url and url.startswith('http'):
+                    # Try to resolve the Google News redirect
+                    real_url = _resolve_google_news_url(url, headers)
+                    if real_url:
+                        results.append(real_url)
+                        logger.debug(f"Resolved RSS link: {real_url[:80]}...")
+                    else:
+                        # If we can't resolve, still add the Google News URL
+                        results.append(url)
+                        logger.debug(f"Using Google News URL: {url[:80]}...")
+                    
+                    if len(results) >= amount:
+                        break
+        
+        logger.info(f"Extracted {len(results)} links from RSS feed")
+        return results[:amount]
+        
+    except Exception as e:
+        logger.warning(f"RSS parsing failed: {type(e).__name__}: {str(e)}")
+        return []
+
+
+def _resolve_google_news_url(google_news_url, headers):
+    """Resolve a Google News redirect URL to get the actual article URL."""
+    try:
+        # Make a HEAD request to get the redirect without downloading content
+        response = requests.head(google_news_url, headers=headers, allow_redirects=True, timeout=5)
+        
+        # The final URL after redirects is the actual article
+        final_url = response.url
+        
+        # Validate it's a real external URL (not Google)
+        if final_url and 'google' not in final_url and final_url.startswith('http'):
+            return final_url
+        
+        return None
+        
+    except Exception as e:
+        logger.debug(f"Could not resolve Google News URL: {e}")
+        return None
+
+
+def _try_google_news_html_scraping(keywords, amount=10):
+    """Fallback: Try HTML scraping of Google News search results."""
+    logger.info(f"HTML scraping fallback for keywords: {keywords}")
+    
     headers_list = [
-        {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"},
-        {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"},
-        {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+        {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+        {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+        {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     ]
     
     search_query = '+'.join([quote_plus(k) for k in keywords])
@@ -417,69 +577,88 @@ def retrieve_links(keywords, amount=10):
             logger.debug(f"Response content length: {len(response.content)} bytes")
             soup = BeautifulSoup(response.content, "html.parser")
             
-            # Try multiple selectors to find news article links
-            # Primary: Direct links with jsname attribute
-            link_elements = soup.select('a[jsname="YKoRaf"]')
-            logger.info(f"Found {len(link_elements)} link elements with jsname='YKoRaf'")
+            # COMPREHENSIVE EXTRACTION: Handle multiple URL formats
+            all_links = soup.find_all('a', href=True)
+            logger.info(f"Found {len(all_links)} total link elements in page")
             
-            # Fallback: Try alternate selectors if primary doesn't work
-            if len(link_elements) == 0:
-                link_elements = soup.select('div.SoaBEf a')
-                logger.info(f"Fallback: Found {len(link_elements)} link elements in div.SoaBEf")
+            external_urls = set()  # Use set to deduplicate
             
-            if len(link_elements) == 0:
-                link_elements = soup.select('a.WlydOe')
-                logger.info(f"Fallback: Found {len(link_elements)} link elements with class WlydOe")
+            # Log first 10 raw URLs for debugging
+            sample_urls = [link.get('href', '')[:150] for link in all_links[:10] if link.get('href')]
+            logger.info(f"Sample raw hrefs from page: {sample_urls}")
             
-            results = []
-            
-            for idx, link in enumerate(link_elements):
-                raw_url = link.get('href')
-                logger.debug(f"Processing link {idx + 1}: {raw_url[:100] if raw_url else 'None'}...")
+            for link_elem in all_links:
+                raw_url = link_elem.get('href', '').strip()
                 
-                if raw_url:
-                    # Check if it's a direct URL (starts with http)
-                    if raw_url.startswith('http'):
-                        results.append(raw_url)
-                        logger.info(f"Added direct link #{len(results)}: {raw_url[:80]}...")
+                if not raw_url:
+                    continue
+                
+                extracted_url = None
+                
+                # Strategy 1: Direct https:// external links
+                if raw_url.startswith('https://'):
+                    # Skip Google's own domains
+                    if any(domain in raw_url for domain in ['google.com', 'accounts.google', 'googleapis.com', 'gstatic.com']):
+                        continue
+                    # Skip social media
+                    if any(domain in raw_url for domain in ['facebook.com', 'twitter.com', 'x.com', 'reddit.com', 'youtube.com', 'instagram.com', 'linkedin.com']):
+                        continue
+                    extracted_url = raw_url
+                
+                # Strategy 2: Google redirect URLs (/url?q=...)
+                elif raw_url.startswith('/url?'):
+                    try:
+                        parsed_query = parse_qs(urlparse(raw_url).query)
+                        if 'q' in parsed_query:
+                            candidate = parsed_query['q'][0]
+                            # Validate it's a real external URL
+                            if candidate.startswith('http') and 'google' not in candidate:
+                                extracted_url = candidate
+                                logger.debug(f"Extracted from redirect: {candidate[:80]}...")
+                    except Exception as e:
+                        logger.debug(f"Could not parse redirect URL {raw_url[:100]}: {e}")
+                
+                # Strategy 3: Check for data-ved or other attributes that might contain real URLs
+                elif raw_url.startswith('/search?') or raw_url.startswith('?'):
+                    # These are internal Google search links, skip them
+                    continue
+                
+                # If we extracted a valid URL, clean and add it
+                if extracted_url:
+                    try:
+                        parsed = urlparse(extracted_url)
+                        # Reconstruct clean URL
+                        clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                        if parsed.query:
+                            clean_url += f"?{parsed.query}"
                         
-                        if len(results) >= amount:
-                            logger.info(f"Reached target amount ({amount}), stopping collection")
-                            logger.info(f"Successfully retrieved {len(results)} links")
-                            return results
-                    # Otherwise, try to parse it as a Google redirect URL
-                    elif '/url?' in raw_url or 'q=' in raw_url:
-                        parsed = parse_qs(urlparse(raw_url).query).get('q')
-                        if parsed:
-                            candidate = parsed[0]
-                            logger.debug(f"Extracted candidate URL from redirect: {candidate[:100]}...")
-                            
-                            if candidate.startswith('http'):
-                                results.append(candidate)
-                                logger.info(f"Added parsed link #{len(results)}: {candidate[:80]}...")
-                                
-                                if len(results) >= amount:
-                                    logger.info(f"Reached target amount ({amount}), stopping collection")
-                                    logger.info(f"Successfully retrieved {len(results)} links")
-                                    return results
-                            else:
-                                logger.debug(f"Skipped non-http URL: {candidate[:100]}...")
-                        else:
-                            logger.debug("No 'q' parameter found in parsed URL")
-                    else:
-                        logger.debug(f"Skipped relative/invalid URL: {raw_url[:100]}...")
+                        if clean_url not in external_urls and len(clean_url) > 20:  # Sanity check
+                            external_urls.add(clean_url)
+                            logger.debug(f"Added external URL: {clean_url[:100]}...")
+                    except Exception as e:
+                        logger.debug(f"Error parsing URL {extracted_url}: {e}")
+                        continue
             
+            # Convert to list and take first N
+            results = list(external_urls)[:amount]
+            
+            logger.info(f"Extracted {len(results)} unique external links")
             if results:
-                logger.info(f"Returning {len(results)} links (partial results)")
+                logger.info(f"Successfully extracted URLs:")
+                for i, url in enumerate(results[:5], 1):
+                    logger.info(f"  {i}. {url[:80]}...")
                 return results
             else:
-                logger.warning(f"No valid links found on attempt {attempt + 1}")
+                logger.warning(f"No external links found on attempt {attempt + 1}")
+                logger.warning(f"This might indicate Google is blocking the request or HTML structure changed")
                 
         except Exception as e:
             logger.error(f"Exception on attempt {attempt + 1}: {type(e).__name__}: {str(e)}")
+            import traceback
+            logger.debug(f"Traceback: {traceback.format_exc()}")
             if attempt < max_retries - 1:
-                logger.info("Retrying after 1 second...")
-                time.sleep(1)
+                logger.info("Retrying after 2 seconds...")
+                time.sleep(2)
             continue
     
     logger.warning(f"Failed to retrieve links after {max_retries} attempts, returning empty list")

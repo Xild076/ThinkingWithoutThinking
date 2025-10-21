@@ -21,6 +21,7 @@ from .pipeline_blocks import (
     PlanCreationBlock,
     UseCodeToolBlock,
     UseInternetToolBlock,
+    MathImprovementBlock,
     CreativeIdeaGeneratorBlockTool,
     SynthesizeFinalAnswerBlock,
 )
@@ -47,6 +48,7 @@ class ThinkingPipeline:
             "plan_creation": self.plan_block,
             "use_code_tool": UseCodeToolBlock(),
             "use_internet_tool": UseInternetToolBlock(),
+            "math_improvement": MathImprovementBlock(),
             "creative_idea_generator": CreativeIdeaGeneratorBlockTool(),
             "synthesize_final_answer": SynthesizeFinalAnswerBlock(),
         }
@@ -172,8 +174,12 @@ class ThinkingPipeline:
             f"  • Data analysis: code_tool → synthesis (2 blocks)\n"
             f"  • Research: internet_tool → synthesis (2 blocks)\n"
             f"  • Creative work: creative_ideas → synthesis (2 blocks)\n"
+            f"  • Math validation: math_improvement → synthesis (2 blocks)\n"
+            f"  • Math with computation: code_tool → math_improvement → synthesis (3 blocks)\n"
+            f"  • Complex math: internet_tool → code_tool → math_improvement → synthesis (4 blocks)\n"
             f"  • Complex: internet_tool → code_tool → synthesis (3 blocks)\n"
-            f"  • Brainstorming: creative_ideas (choose_best=true) → synthesis (2 blocks)\n\n"
+            f"  • Brainstorming: creative_ideas (choose_best=true) → synthesis (2 blocks)\n"
+            f"  • Research + Math: internet_tool → math_improvement → synthesis (3 blocks)\n\n"
             f"MANDATORY RULES:\n"
             f"  ✓ ALWAYS end with 'synthesize_final_answer' (exactly once, last position)\n"
             f"  ✓ If using creative_idea_generator for brainstorming: set choose_best=true\n"
@@ -192,7 +198,28 @@ class ThinkingPipeline:
             f"  Required: {{\"search_query\": \"<search terms>\", \"link_num\": <1-10>}}\n"
             f"  Example: {{\"search_query\": \"latest climate data 2025\", \"link_num\": 5}}\n"
             f"  Use when: Need current information, research, or fact-checking\n"
-            f"  Note: link_num defaults to 3 if omitted\n\n"
+            f"  Note: link_num defaults to 3 if omitted\n"
+            f"  Critical: If fetch fails, returns explicit error - do NOT hallucinate web content\n"
+            f"  QUERY IMPROVEMENT:\n"
+            f"    • If user says 'what is the news today': transform to 'news today', 'breaking news', 'current events'\n"
+            f"    • If user says 'news <date>': use exact date in query (e.g., 'news October 20 2025')\n"
+            f"    • If query is too vague: add specificity (e.g., 'weather' → 'current weather today')\n"
+            f"    • For time-sensitive queries: always include the date context\n"
+            f"    • Use single keywords when possible: 'latest AI announcements' not 'what are the announcements'\n\n"
+            f"math_improvement:\n"
+            f"  Required: {{\"math_content\": \"<mathematical reasoning/calculation to validate>\"}}\n"
+            f"  Example: {{\"math_content\": \"Calculate integral of 2x^2 + 3x from 0 to 5\"}}\n"
+            f"  Use when: Need to verify math, check for algebraic/calculus errors, validate logic\n"
+            f"  Returns: Validation report with error detection and corrections if needed\n"
+            f"  Critical: Only flags errors that can be mathematically verified - never hallucinate\n"
+            f"  IMPORTANT FOR COMPLEX MATH: If calculation requires numerical precision or involves:\n"
+            f"    • Multi-step computations that need verification\n"
+            f"    • Numerical integration, differentiation, or solving equations\n"
+            f"    • Data processing or statistical analysis\n"
+            f"    • Matrix operations, linear algebra, or complex formulas\n"
+            f"    → Route to use_code_tool FIRST for computation, THEN math_improvement for validation\n"
+            f"    → Pattern: code_tool (compute) → math_improvement (validate) → synthesis\n"
+            f"    → This ensures accurate numerical results that are then verified for correctness\n\n"
             f"creative_idea_generator:\n"
             f"  Required: {{\"criteria\": \"<what makes an idea good for this request>\"}}\n"
             f"  Optional: {{\"choose_best\": true/false}}\n"
@@ -240,6 +267,23 @@ class ThinkingPipeline:
             f"    {{\"key\": \"synthesize_final_answer\", \"data\": {{}}}}\n"
             f"  ]\n"
             f"}}\n\n"
+            f"EXAMPLE 4 (Math validation and correction):\n"
+            f"{{\n"
+            f"  \"justification\": \"Math improvement block validates the mathematical reasoning, synthesis explains results.\",\n"
+            f"  \"pipeline_blocks\": [\n"
+            f"    {{\"key\": \"math_improvement\", \"data\": {{\"math_content\": \"Solve: 2x^2 + 5x - 3 = 0 using quadratic formula\"}}}},\n"
+            f"    {{\"key\": \"synthesize_final_answer\", \"data\": {{}}}}\n"
+            f"  ]\n"
+            f"}}\n\n"
+            f"EXAMPLE 5 (Complex math with numerical computation and validation):\n"
+            f"{{\n"
+            f"  \"justification\": \"Code tool performs precise numerical calculations, math improvement validates methodology and results, synthesis presents findings.\",\n"
+            f"  \"pipeline_blocks\": [\n"
+            f"    {{\"key\": \"use_code_tool\", \"data\": {{\"extract_info\": \"Compute definite integral of f(x) = 2x^2 + 3x from 0 to 5 using numerical methods\"}}}},\n"
+            f"    {{\"key\": \"math_improvement\", \"data\": {{\"math_content\": \"Validate the integral calculation and check if the numerical method was applied correctly\"}}}},\n"
+            f"    {{\"key\": \"synthesize_final_answer\", \"data\": {{}}}}\n"
+            f"  ]\n"
+            f"}}\n\n"
             f"Remember: Keep it short, smart, and purposeful. Every block must earn its place in the pipeline."
         )
 
@@ -248,10 +292,22 @@ class ThinkingPipeline:
 
         self.log("planning", "Parsing router response", {"raw": response})
         cleaned = response.strip()
+        
+        # Strip markdown code blocks if present (```json ... ``` or ``` ... ```)
+        if cleaned.startswith("```"):
+            # Remove opening ```json or ```
+            lines = cleaned.split('\n')
+            if lines[0].startswith("```"):
+                lines = lines[1:]  # Remove first line
+            # Remove closing ```
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]  # Remove last line
+            cleaned = '\n'.join(lines).strip()
+        
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            self.log("planning", "Router response not valid JSON; attempting recovery")
+            self.log("planning", "Router response not valid JSON; attempting recovery", None)
 
         extracted = self._extract_json_text(cleaned)
         for candidate in self._generate_json_candidates(extracted):
@@ -380,6 +436,16 @@ class ThinkingPipeline:
                 query = data.get("search_query") or self.state["prompt"]
                 link_num = int(data.get("link_num", 3))
                 result = block(query, link_num)
+            elif key == "math_improvement":
+                # Get math content from data
+                math_content = data.get("math_content", "")
+                
+                # Build context text including previous block outputs
+                context_text = self.state["prompt"]
+                if previous_context_summary:
+                    context_text = f"{context_text}\n\n[PREVIOUS BLOCK OUTPUTS]:\n{previous_context_summary}"
+                
+                result = block(context_text, math_content)
             elif key == "creative_idea_generator":
                 criteria = data.get("criteria") or "Generate diverse, high-quality ideas."
                 choose_best = bool(data.get("choose_best", False))

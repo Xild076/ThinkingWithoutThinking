@@ -511,22 +511,184 @@ class UseCodeToolBlock(PipelineBlock):
 
 
 class UseInternetToolBlock(PipelineBlock):
-    description = "Search the web. Requires data.search_query and optional data.link_num (1-10)."
+    description = "Search the web. Requires data.search_query and optional data.link_num (1-10). Gracefully handles fetch failures."
     
     def __call__(self, query, num_links):
         output = online_query_tool(query, num_links)
         summary = output.get("summary", "")
         articles = output.get("articles", [])
-        text = f"""The output to the requested information {query} from the internet search is:
+        fetch_status = output.get("fetch_status", "UNKNOWN")
+        error = output.get("error", None)
+        
+        # Format the response based on fetch status
+        if fetch_status == "SUCCESS":
+            articles_formatted = "\n".join([f"- {a.get('title', 'Untitled')}: {a.get('link', 'No link')}" for a in articles if a])
+            text = f"""Web search completed successfully for: "{query}"
 
+Summary of findings:
 {summary}
 
-Links used:
+Sources:
+{articles_formatted if articles_formatted else "(No article links available)"}
+"""
+        else:
+            # Fetch failed - explicitly communicate this to prevent hallucination
+            text = f"""⚠️ WEB SEARCH FAILED for: "{query}"
 
-{articles}
+Reason: {error or 'Unknown error'}
 
-        """
+Status: {fetch_status}
+
+Details:
+{summary}
+
+IMPORTANT: Cannot provide information about this topic from web sources. 
+Please use general knowledge or ask for alternative assistance.
+"""
+        
         return text
+
+
+class MathImprovementBlock(PipelineBlock):
+    description = "Validate and improve mathematical reasoning. Catches algebra/calculus/logic errors and provides corrections."
+    
+    def __call__(self, text, math_content) -> dict:
+        """
+        Validate mathematical reasoning and provide corrections if needed.
+        
+        Args:
+            text: The original query or context
+            math_content: The mathematical reasoning or calculation to validate
+            
+        Returns:
+            dict with validation status, errors found, and corrected version
+        """
+        validation = self.validate_math_prompt(text, math_content)
+        return {
+            "original_math": math_content,
+            "validation": validation,
+        }
+    
+    def validate_math_prompt(self, context, math_content):
+        """Validate mathematical reasoning and identify errors."""
+        prompt = (
+            f"ROLE: You are an expert mathematics validator specializing in error detection and correction.\n\n"
+            f"OBJECTIVE: Carefully validate the mathematical reasoning below. Identify ANY errors and provide corrections.\n\n"
+            f"═══════════════════════════════════════════════════════════════════════════════════\n"
+            f"CONTEXT:\n{context}\n\n"
+            f"MATHEMATICAL REASONING TO VALIDATE:\n{math_content}\n"
+            f"═══════════════════════════════════════════════════════════════════════════════════\n\n"
+            f"VALIDATION CHECKLIST:\n"
+            f"1. ALGEBRAIC CORRECTNESS\n"
+            f"   ✓ Are all equation manipulations valid?\n"
+            f"   ✓ Are factorizations correct?\n"
+            f"   ✓ Are simplifications accurate?\n"
+            f"   ✓ Check for sign errors, distribution errors, exponent errors\n\n"
+            f"2. CALCULUS ACCURACY (if applicable)\n"
+            f"   ✓ Are derivatives computed correctly (chain rule, product rule, quotient rule)?\n"
+            f"   ✓ Are integrals evaluated properly?\n"
+            f"   ✓ Are limits handled correctly?\n"
+            f"   ✓ Are boundary conditions applied?\n\n"
+            f"3. LOGICAL CONSISTENCY\n"
+            f"   ✓ Do the steps follow logically from one to the next?\n"
+            f"   ✓ Are assumptions stated and justified?\n"
+            f"   ✓ Are special cases (division by zero, undefined values) handled?\n\n"
+            f"4. NUMERICAL ACCURACY\n"
+            f"   ✓ Are numerical calculations correct?\n"
+            f"   ✓ Are decimal conversions accurate?\n"
+            f"   ✓ Are rounding errors considered?\n\n"
+            f"5. DIMENSIONAL ANALYSIS (if applicable)\n"
+            f"   ✓ Are units consistent throughout?\n"
+            f"   ✓ Are unit conversions correct?\n\n"
+            f"═══════════════════════════════════════════════════════════════════════════════════\n"
+            f"OUTPUT FORMAT - STRICT JSON REQUIRED:\n"
+            f"═══════════════════════════════════════════════════════════════════════════════════\n\n"
+            f"You MUST return ONLY a valid JSON object. No explanatory text before or after.\n"
+            f"Do NOT wrap the JSON in markdown code blocks (no ```json or ```).\n"
+            f"Return the raw JSON object directly.\n\n"
+            f"Required structure:\n\n"
+            f"{{\n"
+            f"  \"is_correct\": true,\n"
+            f"  \"errors_found\": [],\n"
+            f"  \"severity\": \"none\",\n"
+            f"  \"corrected_reasoning\": \"No corrections needed\",\n"
+            f"  \"final_answer\": \"The reasoning is mathematically sound\",\n"
+            f"  \"explanation\": \"Brief explanation of validation\"\n"
+            f"}}\n\n"
+            f"OR if errors found:\n\n"
+            f"{{\n"
+            f"  \"is_correct\": false,\n"
+            f"  \"errors_found\": [\n"
+            f"    {{\n"
+            f"      \"error_type\": \"algebraic\",\n"
+            f"      \"location\": \"Step 2: factorization\",\n"
+            f"      \"description\": \"Incorrect application of difference of squares\",\n"
+            f"      \"consequence\": \"Final answer is off by a factor of 2\"\n"
+            f"    }}\n"
+            f"  ],\n"
+            f"  \"severity\": \"major\",\n"
+            f"  \"corrected_reasoning\": \"Step-by-step corrected version here\",\n"
+            f"  \"final_answer\": \"Correct final answer\",\n"
+            f"  \"explanation\": \"What was wrong and how it was fixed\"\n"
+            f"}}\n\n"
+            f"CRITICAL RULES:\n"
+            f"  ✓ ONLY report errors you can mathematically verify\n"
+            f"  ✓ NEVER hallucinate errors or corrections not supported by math\n"
+            f"  ✓ If you're unsure, mark severity as 'minor' and explain uncertainty\n"
+            f"  ✓ Show all intermediate steps in corrected_reasoning\n"
+            f"  ✗ DO NOT guess at complex proofs - only validate concrete calculations\n"
+            f"  ✗ DO NOT invent mathematical concepts to justify corrections\n\n"
+            f"Return ONLY the JSON object, no other text."
+        )
+        
+        raw_response = generate_text(prompt, temperature=0.3, max_tokens=2000)
+        
+        # Try to parse JSON response with enhanced error handling
+        try:
+            cleaned = raw_response.strip()
+            
+            # Strip markdown code blocks if present (like router does)
+            if cleaned.startswith("```"):
+                lines = cleaned.split('\n')
+                if lines[0].startswith("```"):
+                    lines = lines[1:]  # Remove opening ```json or ```
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]  # Remove closing ```
+                cleaned = '\n'.join(lines).strip()
+            
+            # Try direct JSON parse first
+            try:
+                validation_result = json.loads(cleaned)
+                logger.info(f"Math validation complete. Correct: {validation_result.get('is_correct')}")
+                return validation_result
+            except json.JSONDecodeError:
+                # Fallback: Extract JSON object from response
+                match = re.search(r'\{.*\}', cleaned, re.DOTALL)
+                if match:
+                    validation_result = json.loads(match.group(0))
+                    logger.info(f"Math validation complete (extracted). Correct: {validation_result.get('is_correct')}")
+                    return validation_result
+                else:
+                    # Log the actual response for debugging
+                    logger.warning(f"Could not extract JSON from math validation response. Response preview: {raw_response[:500]}")
+                    return {
+                        "is_correct": False,
+                        "errors_found": [],
+                        "severity": "unknown",
+                        "corrected_reasoning": "Could not parse validation response - no JSON object found",
+                        "final_answer": "VALIDATION FAILED",
+                        "explanation": f"Math validation returned unparseable response. Preview: {raw_response[:200]}"
+                    }
+        except Exception as e:
+            logger.error(f"Math validation parsing error: {e}. Response preview: {raw_response[:300]}")
+            return {
+                "is_correct": False,
+                "errors_found": [],
+                "severity": "unknown",
+                "corrected_reasoning": f"Validation error: {str(e)}",
+                "final_answer": "VALIDATION FAILED",
+                "explanation": f"Math validation encountered error: {str(e)}"
+            }
 
 
 class CreativeIdeaGeneratorBlockTool(PipelineBlock):
@@ -759,6 +921,37 @@ class SynthesizeFinalAnswerBlock(PipelineBlock):
     description = "Produce the final response using all collected context. This block MUST be last."
     
     def __call__(self, prompt, plan, collected_info) -> dict:
+        # CRITICAL: First check if web search failed - if so, REFUSE to generate content
+        web_fetch_failed, failure_details = self._check_web_fetch_failure(collected_info)
+        
+        if web_fetch_failed:
+            # If web search was required and failed, return ONLY the failure message
+            # Do NOT try to synthesize or hallucinate content
+            failure_response = (
+                f"I'm sorry, but I was unable to search the web for your query.\n\n"
+                f"**Error Details:**\n{failure_details}\n\n"
+                f"**What happened:**\n"
+                f"The web search returned no results. This could be due to:\n"
+                f"• Network connectivity issues\n"
+                f"• The search service being temporarily unavailable\n"
+                f"• Your query being blocked or rate-limited\n"
+                f"• Google News not having indexed content for this search\n\n"
+                f"**What to try:**\n"
+                f"• Rephrase your search query with different keywords\n"
+                f"• Try a more general search term\n"
+                f"• Wait a moment and try again\n"
+                f"• If searching for very recent news, try again in a few minutes\n\n"
+                f"I cannot provide information about this topic because the web search failed. "
+                f"I will not fabricate or guess at news content, sources, or links."
+            )
+            
+            return {
+                "initial_response": failure_response,
+                "score": {"clarity": 10, "logic": 10, "completeness": 8, "accuracy": 10},
+                "final_response": failure_response,
+            }
+        
+        # Normal flow: web search succeeded or wasn't needed
         initial_response = self.create_synthesis_prompt(prompt, plan, collected_info)
         scorer = self.scorer_prompt(prompt, initial_response)
         improved = self.improver_prompt(prompt, initial_response, plan, scorer)
@@ -767,9 +960,18 @@ class SynthesizeFinalAnswerBlock(PipelineBlock):
             "score": scorer,
             "final_response": improved,
         }
+    
+    def _check_web_fetch_failure(self, collected_info: dict) -> tuple:
+        """Check if any web fetch tool returned a failure status. Returns (failed, details)."""
+        for key, value in collected_info.items():
+            if "use_internet_tool" in key and isinstance(value, str):
+                if "WEB SEARCH FAILED" in value or "WEB FETCH FAILED" in value or "EXTRACTION FAILED" in value:
+                    return True, value[:800]  # Return failure message
+        return False, ""
 
     def create_synthesis_prompt(self, prompt, plan, collected_info:dict):
         collated, assets = self._collate_collected_info(collected_info)
+        
         collected_info_text = json.dumps(collated, indent=2, ensure_ascii=False)
         
         # CRITICAL: Limit context size to prevent token quota exhaustion
@@ -795,6 +997,9 @@ class SynthesizeFinalAnswerBlock(PipelineBlock):
         prompt_text = (
             f"You are synthesizing a final answer. PRIORITIZE the USER'S ORIGINAL PROMPT first and use the INTERNAL PLAN only as secondary execution guidance.\n"
             f"Follow the Output Schema exactly and ensure all Rubric criteria are met.\n\n"
+        )
+        
+        prompt_text += (
             f"PROMPT (PRIMARY - use this to determine purpose and scope):\n{prompt}\n\n"
             f"PLAN (SECONDARY - use to shape steps but do NOT override user's explicit intent):\n{plan}\n\n"
             f"COLLECTED INFORMATION:\n{collected_info_text}\n\n"
@@ -848,7 +1053,13 @@ class SynthesizeFinalAnswerBlock(PipelineBlock):
             f"6. Ensure the response directly solves the user's request without asking them to run additional code\n"
             f"7. For any web links, place them in a 'References' section at the end\n"
             f"8. Include dates ONLY when they are critical to the content - avoid adding dates just as timestamps\n"
-            f"9. Be factual and precise - do not hallucinate data, sources, or images that don't exist\n"
+            f"9. CRITICAL - ANTI-HALLUCINATION RULE:\n"
+            f"   - Do NOT fabricate data, statistics, quotes, or sources\n"
+            f"   - Do NOT invent article titles, news summaries, or current events if web search failed\n"
+            f"   - Do NOT create fake charts, graphs, or images\n"
+            f"   - ONLY use information from the 'COLLECTED INFORMATION' section above\n"
+            f"   - If web search FAILED (marked in collected info), say so explicitly\n"
+            f"   - When uncertain about facts: state 'I cannot verify this' rather than guessing\n"
             f"10. CRITICAL: Deliver the answer DIRECTLY without meta-commentary\n"
             f"   - DO NOT explain your approach ('This response aims to...', 'The following will...', 'I've structured this...')\n"
             f"   - DO NOT reference the scoring/improvement process\n"
