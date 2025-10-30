@@ -23,6 +23,14 @@ from .pipeline_blocks import (
     UseInternetToolBlock,
     MathImprovementBlock,
     CreativeIdeaGeneratorBlockTool,
+    SummarizeBlock,
+    DataAnalysisBlock,
+    ComparisonBlock,
+    TranslateBlock,
+    FactCheckBlock,
+    DebugBlock,
+    ReadPDFBlock,
+    CreatePDFBlock,
     SynthesizeFinalAnswerBlock,
 )
 from .utility import generate_text
@@ -51,6 +59,14 @@ class ThinkingPipeline:
             "math_improvement": MathImprovementBlock(),
             "creative_idea_generator": CreativeIdeaGeneratorBlockTool(),
             "synthesize_final_answer": SynthesizeFinalAnswerBlock(),
+            "summarize": SummarizeBlock(),
+            "data_analysis": DataAnalysisBlock(),
+            "comparison": ComparisonBlock(),
+            "translate": TranslateBlock(),
+            "fact_check": FactCheckBlock(),
+            "debug": DebugBlock(),
+            "read_pdf": ReadPDFBlock(),
+            "create_pdf": CreatePDFBlock(),
         }
         self.state: Dict[str, Any] = {}
         
@@ -226,6 +242,52 @@ class ThinkingPipeline:
             f"  Example: {{\"criteria\": \"Original, feasible, emotionally resonant\", \"choose_best\": true}}\n"
             f"  Use when: Brainstorming, creative work, generating options\n"
             f"  IMPORTANT: Set choose_best=true to auto-select and expand the best idea\n\n"
+            f"summarize:\n"
+            f"  Required: {{\"content_to_summarize\": \"<text to summarize>\"}}\n"
+            f"  Optional: {{\"summary_style\": \"comprehensive/bullets/abstract/eli5/executive\"}}\n"
+            f"  Example: {{\"content_to_summarize\": \"<long article>\", \"summary_style\": \"bullets\"}}\n"
+            f"  Use when: Need to condense long documents, articles, or text\n"
+            f"  Styles: comprehensive (detailed), bullets (key points), abstract (academic), eli5 (simple), executive (brief)\n\n"
+            f"data_analysis:\n"
+            f"  Required: {{\"data_description\": \"<description or actual data to analyze>\"}}\n"
+            f"  Example: {{\"data_description\": \"CSV with columns: date, sales, region...\"}}\n"
+            f"  Use when: Need to analyze structured data (CSV, JSON, tables)\n"
+            f"  Returns: Statistics, patterns, insights, and optional visualizations\n\n"
+            f"comparison:\n"
+            f"  Required: {{\"items_to_compare\": \"<list or description of items>\"}}\n"
+            f"  Example: {{\"items_to_compare\": \"AWS, Azure, Google Cloud\"}}\n"
+            f"  Use when: Need structured comparison with pros/cons and recommendations\n"
+            f"  Returns: Comparison matrix with scores, pros/cons, and winner recommendation\n\n"
+            f"translate:\n"
+            f"  Required: {{\"content_to_translate\" or \"text\": \"<text>\", \"target_language\": \"<language>\"}}\n"
+            f"  Optional: {{\"source_language\": \"<language>\"}} (defaults to auto-detect)\n"
+            f"  Example: {{\"text\": \"Hello world\", \"target_language\": \"Spanish\"}}\n"
+            f"  Use when: Need translation between languages\n"
+            f"  Preserves tone, style, and cultural context\n\n"
+            f"fact_check:\n"
+            f"  Required: {{\"claims_to_verify\": \"<claims as string or list>\"}}\n"
+            f"  Example: {{\"claims_to_verify\": \"Earth is round\\nWater boils at 100C\"}}\n"
+            f"  Use when: Need to verify factual claims using web search\n"
+            f"  Returns: Verdict (TRUE/FALSE/PARTIALLY_TRUE/UNVERIFIABLE) with confidence and sources\n"
+            f"  Limit: Checks up to 5 claims to avoid quota issues\n\n"
+            f"debug:\n"
+            f"  Required: {{\"code_to_debug\": \"<code with issues>\"}}\n"
+            f"  Optional: {{\"error_message\": \"<error or stack trace>\"}}\n"
+            f"  Example: {{\"code_to_debug\": \"def foo():\\n  return x/0\", \"error_message\": \"ZeroDivisionError\"}}\n"
+            f"  Use when: Need to identify and fix code issues (syntax, logic, performance, security)\n"
+            f"  Supports: Python, JavaScript, and other common languages\n\n"
+            f"read_pdf:\n"
+            f"  Required: {{\"pdf_path\": \"<path to PDF file>\"}}\n"
+            f"  Example: {{\"pdf_path\": \"/tmp/uploaded_document.pdf\"}}\n"
+            f"  Use when: Need to extract text from uploaded PDF files for analysis\n"
+            f"  Returns: Extracted text content that can be analyzed by other blocks\n\n"
+            f"create_pdf:\n"
+            f"  Required: {{\"content_to_convert\": \"<text or markdown content>\"}}\n"
+            f"  Optional: {{\"output_filename\": \"report.pdf\", \"title\": \"Document Title\", \"use_markdown\": true}}\n"
+            f"  Example: {{\"content_to_convert\": \"# Report\\n\\nContent here...\", \"title\": \"Analysis Report\"}}\n"
+            f"  Use when: Need to generate PDF documents from text/markdown\n"
+            f"  Perfect for: Reports, summaries, formatted documents\n"
+            f"  Returns: Path to created PDF file\n\n"
             f"synthesize_final_answer:\n"
             f"  Data: {{}}\n"
             f"  Use: ALWAYS include as the final block\n"
@@ -457,6 +519,37 @@ class ThinkingPipeline:
             elif key == "synthesize_final_answer":
                 result = block(self.state["prompt"], self.state["plan"], context)
                 self.state["final_answer"] = result.get("final_response")
+            elif key == "summarize":
+                content = data.get("content_to_summarize", "")
+                style = data.get("summary_style", "comprehensive")
+                result = block(self.state["prompt"], content, style)
+            elif key == "data_analysis":
+                data_description = data.get("data_description", "")
+                result = block(self.state["prompt"], data_description)
+            elif key == "comparison":
+                items = data.get("items_to_compare", "")
+                result = block(self.state["prompt"], items)
+            elif key == "translate":
+                content = data.get("content_to_translate") or data.get("text", "")
+                target_lang = data.get("target_language", "Spanish")
+                source_lang = data.get("source_language", "auto")
+                result = block(self.state["prompt"], content, target_lang, source_lang)
+            elif key == "fact_check":
+                claims = data.get("claims_to_verify", "")
+                result = block(self.state["prompt"], claims)
+            elif key == "debug":
+                code = data.get("code_to_debug", "")
+                error_msg = data.get("error_message")
+                result = block(self.state["prompt"], code, error_msg)
+            elif key == "read_pdf":
+                pdf_path = data.get("pdf_path", "")
+                result = block(self.state["prompt"], pdf_path)
+            elif key == "create_pdf":
+                content = data.get("content_to_convert", "")
+                filename = data.get("output_filename", "output.pdf")
+                title = data.get("title")
+                use_md = data.get("use_markdown", True)
+                result = block(self.state["prompt"], content, filename, title, use_md)
             else:
                 result = block(self.state["prompt"])
 

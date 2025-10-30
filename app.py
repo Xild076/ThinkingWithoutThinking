@@ -1,6 +1,9 @@
 import sys
 import time
 import json
+import re
+import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -14,6 +17,7 @@ if str(SRC_DIR) not in sys.path:
 
 from src.thinking_pipeline import ThinkingPipeline  # noqa: E402
 from src import utility  # noqa: E402
+from src.pdf_utils import extract_text_from_pdf, create_pdf_from_markdown  # noqa: E402
 
 
 st.set_page_config(
@@ -24,6 +28,108 @@ st.set_page_config(
 
 # File to store usage data
 USAGE_FILE = ROOT_DIR / ".usage_data.json"
+
+
+def _should_create_pdf(prompt: str, result: Dict[str, Any]) -> bool:
+    """Determine if a PDF should be automatically created based on the query and result."""
+    prompt_lower = prompt.lower()
+    
+    # Keywords that suggest user wants downloadable content
+    pdf_keywords = [
+        "study guide", "guide", "report", "summary", "documentation", "notes",
+        "cheat sheet", "reference", "tutorial", "instructions", "manual",
+        "worksheet", "handout", "overview", "primer", "syllabus"
+    ]
+    
+    # Keywords that suggest user just wants explanation (no PDF)
+    no_pdf_keywords = [
+        "explain", "what is", "how does", "why", "difference between",
+        "compare", "tell me about", "describe"
+    ]
+    
+    # Check if user explicitly wants a PDF
+    if "pdf" in prompt_lower or "download" in prompt_lower:
+        return True
+    
+    # Check for PDF-suggesting keywords
+    has_pdf_keyword = any(keyword in prompt_lower for keyword in pdf_keywords)
+    has_no_pdf_keyword = any(keyword in prompt_lower for keyword in no_pdf_keywords)
+    
+    # Don't create PDF for simple explanations
+    if has_no_pdf_keyword and not has_pdf_keyword:
+        return False
+    
+    # Create PDF if it's a study/reference material request
+    if has_pdf_keyword:
+        return True
+    
+    # Check if result is substantial (long answer = likely wants to save it)
+    final_answer = result.get("final_answer", "")
+    if len(final_answer) > 2000:  # Long, detailed response
+        return True
+    
+    return False
+
+
+def _extract_pdf_content_for_pdf(result: Dict[str, Any]) -> str:
+    """Extract only the relevant final answer content for PDF creation."""
+    final_answer = result.get("final_answer", "")
+    
+    # Remove any meta-commentary about the process
+    # The PDF should only contain the actual content, not "Here's what I found..."
+    lines = final_answer.split('\n')
+    filtered_lines = []
+    
+    skip_patterns = [
+        r"^(here'?s|this|the following|i'?ve)",
+        r"^based on",
+        r"^after (analyzing|reviewing|examining)",
+    ]
+    
+    for line in lines:
+        line_lower = line.strip().lower()
+        should_skip = any(re.match(pattern, line_lower) for pattern in skip_patterns)
+        
+        # Keep the line if it's not meta-commentary
+        if not should_skip or len(line.strip()) > 100:  # Long lines are usually content
+            filtered_lines.append(line)
+    
+    return '\n'.join(filtered_lines).strip()
+
+
+def _create_pdf_from_result(prompt: str, result: Dict[str, Any]) -> Optional[str]:
+    """Create a PDF from the pipeline result and return the file path."""
+    try:
+        # Extract clean content
+        content = _extract_pdf_content_for_pdf(result)
+        
+        if not content or len(content) < 50:
+            return None
+        
+        # Generate title from prompt
+        title_words = prompt.split()[:8]
+        title = ' '.join(title_words)
+        if len(prompt.split()) > 8:
+            title += "..."
+        
+        # Create filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_title = re.sub(r'[^\w\s-]', '', title)[:30].strip().replace(' ', '_')
+        filename = f"{safe_title}_{timestamp}.pdf"
+        
+        # Create PDF in temp directory
+        temp_dir = tempfile.gettempdir()
+        output_path = os.path.join(temp_dir, filename)
+        
+        success = create_pdf_from_markdown(content, output_path, title=title)
+        
+        if success:
+            return output_path
+        return None
+    
+    except Exception as e:
+        st.warning(f"Could not create PDF: {str(e)}")
+        return None
 
 def _init_state() -> None:
     st.session_state.setdefault("conversations", [])
@@ -50,6 +156,11 @@ def _init_state() -> None:
         "synthesis_temperature": 0.6,
         "max_pipeline_blocks": 7,
     })
+    
+    # PDF upload state
+    st.session_state.setdefault("uploaded_pdf", None)
+    st.session_state.setdefault("pdf_text", None)
+    st.session_state.setdefault("had_pdf_context", False)
 
 
 def _render_payload(payload: Any) -> None:
@@ -477,6 +588,7 @@ def _render_conversation(conv: Dict[str, Any]) -> None:
     pipeline_spec = result.get("pipeline") or []
     context = result.get("context") or {}
     assets = result.get("assets") or []
+    pdf_path = conv.get("pdf_path")  # PDF path if one was created
 
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -523,6 +635,33 @@ def _render_conversation(conv: Dict[str, Any]) -> None:
                     
                     _render_payload(context.get(context_key))
                     st.divider()
+
+        # PDF Download Container (if PDF was created)
+        if pdf_path and os.path.exists(pdf_path):
+            st.markdown("---")
+            with st.container():
+                st.markdown("### 📄 PDF Document Available")
+                st.caption("This response has been formatted as a downloadable PDF document.")
+                
+                with open(pdf_path, "rb") as pdf_file:
+                    pdf_data = pdf_file.read()
+                    filename = os.path.basename(pdf_path)
+                    
+                    col1, col2 = st.columns([0.7, 0.3])
+                    with col1:
+                        st.markdown(f"**📄 {filename}**")
+                        st.caption(f"📊 Size: {len(pdf_data) / 1024:.1f} KB • 🕐 {datetime.now().strftime('%I:%M %p')}")
+                    with col2:
+                        st.download_button(
+                            label="⬇️ Download PDF",
+                            data=pdf_data,
+                            file_name=filename,
+                            mime="application/pdf",
+                            use_container_width=True,
+                            type="primary"
+                        )
+            st.caption("💡 This response is available as a downloadable PDF")
+            st.markdown("---")
 
         # Render final answer with embedded images (no header)
         final_answer = result.get("final_answer") or "No final answer produced."
@@ -655,6 +794,44 @@ if st.session_state.get("show_info_popup", True) and not st.session_state.get("i
 st.title("Thinking Without Thinking")
 st.caption("Chat with a custom reasoning pipeline that has extensive capabilities including web search and code execution. This is fully runnable on a free Google AI API key.")
 
+# Custom CSS for better UI
+st.markdown("""
+<style>
+    /* Maintain comfortable bottom padding for chat input */
+    main .block-container {
+        padding-bottom: 6rem !important;
+    }
+
+    /* Compact PDF context alert */
+    .pdf-attachment-card {
+        background-color: #2b2b2b;
+        border-radius: 12px;
+        padding: 12px 16px;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .pdf-attachment-card .pdf-icon {
+        background-color: #ff6b6b;
+        border-radius: 8px;
+        width: 48px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+    }
+
+    .pdf-attachment-card .pdf-details {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 with st.sidebar:
     st.header("⚙️ Settings")
     
@@ -755,9 +932,68 @@ with st.sidebar:
             st.session_state["info_popup_shown"] = False
             st.rerun()
 
+    st.divider()
+
+    st.subheader("📎 PDF Context")
+    if st.session_state.get("uploaded_pdf"):
+        st.success(f"Attached: {st.session_state['uploaded_pdf']}")
+        if st.button("✕ Remove PDF", key="remove_pdf_sidebar", use_container_width=True):
+            st.session_state["uploaded_pdf"] = None
+            st.session_state["pdf_text"] = None
+            st.session_state["pdf_path"] = None
+            st.session_state["had_pdf_context"] = False
+            st.session_state.pop("pdf_uploader", None)
+            st.rerun()
+
+    st.caption("Attach an optional PDF to give the assistant extra context.")
+    uploaded_file = st.file_uploader(
+        "Upload PDF for context",
+        type=["pdf"],
+        help="Attach a PDF to ground responses.",
+        key="pdf_uploader",
+        label_visibility="collapsed",
+    )
+
+    if uploaded_file is not None and st.session_state.get("uploaded_pdf") != uploaded_file.name:
+        try:
+            temp_pdf_path = os.path.join(tempfile.gettempdir(), uploaded_file.name)
+            with open(temp_pdf_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+
+            pdf_text = extract_text_from_pdf(temp_pdf_path)
+
+            if pdf_text.startswith("ERROR:"):
+                st.error(f"Failed to read PDF: {pdf_text}")
+                st.session_state["uploaded_pdf"] = None
+                st.session_state["pdf_text"] = None
+            else:
+                st.session_state["uploaded_pdf"] = uploaded_file.name
+                st.session_state["pdf_text"] = pdf_text
+                st.session_state["pdf_path"] = temp_pdf_path
+                st.session_state["had_pdf_context"] = True
+                st.rerun()
+        except Exception as e:
+            st.error(f"Error processing PDF: {str(e)}")
+            st.session_state["uploaded_pdf"] = None
+            st.session_state["pdf_text"] = None
+
 error = st.session_state.get("last_error")
 if error:
     st.error(error)
+
+if st.session_state.get("uploaded_pdf"):
+    st.markdown(
+        f"""
+        <div class='pdf-attachment-card'>
+            <div class='pdf-icon'>📄</div>
+            <div class='pdf-details'>
+                <div style='color: white; font-weight: 600; font-size: 14px;'>{st.session_state['uploaded_pdf']}</div>
+                <div style='color: #bbb; font-size: 12px;'>Attached PDF context</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 for conv in st.session_state.conversations:
     _render_conversation(conv)
@@ -765,12 +1001,10 @@ for conv in st.session_state.conversations:
 # If currently processing a prompt, show it first
 if st.session_state.get("current_prompt"):
     with st.chat_message("user"):
-        # Show the display version (without context) to the user
         display_prompt = st.session_state.get("current_prompt_display", st.session_state["current_prompt"])
         st.markdown(display_prompt)
 
-# Chat input - always visible
-prompt_input = st.chat_input("Ask the pipeline...")
+prompt_input = st.chat_input("Ask anything")
 
 if prompt_input:
     # Check usage limits (only for free tier - no custom API key in this session)
@@ -784,14 +1018,29 @@ if prompt_input:
     # Build intelligent conversation context by extracting relevant info from history
     context_summary = _build_conversation_context(prompt_input, st.session_state.get("conversations", []))
     
+    # Add PDF content if uploaded
+    pdf_context = ""
+    if st.session_state.get("pdf_text"):
+        pdf_context = f"""
+[Attached PDF: {st.session_state['uploaded_pdf']}]
+---
+{st.session_state['pdf_text']}
+---
+
+"""
+    
+    # Compose final prompt with context + PDF + query
     if context_summary:
-        composed = f"[Conversation Context]\n{context_summary}\n\n[Current Query]\n{prompt_input}"
+        composed = f"[Conversation Context]\n{context_summary}\n\n{pdf_context}[Current Query]\n{prompt_input}"
+    elif pdf_context:
+        composed = f"{pdf_context}[Current Query]\n{prompt_input}"
     else:
         composed = prompt_input
 
     # Store BOTH the original prompt (for display) and the composed prompt (for processing)
     st.session_state["current_prompt_display"] = prompt_input  # What user sees
     st.session_state["current_prompt"] = composed  # What pipeline processes
+    st.session_state["had_pdf_context"] = bool(pdf_context)  # Track if this message had PDF context
     st.session_state["processing_complete"] = False
     st.rerun()
 
@@ -818,10 +1067,27 @@ if st.session_state.get("current_prompt") and not st.session_state.get("processi
                 "result": result,
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
+            
+            # Auto-create PDF ONLY if this message had PDF context
+            had_pdf_context = st.session_state.get("had_pdf_context", False)
+            if had_pdf_context:
+                original_prompt = st.session_state.get("current_prompt_display", st.session_state["current_prompt"])
+                if _should_create_pdf(original_prompt, result):
+                    pdf_path = _create_pdf_from_result(original_prompt, result)
+                    if pdf_path:
+                        conversation["pdf_path"] = pdf_path
+            
             st.session_state.conversations.append(conversation)
             st.session_state.selected_blocks[conversation["id"]] = None
             st.session_state.last_error = None
             st.session_state["current_prompt"] = None
             st.session_state["current_prompt_display"] = None  # Clear display version too
+            st.session_state["had_pdf_context"] = False  # Reset PDF context flag
             st.session_state["processing_complete"] = True
+            
+            # Clear uploaded PDF after processing (optional - can be removed if you want it to persist)
+            # st.session_state["uploaded_pdf"] = None
+            # st.session_state["pdf_text"] = None
+            # st.session_state["pdf_path"] = None
+            
             st.rerun()

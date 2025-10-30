@@ -15,3 +15,7 @@ seaborn
 scikit-learn
 pytest
 pip-tools
+PyPDF2
+reportlab
+PillowPyPDF2
+reportlab

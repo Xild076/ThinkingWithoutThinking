@@ -4,6 +4,7 @@ import re
 from typing import Optional
 
 from .utility import generate_text, python_exec_tool, online_query_tool
+from .pdf_utils import extract_text_from_pdf, create_pdf_from_text, create_pdf_from_markdown
 
 
 logger = logging.getLogger(__name__)
@@ -258,6 +259,12 @@ class UseCodeToolBlock(PipelineBlock):
             elif previous_error and "ModuleNotFoundError" in previous_error:
                 previous_error += \
                     "\nGuidance: Only use standard library modules (json, re, datetime, etc.) and matplotlib. External packages are not available. Work with the data already provided to you."
+            elif previous_error and "sympy" in previous_error.lower():
+                previous_error += \
+                    "\nGuidance: sympy is NOT available. Solve the system of equations manually using substitution/elimination method or matrix operations with pure Python."
+            elif previous_error and ("list indices must be integers" in previous_error or "Symbol" in previous_error):
+                previous_error += \
+                    "\nGuidance: You're trying to use symbolic variables as list indices. Use numeric calculations only - solve equations algebraically by hand, then calculate the numeric result."
 
         output_output = final_output.get("output", "") if final_output else ""
         output_files = final_output.get("plots", []) if final_output else []
@@ -296,6 +303,17 @@ class UseCodeToolBlock(PipelineBlock):
         metadata = structured_output.get("metadata")
         if not isinstance(metadata, dict):
             return "metadata field must be a JSON object."
+        
+        # CRITICAL: Check if the code reported an error in the output
+        if metadata.get("error") is True:
+            answer = structured_output.get("answer", "")
+            return f"Code execution reported an error: {answer}"
+        
+        # Check if the answer contains error indicators
+        answer = str(structured_output.get("answer", "")).lower()
+        error_indicators = ["error occurred", "exception", "failed", "traceback"]
+        if any(indicator in answer for indicator in error_indicators):
+            return f"Code output contains error message: {structured_output.get('answer', '')}"
 
         if plot_requested and not metadata.get("plot_saved"):
             return (
@@ -552,21 +570,37 @@ Please use general knowledge or ask for alternative assistance.
 class MathImprovementBlock(PipelineBlock):
     description = "Validate and improve mathematical reasoning. Catches algebra/calculus/logic errors and provides corrections."
     
-    def __call__(self, text, math_content) -> dict:
+    def __call__(self, text, math_content, verify_with_code=True) -> dict:
         """
         Validate mathematical reasoning and provide corrections if needed.
         
         Args:
             text: The original query or context
             math_content: The mathematical reasoning or calculation to validate
+            verify_with_code: Whether to attempt numerical verification via Python code
             
         Returns:
-            dict with validation status, errors found, and corrected version
+            dict with validation status, errors found, corrected version, and code verification
         """
+        # First pass: LLM-based validation
         validation = self.validate_math_prompt(text, math_content)
+        
+        # Second pass: Self-verification through independent re-derivation
+        if not validation.get("is_correct", False):
+            logger.info("Math validation found errors. Attempting self-verification...")
+            verification = self.self_verify_prompt(text, math_content, validation)
+            validation["self_verification"] = verification
+        
+        # Third pass: Numerical verification via code (if applicable)
+        code_verification = None
+        if verify_with_code:
+            code_verification = self.verify_with_computation(text, math_content, validation)
+            validation["code_verification"] = code_verification
+        
         return {
             "original_math": math_content,
             "validation": validation,
+            "verified_with_code": code_verification is not None,
         }
     
     def validate_math_prompt(self, context, math_content):
@@ -688,6 +722,130 @@ class MathImprovementBlock(PipelineBlock):
                 "corrected_reasoning": f"Validation error: {str(e)}",
                 "final_answer": "VALIDATION FAILED",
                 "explanation": f"Math validation encountered error: {str(e)}"
+            }
+    
+    def self_verify_prompt(self, context, math_content, validation_result):
+        """
+        Independent re-derivation to verify the correction is actually correct.
+        This acts as a second opinion - solving the problem from scratch AND checking by substitution.
+        """
+        prompt = (
+            f"ROLE: You are a second mathematics expert providing independent verification.\n\n"
+            f"OBJECTIVE: Verify the solution by BOTH solving independently AND checking by substitution.\n\n"
+            f"═══════════════════════════════════════════════════════════════════════════════════\n"
+            f"CONTEXT:\n{context}\n\n"
+            f"PREVIOUS VALIDATION FOUND THESE ISSUES:\n"
+            f"{json.dumps(validation_result.get('errors_found', []), indent=2)}\n\n"
+            f"CORRECTED ANSWER CLAIMED:\n{validation_result.get('final_answer', 'N/A')}\n"
+            f"═══════════════════════════════════════════════════════════════════════════════════\n\n"
+            f"YOUR VERIFICATION STEPS:\n"
+            f"1. **Solve independently**: Work through the problem from first principles\n"
+            f"2. **Check by substitution**: Take the claimed answer and substitute it back into the original problem\n"
+            f"3. **Verify consistency**: Do both methods agree?\n\n"
+            f"EXAMPLE FOR SYSTEM OF EQUATIONS:\n"
+            f"  - If solution claims a_r=10, d_r=-5, a_c=20, d_c=8\n"
+            f"  - Substitute these values back into ALL original equations\n"
+            f"  - Check: Does a_r + 4*d_r + a_c + 4*d_c = 0? → 10 + 4*(-5) + 20 + 4*8 = 10 - 20 + 20 + 32 = 42 ≠ 0 (ERROR!)\n"
+            f"  - This proves the solution is wrong\n\n"
+            f"OUTPUT FORMAT (JSON only):\n"
+            f"{{\n"
+            f"  \"independent_solution\": \"Your step-by-step solution\",\n"
+            f"  \"independent_answer\": \"Your final answer\",\n"
+            f"  \"substitution_check\": \"Results of substituting claimed answer back into problem\",\n"
+            f"  \"substitution_passes\": true/false,\n"
+            f"  \"matches_correction\": true/false,\n"
+            f"  \"confidence\": \"high/medium/low\",\n"
+            f"  \"notes\": \"Any discrepancies or concerns\"\n"
+            f"}}\n\n"
+            f"CRITICAL: The substitution_check is the most important validation. If the answer doesn't satisfy\n"
+            f"the original problem when substituted back, it's WRONG regardless of how elegant the derivation is.\n\n"
+            f"Return ONLY the JSON object."
+        )
+        
+        raw_response = generate_text(prompt, temperature=0.2, max_tokens=1500)
+        
+        try:
+            cleaned = raw_response.strip()
+            if cleaned.startswith("```"):
+                lines = cleaned.split('\n')
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                cleaned = '\n'.join(lines).strip()
+            
+            return json.loads(cleaned)
+        except:
+            match = re.search(r'\{.*\}', raw_response, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+            return {"error": "Could not parse self-verification response"}
+    
+    def verify_with_computation(self, context, math_content, validation_result):
+        """
+        Attempt to verify the mathematical result using Python computation.
+        This provides numerical ground truth when applicable.
+        """
+        prompt = (
+            f"ROLE: You are writing Python code to numerically verify a mathematical result.\n\n"
+            f"CONTEXT:\n{context}\n\n"
+            f"MATHEMATICAL CLAIM TO VERIFY:\n{validation_result.get('final_answer', math_content)}\n\n"
+            f"═══════════════════════════════════════════════════════════════════════════════════\n"
+            f"TASK: Write Python code that computes the result numerically to verify correctness.\n\n"
+            f"CONSTRAINTS:\n"
+            f"  • Use only standard library (math, cmath, fractions, decimal, etc.)\n"
+            f"  • DO NOT use numpy, scipy, sympy (not available)\n"
+            f"  • Print a SINGLE JSON object with:\n"
+            f"    - 'computed_value': the numerical result\n"
+            f"    - 'verification_status': 'VERIFIED', 'FAILED', or 'NOT_APPLICABLE'\n"
+            f"    - 'details': explanation of what was computed\n\n"
+            f"If the problem is purely symbolic (no numerical answer possible), return:\n"
+            f"{{\n"
+            f"  \"computed_value\": null,\n"
+            f"  \"verification_status\": \"NOT_APPLICABLE\",\n"
+            f"  \"details\": \"Problem is symbolic/algebraic - numerical verification not applicable\"\n"
+            f"}}\n\n"
+            f"RETURN ONLY THE PYTHON CODE (no markdown, no explanations)."
+        )
+        
+        raw_code = generate_text(prompt, temperature=0.3, max_tokens=800)
+        
+        # Extract code if wrapped in markdown
+        code = raw_code.strip()
+        if "```" in code:
+            sections = code.split("```")
+            if len(sections) >= 3:
+                candidate = sections[1]
+                if candidate.strip().startswith("python"):
+                    candidate = "\n".join(candidate.splitlines()[1:])
+                code = candidate.strip()
+        
+        # Execute the verification code
+        try:
+            result = python_exec_tool(code, save_plots=False)
+            if result.get("success"):
+                stdout = result.get("output", "")
+                # Try to parse JSON from stdout
+                try:
+                    verification_data = json.loads(stdout.strip())
+                    logger.info(f"Code verification status: {verification_data.get('verification_status')}")
+                    return verification_data
+                except:
+                    # Try to extract JSON from output
+                    match = re.search(r'\{.*\}', stdout, re.DOTALL)
+                    if match:
+                        return json.loads(match.group(0))
+            return {
+                "computed_value": None,
+                "verification_status": "FAILED",
+                "details": f"Code execution failed: {result.get('error', 'Unknown error')}"
+            }
+        except Exception as e:
+            logger.warning(f"Math code verification error: {e}")
+            return {
+                "computed_value": None,
+                "verification_status": "ERROR",
+                "details": f"Verification error: {str(e)}"
             }
 
 
@@ -1316,3 +1474,482 @@ class SynthesizeFinalAnswerBlock(PipelineBlock):
                 for k, v in value.items()
             }
         return repr(value)
+
+
+class DataAnalysisBlock(PipelineBlock):
+    description = "Analyze structured data (tables, CSV, JSON). Extracts patterns, statistics, correlations, and insights."
+    
+    def __call__(self, text, data_description) -> dict:
+        """
+        Analyze structured data to extract insights.
+        
+        Args:
+            text: The analysis request
+            data_description: Description of the data or the data itself
+            
+        Returns:
+            dict with analysis results including statistics, patterns, and visualizations
+        """
+        # Generate analysis plan
+        analysis_plan = self.plan_analysis(text, data_description)
+        
+        # Execute analysis via code
+        code_prompt = (
+            f"Generate Python code to analyze this data:\n\n"
+            f"REQUEST: {text}\n\n"
+            f"DATA: {data_description}\n\n"
+            f"ANALYSIS PLAN: {analysis_plan}\n\n"
+            f"The code must:\n"
+            f"1. Parse/load the data (if it's CSV/JSON text, parse it)\n"
+            f"2. Calculate statistics (mean, median, std dev, correlations, etc.)\n"
+            f"3. Identify patterns or outliers\n"
+            f"4. Output results as JSON with 'summary', 'statistics', 'insights' keys\n"
+            f"5. Optionally create visualizations with matplotlib if helpful\n\n"
+            f"Use only standard library + matplotlib. Return ONLY Python code."
+        )
+        
+        code_block = UseCodeToolBlock(max_attempts=5)
+        result = code_block(code_prompt, extract_info=analysis_plan)
+        
+        return {
+            "analysis_plan": analysis_plan,
+            "code_result": result,
+            "structured_output": result.get("structured_output"),
+        }
+    
+    def plan_analysis(self, text, data_description):
+        """Plan what analysis to perform."""
+        prompt = (
+            f"ROLE: You are a data analyst planning an analysis strategy.\n\n"
+            f"USER REQUEST: {text}\n\n"
+            f"DATA AVAILABLE: {data_description}\n\n"
+            f"Create a concise analysis plan (3-5 bullet points) specifying:\n"
+            f"• What statistics to calculate\n"
+            f"• What patterns to look for\n"
+            f"• What visualizations would be helpful\n"
+            f"• What insights to extract\n\n"
+            f"Be specific and actionable."
+        )
+        return generate_text(prompt, temperature=0.5, max_tokens=400)
+
+
+class ComparisonBlock(PipelineBlock):
+    description = "Compare multiple items (products, ideas, options). Provides structured pros/cons and recommendations."
+    
+    def __call__(self, text, items_to_compare) -> dict:
+        """
+        Compare multiple items across relevant dimensions.
+        
+        Args:
+            text: The comparison request
+            items_to_compare: List or description of items to compare
+            
+        Returns:
+            dict with comparison matrix, pros/cons, and recommendation
+        """
+        comparison = self.compare_items(text, items_to_compare)
+        
+        return {
+            "comparison_result": comparison,
+        }
+    
+    def compare_items(self, text, items_to_compare):
+        """Generate structured comparison."""
+        prompt = (
+            f"ROLE: You are an expert analyst creating objective comparisons.\n\n"
+            f"REQUEST: {text}\n\n"
+            f"ITEMS TO COMPARE: {items_to_compare}\n\n"
+            f"═══════════════════════════════════════════════════════════════════════════════════\n"
+            f"TASK: Create a comprehensive comparison in JSON format.\n\n"
+            f"OUTPUT STRUCTURE:\n"
+            f"{{\n"
+            f"  \"criteria\": [\"criterion1\", \"criterion2\", ...],\n"
+            f"  \"items\": [\n"
+            f"    {{\n"
+            f"      \"name\": \"Item 1\",\n"
+            f"      \"scores\": {{\"criterion1\": 8, \"criterion2\": 6, ...}},\n"
+            f"      \"pros\": [\"advantage 1\", \"advantage 2\"],\n"
+            f"      \"cons\": [\"disadvantage 1\", \"disadvantage 2\"],\n"
+            f"      \"best_for\": \"Use case where this excels\"\n"
+            f"    }}\n"
+            f"  ],\n"
+            f"  \"recommendation\": {{\n"
+            f"    \"winner\": \"Item name\",\n"
+            f"    \"reasoning\": \"Why this is the best choice\",\n"
+            f"    \"alternatives\": \"When to consider other options\"\n"
+            f"  }}\n"
+            f"}}\n\n"
+            f"REQUIREMENTS:\n"
+            f"  • Use 0-10 scoring for each criterion\n"
+            f"  • Be objective - support claims with reasoning\n"
+            f"  • Identify clear trade-offs\n"
+            f"  • Make a definitive recommendation unless truly tied\n\n"
+            f"Return ONLY the JSON object."
+        )
+        
+        raw_response = generate_text(prompt, temperature=0.4, max_tokens=2000)
+        
+        # Parse JSON response
+        try:
+            cleaned = raw_response.strip()
+            if cleaned.startswith("```"):
+                lines = cleaned.split('\n')
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                cleaned = '\n'.join(lines).strip()
+            
+            return json.loads(cleaned)
+        except:
+            match = re.search(r'\{.*\}', raw_response, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+            return {"error": "Could not parse comparison response", "raw": raw_response[:500]}
+
+class SummarizeBlock(PipelineBlock):
+    description = "Summarize long documents, articles, or text. Supports different summary styles (bullet points, abstract, ELI5)."
+    
+    def __call__(self, text, content_to_summarize, summary_style="comprehensive") -> dict:
+        """
+        Summarize content in the requested style.
+        
+        Args:
+            text: Instructions for summarization
+            content_to_summarize: The content to summarize
+            summary_style: "comprehensive", "bullets", "abstract", "eli5", or "executive"
+            
+        Returns:
+            dict with summary in requested format
+        """
+        summary = self.create_summary(text, content_to_summarize, summary_style)
+        
+        return {
+            "original_length": len(content_to_summarize),
+            "summary": summary,
+            "style": summary_style,
+        }
+    
+    def create_summary(self, instructions, content, style):
+        """Generate summary in specified style."""
+        style_guides = {
+            "comprehensive": "Detailed summary covering all main points, key arguments, and supporting evidence. 3-5 paragraphs.",
+            "bullets": "Concise bullet-point list of key takeaways (5-10 bullets). Each bullet is one sentence.",
+            "abstract": "Academic-style abstract (150-250 words): background, methods, findings, conclusions.",
+            "eli5": "Explain Like I'm 5: Simple language, analogies, no jargon. Make it accessible to a child.",
+            "executive": "Executive summary for busy leaders: Bottom line first, key metrics, actionable insights. 2-3 paragraphs max.",
+        }
+        
+        style_guide = style_guides.get(style, style_guides["comprehensive"])
+        
+        prompt = (
+            f"ROLE: You are an expert at distilling complex content into clear summaries.\n\n"
+            f"INSTRUCTIONS: {instructions}\n\n"
+            f"CONTENT TO SUMMARIZE:\n{content[:15000]}\n\n"  # Limit to prevent token overflow
+            f"═══════════════════════════════════════════════════════════════════════════════════\n"
+            f"SUMMARY STYLE: {style}\n"
+            f"REQUIREMENTS: {style_guide}\n\n"
+            f"CRITICAL RULES:\n"
+            f"  • Capture the MAIN ideas accurately - no hallucinations\n"
+            f"  • Use the author's terminology for key concepts\n"
+            f"  • Preserve important numbers, dates, and names\n"
+            f"  • Maintain objectivity - don't add your opinions\n"
+            f"  • If content is too short to summarize, say so\n\n"
+            f"Provide the summary now (do NOT wrap in JSON):"
+        )
+        
+        return generate_text(prompt, temperature=0.4, max_tokens=1000)
+
+
+class TranslateBlock(PipelineBlock):
+    description = "Translate text between languages while preserving tone, style, and cultural context."
+    
+    def __call__(self, text, content_to_translate, target_language, source_language="auto") -> dict:
+        """
+        Translate content to target language.
+        
+        Args:
+            text: Any additional context or instructions
+            content_to_translate: The text to translate
+            target_language: Target language (e.g., "Spanish", "French", "Japanese")
+            source_language: Source language or "auto" for auto-detection
+            
+        Returns:
+            dict with translated text and metadata
+        """
+        translation = self.translate_content(text, content_to_translate, target_language, source_language)
+        
+        return {
+            "original": content_to_translate[:500],  # Preview
+            "translation": translation,
+            "target_language": target_language,
+        }
+    
+    def translate_content(self, context, content, target_lang, source_lang):
+        """Perform translation with cultural awareness."""
+        prompt = (
+            f"ROLE: You are an expert translator fluent in {target_lang}.\n\n"
+            f"CONTEXT: {context}\n\n"
+            f"SOURCE LANGUAGE: {source_lang}\n"
+            f"TARGET LANGUAGE: {target_lang}\n\n"
+            f"CONTENT TO TRANSLATE:\n{content}\n\n"
+            f"═══════════════════════════════════════════════════════════════════════════════════\n"
+            f"TRANSLATION REQUIREMENTS:\n"
+            f"  • Preserve the original meaning and tone precisely\n"
+            f"  • Adapt idioms and cultural references appropriately\n"
+            f"  • Maintain formality level (casual vs formal)\n"
+            f"  • Keep technical terms accurate\n"
+            f"  • Use natural phrasing in target language (not word-for-word)\n"
+            f"  • Preserve formatting (line breaks, emphasis, etc.)\n\n"
+            f"Provide ONLY the translated text (no explanations or meta-commentary):"
+        )
+        
+        return generate_text(prompt, temperature=0.3, max_tokens=2000)
+
+
+class FactCheckBlock(PipelineBlock):
+    description = "Verify factual claims using web search and logical analysis. Returns verification status for each claim."
+    
+    def __call__(self, text, claims_to_verify) -> dict:
+        """
+        Fact-check claims using web search and reasoning.
+        
+        Args:
+            text: Context for the fact-check
+            claims_to_verify: String or list of claims to verify
+            
+        Returns:
+            dict with verification results for each claim
+        """
+        # Parse claims into list
+        if isinstance(claims_to_verify, str):
+            claims_list = [c.strip() for c in claims_to_verify.split('\n') if c.strip()]
+        else:
+            claims_list = claims_to_verify
+        
+        # Verify each claim
+        results = []
+        for i, claim in enumerate(claims_list[:5]):  # Limit to 5 claims to avoid quota issues
+            logger.info(f"Fact-checking claim {i+1}: {claim[:100]}...")
+            verification = self.verify_claim(claim, text)
+            results.append({
+                "claim": claim,
+                "verification": verification,
+            })
+        
+        return {
+            "claims_checked": len(results),
+            "results": results,
+        }
+    
+    def verify_claim(self, claim, context):
+        """Verify a single claim."""
+        # First, try web search for factual verification
+        search_query = f"verify fact: {claim}"
+        web_result = online_query_tool(search_query, num_links=3)
+        
+        # Then use LLM to analyze the evidence
+        prompt = (
+            f"ROLE: You are a fact-checker analyzing evidence for a claim.\n\n"
+            f"CLAIM TO VERIFY: {claim}\n\n"
+            f"CONTEXT: {context}\n\n"
+            f"WEB SEARCH RESULTS:\n{web_result.get('summary', 'No results')}\n\n"
+            f"═══════════════════════════════════════════════════════════════════════════════════\n"
+            f"TASK: Determine if the claim is TRUE, FALSE, PARTIALLY_TRUE, or UNVERIFIABLE.\n\n"
+            f"OUTPUT FORMAT (JSON only):\n"
+            f"{{\n"
+            f"  \"verdict\": \"TRUE/FALSE/PARTIALLY_TRUE/UNVERIFIABLE\",\n"
+            f"  \"confidence\": \"high/medium/low\",\n"
+            f"  \"evidence\": \"Supporting or contradicting evidence found\",\n"
+            f"  \"reasoning\": \"Why you reached this verdict\",\n"
+            f"  \"sources\": [\"source1\", \"source2\"]\n"
+            f"}}\n\n"
+            f"CRITICAL RULES:\n"
+            f"  • If web search failed, mark as UNVERIFIABLE with low confidence\n"
+            f"  • Do NOT guess or use general knowledge for specific factual claims\n"
+            f"  • Be conservative - if uncertain, say UNVERIFIABLE\n"
+            f"  • Show your reasoning clearly\n\n"
+            f"Return ONLY the JSON object."
+        )
+        
+        raw_response = generate_text(prompt, temperature=0.2, max_tokens=600)
+        
+        # Parse response
+        try:
+            cleaned = raw_response.strip()
+            if cleaned.startswith("```"):
+                lines = cleaned.split('\n')
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                cleaned = '\n'.join(lines).strip()
+            
+            return json.loads(cleaned)
+        except:
+            match = re.search(r'\{.*\}', raw_response, re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group(0))
+                except:
+                    pass
+            return {
+                "verdict": "UNVERIFIABLE",
+                "confidence": "low",
+                "evidence": "Could not parse verification response",
+                "reasoning": "Technical error in fact-checking",
+                "sources": []
+            }
+
+
+class DebugBlock(PipelineBlock):
+    description = "Debug code, identify issues, and suggest fixes. Supports Python, JavaScript, and other languages."
+    
+    def __call__(self, text, code_to_debug, error_message=None) -> dict:
+        """
+        Debug code and suggest fixes.
+        
+        Args:
+            text: Description of the problem
+            code_to_debug: The code with issues
+            error_message: Optional error message or stack trace
+            
+        Returns:
+            dict with diagnosis, fixes, and corrected code
+        """
+        diagnosis = self.diagnose_code(text, code_to_debug, error_message)
+        
+        return {
+            "diagnosis": diagnosis,
+        }
+    
+    def diagnose_code(self, problem_description, code, error_message):
+        """Diagnose code issues and provide fixes."""
+        prompt = (
+            f"ROLE: You are an expert debugger analyzing problematic code.\n\n"
+            f"PROBLEM DESCRIPTION: {problem_description}\n\n"
+            f"CODE WITH ISSUES:\n```\n{code}\n```\n\n"
+        )
+        
+        if error_message:
+            prompt += f"ERROR MESSAGE:\n{error_message}\n\n"
+        
+        prompt += (
+            f"═══════════════════════════════════════════════════════════════════════════════════\n"
+            f"TASK: Identify all issues and provide fixes.\n\n"
+            f"OUTPUT FORMAT (JSON only):\n"
+            f"{{\n"
+            f"  \"issues_found\": [\n"
+            f"    {{\n"
+            f"      \"type\": \"syntax/logic/performance/security\",\n"
+            f"      \"severity\": \"critical/major/minor\",\n"
+            f"      \"location\": \"Line 5 or function name\",\n"
+            f"      \"description\": \"What's wrong\",\n"
+            f"      \"fix\": \"How to fix it\"\n"
+            f"    }}\n"
+            f"  ],\n"
+            f"  \"corrected_code\": \"Full corrected version of the code\",\n"
+            f"  \"explanation\": \"Summary of changes made\",\n"
+            f"  \"testing_suggestions\": [\"How to test the fix\"]\n"
+            f"}}\n\n"
+            f"REQUIREMENTS:\n"
+            f"  • Identify ALL issues, not just the first one\n"
+            f"  • Provide working, tested fixes\n"
+            f"  • Explain WHY each change is necessary\n"
+            f"  • Consider edge cases and best practices\n\n"
+            f"Return ONLY the JSON object."
+        )
+        
+        raw_response = generate_text(prompt, temperature=0.3, max_tokens=2000)
+        
+        # Parse response
+        try:
+            cleaned = raw_response.strip()
+            if cleaned.startswith("```"):
+                lines = cleaned.split('\n')
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                cleaned = '\n'.join(lines).strip()
+            
+            return json.loads(cleaned)
+        except:
+            match = re.search(r'\{.*\}', raw_response, re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group(0))
+                except:
+                    pass
+            return {"error": "Could not parse debug response", "raw": raw_response[:500]}
+
+
+class ReadPDFBlock(PipelineBlock):
+    description = "Extract text content from uploaded PDF files for analysis."
+    
+    def __call__(self, text, pdf_path) -> dict:
+        """
+        Extract text from a PDF file.
+        
+        Args:
+            text: Context or instructions
+            pdf_path: Path to the PDF file
+            
+        Returns:
+            dict with extracted text and metadata
+        """
+        extracted_text = extract_text_from_pdf(pdf_path)
+        
+        return {
+            "pdf_path": pdf_path,
+            "extracted_text": extracted_text,
+            "text_length": len(extracted_text),
+            "success": not extracted_text.startswith("ERROR:")
+        }
+
+
+class CreatePDFBlock(PipelineBlock):
+    description = "Create PDF documents from text or markdown content. Useful for generating reports, summaries, or formatted documents."
+    
+    def __call__(self, text, content_to_convert, output_filename="output.pdf", title=None, use_markdown=True) -> dict:
+        """
+        Create a PDF from text content.
+        
+        Args:
+            text: Context or instructions
+            content_to_convert: The text/markdown content to convert to PDF
+            output_filename: Name for the output PDF file
+            title: Optional title for the PDF document
+            use_markdown: Whether to treat content as markdown (True) or plain text (False)
+            
+        Returns:
+            dict with PDF creation results and file path
+        """
+        import tempfile
+        import os
+        
+        # Create output path in temp directory
+        temp_dir = tempfile.gettempdir()
+        output_path = os.path.join(temp_dir, output_filename)
+        
+        # Create PDF based on format
+        if use_markdown:
+            success = create_pdf_from_markdown(content_to_convert, output_path, title)
+        else:
+            success = create_pdf_from_text(content_to_convert, output_path, title)
+        
+        result = {
+            "success": success,
+            "output_path": output_path if success else None,
+            "filename": output_filename,
+            "title": title,
+            "format": "markdown" if use_markdown else "plain_text",
+            "content_length": len(content_to_convert)
+        }
+        
+        if success:
+            logger.info(f"PDF created successfully: {output_path}")
+        else:
+            logger.error(f"Failed to create PDF: {output_filename}")
+        
+        return result
