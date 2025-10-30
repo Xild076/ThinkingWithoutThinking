@@ -40,6 +40,7 @@ certifi==2025.10.5
 charset-normalizer==3.4.4
     # via
     #   htmldate
+    #   reportlab
     #   requests
     #   trafilatura
 click==8.3.0
@@ -158,6 +159,7 @@ pillow==11.3.0
     # via
     #   matplotlib
     #   newspaper3k
+    #   reportlab
     #   streamlit
 pip-tools==7.5.1
     # via -r requirements.in
@@ -183,6 +185,8 @@ pygments==2.19.2
     # via pytest
 pyparsing==3.2.5
     # via matplotlib
+pypdf2==3.0.1
+    # via -r requirements.in
 pyproject-hooks==1.2.0
     # via
     #   build
@@ -212,6 +216,8 @@ regex==2025.9.18
     # via
     #   dateparser
     #   nltk
+reportlab==4.4.4
+    # via -r requirements.in
 requests==2.32.5
     # via
     #   -r requirements.in
