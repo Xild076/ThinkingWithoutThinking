@@ -8,7 +8,7 @@ import time
 import random
 import threading
 import requests
-from urllib.parse import quote_plus, urlparse, parse_qs
+from urllib.parse import quote_plus, urlparse, parse_qs, urljoin
 from bs4 import BeautifulSoup
 from typing import Dict, Any, List
 import trafilatura
@@ -444,91 +444,29 @@ def evaluate_ideas_via_client(prompt_text: str, ideas: List[str], criteria: str,
             pass
 
 def retrieve_links(keywords, amount=10):
-    """Retrieve news article links from Google News based on keywords.
-    
-    DUAL STRATEGY: 
-    1. Try Google News RSS (more reliable)
-    2. Fallback to HTML scraping if RSS fails
-    """
+    """Retrieve news article links from Google News search results via HTML scraping."""
     logger.info(f"Starting link retrieval for keywords: {keywords}")
     logger.info(f"Requested amount: {amount}")
-    
-    # Strategy 1: Try Google News RSS first (more reliable)
-    rss_results = _try_google_news_rss(keywords, amount)
-    if rss_results:
-        logger.info(f"Successfully retrieved {len(rss_results)} links from Google News RSS")
-        return rss_results
-    
-    logger.info("RSS approach failed, falling back to HTML scraping...")
-    
-    # Strategy 2: Fallback to HTML scraping
-    return _try_google_news_html_scraping(keywords, amount)
+
+    results = _try_google_news_html_scraping(keywords, amount)
+
+    logger.info(f"Link retrieval finished with {len(results)} links")
+    return results
 
 
-def _try_google_news_rss(keywords, amount=10):
-    """Try to get news links from Google News RSS feed."""
-    try:
-        import xml.etree.ElementTree as ET
-        
-        # Google News RSS URL format
-        search_query = '+'.join([quote_plus(k) for k in keywords])
-        rss_url = f"https://news.google.com/rss/search?q={search_query}&hl=en-US&gl=US&ceid=US:en"
-        logger.info(f"Trying Google News RSS: {rss_url}")
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        
-        response = requests.get(rss_url, headers=headers, timeout=10)
-        logger.info(f"RSS response status: {response.status_code}")
-        
-        if response.status_code != 200:
-            logger.warning(f"RSS feed returned status {response.status_code}")
-            return []
-        
-        # Parse RSS XML
-        root = ET.fromstring(response.content)
-        
-        # Find all item links in the RSS feed
-        results = []
-        for item in root.findall('.//item'):
-            link_elem = item.find('link')
-            if link_elem is not None and link_elem.text:
-                url = link_elem.text.strip()
-                
-                # Google News RSS URLs are redirects - we need to resolve them to get actual URLs
-                # Format: https://news.google.com/rss/articles/CBMi...
-                # We'll try to extract the real URL by following the redirect
-                if url and url.startswith('http'):
-                    # Try to resolve the Google News redirect
-                    real_url = _resolve_google_news_url(url, headers)
-                    if real_url:
-                        results.append(real_url)
-                        logger.debug(f"Resolved RSS link: {real_url[:80]}...")
-                    else:
-                        # If we can't resolve, still add the Google News URL
-                        results.append(url)
-                        logger.debug(f"Using Google News URL: {url[:80]}...")
-                    
-                    if len(results) >= amount:
-                        break
-        
-        logger.info(f"Extracted {len(results)} links from RSS feed")
-        return results[:amount]
-        
-    except Exception as e:
-        logger.warning(f"RSS parsing failed: {type(e).__name__}: {str(e)}")
-        return []
-
-
-def _resolve_google_news_url(google_news_url, headers):
+def _resolve_google_news_url(google_news_url, headers, session=None):
     """Resolve a Google News redirect URL to get the actual article URL."""
     try:
-        # Make a HEAD request to get the redirect without downloading content
-        response = requests.head(google_news_url, headers=headers, allow_redirects=True, timeout=5)
-        
-        # The final URL after redirects is the actual article
+        client = session or requests.Session()
+        response = client.get(
+            google_news_url,
+            headers=headers,
+            allow_redirects=True,
+            timeout=5,
+            stream=True,
+        )
         final_url = response.url
+        response.close()
         
         # Validate it's a real external URL (not Google)
         if final_url and 'google' not in final_url and final_url.startswith('http'):
@@ -538,6 +476,64 @@ def _resolve_google_news_url(google_news_url, headers):
         
     except Exception as e:
         logger.debug(f"Could not resolve Google News URL: {e}")
+        return None
+
+
+def _normalize_candidate_url(candidate_url, headers, session):
+    """Normalize and validate a candidate URL extracted from Google News HTML."""
+    if not candidate_url:
+        return None
+
+    candidate_url = candidate_url.strip()
+    if not candidate_url:
+        return None
+
+    try:
+        parsed = urlparse(candidate_url)
+
+        if not parsed.scheme:
+            candidate_url = urljoin("https://www.google.com", candidate_url)
+            parsed = urlparse(candidate_url)
+
+        if parsed.scheme not in ("http", "https"):
+            return None
+
+        netloc = parsed.netloc.lower()
+
+        blocked_domains = (
+            "google.com",
+            "news.google.com",
+            "accounts.google",
+            "googleapis.com",
+            "gstatic.com",
+            "googleusercontent.com",
+        )
+
+        social_domains = (
+            "facebook.com",
+            "twitter.com",
+            "x.com",
+            "reddit.com",
+            "youtube.com",
+            "instagram.com",
+            "linkedin.com",
+        )
+
+        if any(domain in netloc for domain in social_domains):
+            return None
+
+        if any(domain in netloc for domain in blocked_domains):
+            if "news.google.com" in netloc and parsed.path.startswith(("/articles", "/rss/articles")):
+                resolved = _resolve_google_news_url(candidate_url, headers, session)
+                if resolved and resolved != candidate_url:
+                    return _normalize_candidate_url(resolved, headers, session)
+            return None
+
+        cleaned = parsed._replace(fragment="")
+        return cleaned.geturl()
+
+    except Exception as exc:
+        logger.debug(f"Failed to normalize candidate URL '{candidate_url[:80]}': {exc}")
         return None
 
 
@@ -580,71 +576,53 @@ def _try_google_news_html_scraping(keywords, amount=10):
             # COMPREHENSIVE EXTRACTION: Handle multiple URL formats
             all_links = soup.find_all('a', href=True)
             logger.info(f"Found {len(all_links)} total link elements in page")
-            
-            external_urls = set()  # Use set to deduplicate
-            
+
             # Log first 10 raw URLs for debugging
             sample_urls = [link.get('href', '')[:150] for link in all_links[:10] if link.get('href')]
             logger.info(f"Sample raw hrefs from page: {sample_urls}")
-            
+
+            external_urls = []
+            seen_urls = set()
+
+            def _maybe_add_url(candidate_url: str):
+                if not candidate_url:
+                    return
+                normalized = _normalize_candidate_url(candidate_url, header, session)
+                if not normalized:
+                    return
+                if normalized in seen_urls:
+                    return
+                seen_urls.add(normalized)
+                external_urls.append(normalized)
+
             for link_elem in all_links:
                 raw_url = link_elem.get('href', '').strip()
-                
+
                 if not raw_url:
                     continue
-                
-                extracted_url = None
-                
-                # Strategy 1: Direct https:// external links
-                if raw_url.startswith('https://'):
-                    # Skip Google's own domains
-                    if any(domain in raw_url for domain in ['google.com', 'accounts.google', 'googleapis.com', 'gstatic.com']):
-                        continue
-                    # Skip social media
-                    if any(domain in raw_url for domain in ['facebook.com', 'twitter.com', 'x.com', 'reddit.com', 'youtube.com', 'instagram.com', 'linkedin.com']):
-                        continue
-                    extracted_url = raw_url
-                
-                # Strategy 2: Google redirect URLs (/url?q=...)
+
+                if raw_url.startswith('http://') or raw_url.startswith('https://'):
+                    _maybe_add_url(raw_url)
                 elif raw_url.startswith('/url?'):
                     try:
                         parsed_query = parse_qs(urlparse(raw_url).query)
-                        if 'q' in parsed_query:
-                            candidate = parsed_query['q'][0]
-                            # Validate it's a real external URL
-                            if candidate.startswith('http') and 'google' not in candidate:
-                                extracted_url = candidate
-                                logger.debug(f"Extracted from redirect: {candidate[:80]}...")
+                        candidate = parsed_query.get('q', [None])[0]
+                        _maybe_add_url(candidate)
                     except Exception as e:
                         logger.debug(f"Could not parse redirect URL {raw_url[:100]}: {e}")
-                
-                # Strategy 3: Check for data-ved or other attributes that might contain real URLs
-                elif raw_url.startswith('/search?') or raw_url.startswith('?'):
-                    # These are internal Google search links, skip them
-                    continue
-                
-                # If we extracted a valid URL, clean and add it
-                if extracted_url:
-                    try:
-                        parsed = urlparse(extracted_url)
-                        # Reconstruct clean URL
-                        clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                        if parsed.query:
-                            clean_url += f"?{parsed.query}"
-                        
-                        if clean_url not in external_urls and len(clean_url) > 20:  # Sanity check
-                            external_urls.add(clean_url)
-                            logger.debug(f"Added external URL: {clean_url[:100]}...")
-                    except Exception as e:
-                        logger.debug(f"Error parsing URL {extracted_url}: {e}")
-                        continue
-            
-            # Convert to list and take first N
-            results = list(external_urls)[:amount]
-            
+                elif raw_url.startswith('./') or raw_url.startswith('/articles'):
+                    _maybe_add_url(urljoin("https://news.google.com", raw_url))
+                elif raw_url.startswith('/'):  # Generic relative links
+                    _maybe_add_url(urljoin("https://www.google.com", raw_url))
+
+                if len(external_urls) >= amount:
+                    break
+
+            results = external_urls[:amount]
+
             logger.info(f"Extracted {len(results)} unique external links")
             if results:
-                logger.info(f"Successfully extracted URLs:")
+                logger.info("Successfully extracted URLs:")
                 for i, url in enumerate(results[:5], 1):
                     logger.info(f"  {i}. {url[:80]}...")
                 return results
