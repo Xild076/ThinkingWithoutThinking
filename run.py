@@ -6,8 +6,6 @@ import uvicorn
 from src.prompt_generation import run_training_loop
 
 if __name__ == "__main__":
-    if any(arg.lower() == "ab" for arg in sys.argv[1:]):
-        webbrowser.open("http://localhost:8000/ab_test")
     if any(arg.lower() == "train" for arg in sys.argv[1:]):
         run_training_loop()
         sys.exit(0)

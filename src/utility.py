@@ -1,4 +1,4 @@
-from typing import Any, Mapping, Literal
+from typing import Any, Literal, Type, TypeVar
 from pydantic import BaseModel, Field
 from pydantic_core import PydanticUndefined
 import google.genai as genai
@@ -9,7 +9,15 @@ import json
 import time
 import random
 
+from src.cost_tracker import cost_tracker
+
 Schema = genai.types.Schema
+T = TypeVar("T", bound=BaseModel)
+
+TEMPERATURE_LIMITS: dict[str, tuple[float, float]] = {
+    "gemma": (0.0, 2.0),
+    "nemotron": (0.0, 1.0),
+}
 
 dotenv.load_dotenv()
 
@@ -35,7 +43,8 @@ def _is_transient_error(error: Exception) -> bool:
     )
 
 
-def _default_for_type(annotation):
+def _default_for_type(annotation: Any) -> Any:
+    """Get default value for a type annotation."""
     origin = getattr(annotation, "__origin__", None)
     if origin is list:
         return []
@@ -52,38 +61,61 @@ def _default_for_type(annotation):
     return None
 
 
-def _schema_fallback(schema: BaseModel):
-    values = {}
-    for name, field in schema.model_fields.items():
-        if field.default is not PydanticUndefined:
-            values[name] = field.default
+def _schema_fallback(schema: Type[T]) -> T:
+    """Create a fallback instance with default values when parsing fails."""
+    values: dict[str, Any] = {}
+    for name, field_info in schema.model_fields.items():
+        if field_info.default is not PydanticUndefined:
+            values[name] = field_info.default
         else:
-            values[name] = _default_for_type(field.annotation)
+            values[name] = _default_for_type(field_info.annotation)
     return schema.model_validate(values)
 
 
-def generate_text(prompt, model:Literal['gemma', 'nemotron']='gemma', schema: BaseModel = None, temperature=0.7, max_tokens=None, max_retries: int = 4, max_prompt_chars: int = 12000):
-    """Generate text using Google GenAI models.
+def _clamp_temperature(model: str, temperature: float) -> float:
+    """Clamp temperature to valid range for the given model."""
+    limits = TEMPERATURE_LIMITS.get(model, (0.0, 1.0))
+    return max(limits[0], min(limits[1], temperature))
+
+
+def _estimate_tokens(text: str) -> int:
+    """Estimate token count (roughly 4 chars per token)."""
+    return len(text) // 4
+
+
+def generate_text(
+    prompt: str,
+    model: Literal["gemma", "nemotron"] = "gemma",
+    schema: Type[T] | None = None,
+    temperature: float = 0.7,
+    max_tokens: int | None = None,
+    max_retries: int = 4,
+    max_prompt_chars: int = 12000
+) -> str | T:
+    """Generate text using Google GenAI or NVIDIA models.
     
     Args:
-        prompt (str): Input text prompt
-        model (str): Model identifier
-        schema (BaseModel, optional): Pydantic model for response validation
-        temperature (float): Sampling temperature
-        max_tokens (int, optional): Maximum output tokens
+        prompt: Input text prompt
+        model: Model identifier ('gemma' or 'nemotron')
+        schema: Optional Pydantic model for response validation
+        temperature: Sampling temperature (auto-clamped per model)
+        max_tokens: Maximum output tokens
+        max_retries: Number of retry attempts for transient errors
+        max_prompt_chars: Maximum prompt length before truncation
 
     Returns:
-        str or BaseModel: Generated text or validated response
+        Generated text string or validated Pydantic model instance
     """
     if len(prompt) > max_prompt_chars:
         prompt = prompt[:max_prompt_chars]
 
-    if model == 'gemma':
-        temperature = max(0.0, min(2.0, temperature))
-    elif model == 'nemotron':
-        temperature = max(0.0, min(1.0, temperature))
+    temperature = _clamp_temperature(model, temperature)
     
-    text = None
+    text: str | None = None
+    input_tokens = _estimate_tokens(prompt)
+    start_time = time.time()
+    error_msg = ""
+
     for attempt in range(max_retries):
         try:
             if model == 'gemma':
@@ -133,15 +165,36 @@ def generate_text(prompt, model:Literal['gemma', 'nemotron']='gemma', schema: Ba
 
             break
         except Exception as e:
+            error_msg = str(e)
             if not (_is_rate_limit_error(e) or _is_transient_error(e)) or attempt == max_retries - 1:
+                latency_ms = (time.time() - start_time) * 1000
+                cost_tracker.log_call(
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=0,
+                    latency_ms=latency_ms,
+                    success=False,
+                    error=error_msg
+                )
                 raise
             delay = min(8, 0.5 * (2 ** attempt)) + random.uniform(0, 0.3)
             time.sleep(delay)
 
-
     if text is None:
         text = ""
     text = text.strip()
+
+    # Log successful call
+    output_tokens = _estimate_tokens(text)
+    latency_ms = (time.time() - start_time) * 1000
+    cost_tracker.log_call(
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        latency_ms=latency_ms,
+        success=True,
+        error=""
+    )
 
     if schema:
         for attempt in range(3):
@@ -177,26 +230,27 @@ class TestSchema(BaseModel):
     answer: str = Field(description="The answer.")
     lists: list[TestEmbeddedSchema] = Field(description="A list of integers.")
 
-def load_prompts(path: str):
+def load_prompts(path: str) -> dict[str, str]:
     """Load prompts from a JSON file.
     
     Args:
-        path (str): Path to the JSON file containing prompts
+        path: Path to the JSON file containing prompts
 
     Returns:
-        dict: Dictionary of prompts
+        Dictionary mapping prompt names to prompt text
     """
     with open(path, 'r') as f:
-        prompts = json.load(f)
+        prompts: dict[str, str] = json.load(f)
     return prompts
 
-"""
-output = generate_text("What is the capital of France? Give me 5 random numbers.", schema=TestSchema)
-print(output)
-print(type(output))
-print(output.answer)
-print(output.lists)
-"""
 
-"""output = generate_text("what is the capital of France?", model='nemotron', temperature=-1.0)
-print(output)"""
+def reload_prompts(path: str = "prompts.json") -> dict[str, str]:
+    """Reload prompts from disk (for hot-reloading during development).
+    
+    Args:
+        path: Path to the JSON file containing prompts
+        
+    Returns:
+        Fresh dictionary of prompts loaded from disk
+    """
+    return load_prompts(path)

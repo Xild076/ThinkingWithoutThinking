@@ -1,7 +1,7 @@
 import inspect
 import json
 from random import random
-from src.utility import generate_text, load_prompts
+from src.utility import generate_text, load_prompts, reload_prompts
 from src.tool_utility import python_exec_tool, retrieve_text_many, retrieve_links
 from src.parameter_mapper import ParameterMapper
 
@@ -11,7 +11,27 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-prompts = load_prompts('prompts.json')
+# Load prompts once at import time for default behavior
+_cached_prompts: dict[str, str] | None = None
+
+
+def get_prompts(force_reload: bool = False) -> dict[str, str]:
+    """Get prompts, optionally reloading from disk.
+    
+    Args:
+        force_reload: If True, reload from disk even if cached
+        
+    Returns:
+        Dictionary of prompt_id -> prompt_text
+    """
+    global _cached_prompts
+    if _cached_prompts is None or force_reload:
+        _cached_prompts = load_prompts('prompts.json')
+    return _cached_prompts
+
+
+# Initialize cache on import
+_cached_prompts = load_prompts('prompts.json')
 
 
 class CreativityLevel(float, Enum):
@@ -33,7 +53,7 @@ class PipelineBlock:
     
     def __init__(self):
         self.identity = "base_pipeline_block"
-        self.prompt = prompts.get(self.identity, "")
+        self.prompt = get_prompts().get(self.identity, "")
 
     def _task_context(self) -> str:
         description = self.details.get("description", "")
@@ -43,7 +63,11 @@ class PipelineBlock:
         return f"### TASK CONTEXT\nDescription: {description}\nInputs: {inputs}\nOutputs: {outputs}\n"
 
     def _with_task_context(self, prompt: str) -> str:
-        return f"{self._task_context()}\n{prompt}"
+        base_prompt = ""
+        if self.identity != "base_pipeline_block":
+            base_prompt = get_prompts().get("base_pipeline_block", "")
+        parts = [p for p in (base_prompt, self._task_context(), prompt) if p]
+        return "\n\n".join(parts)
     
     def __call__(self, *args, **kwds):
         raise NotImplementedError("This method should be overridden by subclasses.")
@@ -75,7 +99,7 @@ class PlannerPromptBlock(PipelineBlock):
 
     def __init__(self):
         self.identity = "planner_prompt_block"
-        self.prompt = prompts.get(self.identity, "")
+        self.prompt = get_prompts().get(self.identity, "")
     
     def __call__(self, prompt: str) -> str:
         full_prompt = self.prompt.replace("{prompt}", prompt)
@@ -104,7 +128,7 @@ class SelfCritiqueBlock(PipelineBlock):
 
     def __init__(self):
         self.identity = "self_critique_block"
-        self.prompt = prompts.get(self.identity, "")
+        self.prompt = get_prompts().get(self.identity, "")
     
     def __call__(self, input: str, output: str, init_task: str) -> str:
         full_prompt = self.prompt.replace("{input}", input).replace("{output}", output).replace("{initial_task}", init_task)
@@ -133,7 +157,7 @@ class ImprovementCritiqueBlock(PipelineBlock):
 
     def __init__(self):
         self.identity = "improvement_critique_block"
-        self.prompt = prompts.get(self.identity, "")
+        self.prompt = get_prompts().get(self.identity, "")
     
     def __call__(self, input: str, output: str, critique: str, init_task: str) -> str:
         full_prompt = self.prompt.replace("{input}", input).replace("{output}", output).replace("{critique}", critique).replace("{initial_task}", init_task)
@@ -170,7 +194,7 @@ class ToolRouterBlock(PipelineBlock):
 
     def __init__(self):
         self.identity = "tool_router_block"
-        self.prompt = prompts.get(self.identity, "")
+        self.prompt = get_prompts().get(self.identity, "")
 
     def _parse_tool_choice(self, raw: str) -> list[ToolChoice]:
         cleaned = raw.strip()
@@ -299,7 +323,7 @@ class PythonExecutionToolBlock(ToolBlock):
     def __init__(self):
         self.identity = "python_execution_tool_block"
     
-    def __call__(self, goal: str, visual_aids: bool) -> str:
+    def __call__(self, goal: str, visual_aids: bool = False) -> str:
         works = False
         failures = 0
         previous_code = None
@@ -350,13 +374,13 @@ class CreativeIdeaGeneration(ToolBlock):
     def __init__(self):
         self.identity = "creative_idea_generation_block"
     
-    def __call__(self, prompt: str) -> str:
-        full_prompt = f"Generate 5 creative ideas on the following :\n\n{prompt}\n\nProvide a brief rationale for each idea."
+    def __call__(self, topic: str, creativity_level: float = CreativityLevel.HIGH.value) -> str:
+        full_prompt = f"Generate 5 creative ideas on the following :\n\n{topic}\n\nProvide a brief rationale for each idea."
         ideas_obj = generate_text(
             prompt=self._with_task_context(full_prompt),
             model='gemma',
             schema=CreativeIdeaListSchema,
-            temperature=CreativityLevel.HIGH.value,
+            temperature=creativity_level,
             max_tokens=2048
         )
         ideas_list = ideas_obj.ideas
@@ -383,7 +407,7 @@ class CreativeIdeaGeneration(ToolBlock):
 class ResponseSynthesizerBlock(PipelineBlock):
     details: dict = {
         "description": "Synthesizes information from multiple sources into a coherent summary.",
-        "id": "synthesizer_block",
+        "id": "response_synthesizer_block",
         "prompt_creation_criteria": "The prompt must instruct the system to combine information from various sources, ensuring coherence and relevance to the original prompt and general adherence plan. The prompt should guide the system to produce a well-structured summary that effectively integrates the gathered information. This must be generalizable and applicable to a wide range of inputs. The prompt may add additional instructions as needed so long as they align with these elements.",
         "inputs": [
             "prompt (str): The base prompt of the user.",
@@ -395,7 +419,7 @@ class ResponseSynthesizerBlock(PipelineBlock):
 
     def __init__(self):
         self.identity = "response_synthesizer_block"
-        self.prompt = prompts.get(self.identity, "")
+        self.prompt = get_prompts().get(self.identity, "")
     
     def __call__(self, prompt, sources: dict[str], plan) -> str:
         combined_sources = "\n\n".join(f"Tool used: {i+1}\nContent:\n{content}" for i, content in enumerate(sources.values()) if content)

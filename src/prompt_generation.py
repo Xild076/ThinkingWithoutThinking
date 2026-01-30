@@ -2,8 +2,10 @@ import json
 import logging
 import random
 import time
+import re
+import uuid
 from collections import defaultdict
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -96,13 +98,33 @@ class GraderSchema(BaseModel):
     )
 
 
-def inital_grader(prompt: str, final_response: str, validation_criteria: str = None):
+def initial_grader(prompt: str, final_response: str, validation_criteria: str | None = None) -> dict:
+    """Grade an AI response against quality criteria and optional validation.
+    
+    Args:
+        prompt: The original user prompt
+        final_response: The AI-generated response to grade
+        validation_criteria: Optional expected answer/criteria for factual grounding
+        
+    Returns:
+        Dictionary with scores and analysis
+    """
     validation_section = ""
+    validation_weight_note = ""
     if validation_criteria:
         validation_section = (
-            f"\n\nVALIDATION CRITERIA AND EXPECTED ANSWER:\n{validation_criteria}\n\n"
-            "Compare the response against this validation criteria. Penalize heavily if the response "
-            "contradicts known facts, provides incorrect answers, or fails to meet the expected standards."
+            f"\n\n=== CRITICAL VALIDATION CRITERIA ===\n"
+            f"Expected answer or validation criteria:\n{validation_criteria}\n\n"
+            f"IMPORTANT: You MUST compare the response against this validation criteria.\n"
+            f"- If the response contradicts the expected answer: hallucination_score MUST be ≤ 3\n"
+            f"- If the response is missing key facts from validation: prompt_alignment_score MUST be ≤ 5\n"
+            f"- If the response provides incorrect information: helpfulness_score MUST be ≤ 4\n"
+            f"=== END VALIDATION CRITERIA ===\n\n"
+        )
+        validation_weight_note = (
+            "SCORING RULE: The validation criteria represents ground truth. "
+            "Any deviation from it MUST result in significant score penalties. "
+            "Do NOT give high scores to responses that sound good but are factually wrong. "
         )
     
     grader_prompt = (
@@ -112,18 +134,19 @@ def inital_grader(prompt: str, final_response: str, validation_criteria: str = N
         f"User Prompt:\n{prompt}\n\n"
         f"Final Response:\n{final_response}\n\n"
         f"{validation_section}"
-        "First, provide a comprehensive analysis of the response, highlighting its strengths and weaknesses."
+        f"{validation_weight_note}"
+        "First, provide a comprehensive analysis of the response, highlighting its strengths and weaknesses. "
         f"Evaluate the response according to the following criteria and provide scores from 1 to 10, "
         f"where 1 is the lowest and 10 is the highest quality.\n\n"
         f"1. Prompt Alignment: How well does the response address the explicit instructions in the prompt?\n"
         f"2. User Need Alignment: How effectively does the response satisfy the user's underlying goals and context?\n"
-        f"3. Hallucination: Assess the factual accuracy of the response.\n"
+        f"3. Hallucination: Assess the factual accuracy of the response. Score LOW (1-3) if response contradicts known facts.\n"
         f"4. Safety: Evaluate compliance with safety and content policies.\n"
         f"5. Clarity: How clear and well-structured is the response?\n"
         f"6. Helpfulness: How useful and actionable is the response?\n"
         f"7. Uncertainty Handling: How well does the response manage uncertainty and acknowledge limitations?\n\n"
-        f"For each criterion, provide a score and a brief rationale."
-        f"Finally, identify and elaborate on the significant problems, omissions, policy issues,"
+        f"For each criterion, provide a score and a brief rationale. "
+        f"Finally, identify and elaborate on the significant problems, omissions, policy issues, "
         f"or flaws in the response that significantly impact its quality.\n\n"
     )
 
@@ -131,7 +154,7 @@ def inital_grader(prompt: str, final_response: str, validation_criteria: str = N
         prompt=grader_prompt,
         model="nemotron",
         schema=GraderSchema,
-        temperature=CreativityLevel.LOW.value,
+        temperature=CreativityLevel.STRICT.value,
     )
 
     items = {}
@@ -227,6 +250,14 @@ def prompt_improvements(current_prompts: dict, block_analyses: list[PipelineBloc
             continue
         grouped_analyses[block_analysis.block_id].append(block_analysis)
 
+    required_placeholders_by_block = {
+        "planner_prompt_block": {"prompt"},
+        "tool_router_block": {"tools", "prompt", "plan"},
+        "response_synthesizer_block": {"prompt", "plan", "sources"},
+        "self_critique_block": {"input", "output", "initial_task"},
+        "improvement_critique_block": {"input", "output", "critique", "initial_task"},
+    }
+
     improvement_suggestions = {}
     for block_id, analyses in grouped_analyses.items():
         if block_id not in current_prompts:
@@ -234,7 +265,10 @@ def prompt_improvements(current_prompts: dict, block_analyses: list[PipelineBloc
 
         current_prompt = current_prompts.get(block_id, "No current prompt found.")
         block_details = get_pipeline_block_details(block_id)
-        input_requirements = [f"{{{inp}}}" for inp in block_details.get("inputs", [])]
+        # Extract placeholders from the current prompt, then enforce required placeholders per block.
+        placeholders = set(re.findall(r"\{([a-zA-Z0-9_]+)\}", current_prompt))
+        required_placeholders = required_placeholders_by_block.get(block_id, set())
+        input_requirements = sorted(placeholders.union(required_placeholders))
         prompt_criteria = block_details.get("prompt_creation_criteria", "Follow best practices for prompt engineering.")
 
         combined_critique = "\n".join(
@@ -270,7 +304,7 @@ def prompt_improvements(current_prompts: dict, block_analyses: list[PipelineBloc
             )
 
             improved_prompt = result.prompt
-            missing_inputs = [inp for inp in input_requirements if inp not in improved_prompt]
+            missing_inputs = [f"{{{inp}}}" for inp in input_requirements if f"{{{inp}}}" not in improved_prompt]
 
             if not missing_inputs:
                 break
@@ -281,6 +315,13 @@ def prompt_improvements(current_prompts: dict, block_analyses: list[PipelineBloc
                 f"The revised prompt MUST include these exact placeholders: {', '.join(missing_inputs)}\n"
                 f"Regenerate the prompt ensuring all required inputs are present."
             )
+
+        if missing_inputs:
+            logger.warning(
+                f"Prompt improvement for '{block_id}' missing placeholders "
+                f"{', '.join(missing_inputs)} after {max_retries} attempts; keeping current prompt."
+            )
+            improved_prompt = current_prompt
 
         improvement_suggestions[block_id] = improved_prompt
 
@@ -311,12 +352,17 @@ class PromptSuiteStore:
             json.dump(self.data, f, indent=2)
 
 
-def _run_pipeline_with_prompts(user_prompt: str, prompt_suite: dict[str, str]) -> tuple[str, str]:
+def _run_pipeline_with_prompts(
+    user_prompt: str,
+    prompt_suite: dict[str, str],
+    thinking_level: Literal["low", "medium_synth", "medium_plan", "high"] = "medium_synth",
+) -> tuple[str, str]:
     """Run the pipeline with custom prompt overrides.
     
     Args:
         user_prompt: The user's input prompt
         prompt_suite: Dictionary of prompt overrides to inject into the pipeline
+        thinking_level: Pipeline thinking level (resource tradeoff)
         
     Returns:
         Tuple of (final_response, trace_log)
@@ -325,7 +371,7 @@ def _run_pipeline_with_prompts(user_prompt: str, prompt_suite: dict[str, str]) -
     
     # Pass the prompt suite directly to the stream method as overrides
     final_response = ""
-    for event in pipeline.stream(user_prompt, prompt_overrides=prompt_suite, thinking_level="high"):
+    for event in pipeline.stream(user_prompt, prompt_overrides=prompt_suite, thinking_level=thinking_level):
         if event.get("type") == "final_response":
             final_response = event.get("response", "")
     
@@ -340,6 +386,7 @@ def train_ab_loop(
     epochs: int = 3,
     num_test_cases_per_trial: int = 5,
     random_seed: int = 7,
+    thinking_level: Literal["low", "medium_synth", "medium_plan", "high"] = "medium_synth",
 ):
     """Train prompts using A/B testing loop.
     
@@ -354,10 +401,11 @@ def train_ab_loop(
     random.seed(random_seed)
     base_prompts = load_prompts(base_prompts_path)
     store = PromptSuiteStore(output_path)
+    run_id = str(uuid.uuid4())
     
     current_prompts = base_prompts
     generation = 0
-    store.save_generation(current_prompts, generation, {"note": "initial"})
+    store.save_generation(current_prompts, generation, {"note": "initial", "run_id": run_id})
     logger.info(f"Starting A-B training loop with {len(test_cases)} test cases for {epochs} epochs")
     logger.info(f"Using {num_test_cases_per_trial} test cases per trial")
     
@@ -379,8 +427,12 @@ def train_ab_loop(
             logger.info(f"  A[{idx}/{len(selected)}]: {test_prompt[:80]}...")
             
             try:
-                final_response, trace_log = _run_pipeline_with_prompts(test_prompt, current_prompts)
-                grade = inital_grader(test_prompt, final_response, validation)
+                final_response, trace_log = _run_pipeline_with_prompts(
+                    test_prompt,
+                    current_prompts,
+                    thinking_level=thinking_level,
+                )
+                grade = initial_grader(test_prompt, final_response, validation)
                 
                 logger.info(f"  A[{idx}/{len(selected)}] Score: {grade['aggregate_score']:.2f}")
                 
@@ -458,6 +510,30 @@ def train_ab_loop(
         logger.info(f"Generated {len(improvements)} prompt improvements:")
         for block_id in improvements.keys():
             logger.info(f"  - {block_id}")
+
+        changed_keys = [k for k in candidate_prompts.keys() if current_prompts.get(k) != candidate_prompts.get(k)]
+        if not changed_keys:
+            logger.info("No prompt changes detected; skipping Phase B to conserve resources.")
+            store.save_generation(
+                current_prompts,
+                generation,
+                {
+                    "epoch": epoch,
+                    "run_id": run_id,
+                    "test_prompts": [tc["prompt"] for tc in selected],
+                    "avg_score_a": avg_score_a,
+                    "avg_score_b": avg_score_a,
+                    "improvement_delta": 0.0,
+                    "winner": "baseline",
+                    "changed_keys": [],
+                    "num_improvements_attempted": len(improvements),
+                    "scores_a": scores_a,
+                    "scores_b": scores_a,
+                    "skipped_b": True,
+                    "thinking_level": thinking_level,
+                },
+            )
+            continue
         
         results_b = []
         scores_b = []
@@ -469,8 +545,12 @@ def train_ab_loop(
             logger.info(f"  B[{idx}/{len(selected)}]: {test_prompt[:80]}...")
             
             try:
-                final_response, trace_log = _run_pipeline_with_prompts(test_prompt, candidate_prompts)
-                grade = inital_grader(test_prompt, final_response, validation)
+                final_response, trace_log = _run_pipeline_with_prompts(
+                    test_prompt,
+                    candidate_prompts,
+                    thinking_level=thinking_level,
+                )
+                grade = initial_grader(test_prompt, final_response, validation)
                 
                 logger.info(f"  B[{idx}/{len(selected)}] Score: {grade['aggregate_score']:.2f}")
                 
@@ -506,8 +586,6 @@ def train_ab_loop(
         logger.info(f"Phase B Results: {passed_b} passed, {failed_b} failed (threshold=9.5), {errors_b} errors")
         logger.info(f"Phase B Distribution: Min={min(scores_b):.2f}, Max={max(scores_b):.2f}, Avg={avg_score_b:.2f}")
         
-        changed_keys = [k for k in candidate_prompts.keys() if current_prompts.get(k) != candidate_prompts.get(k)]
-        
         improvement_delta = avg_score_b - avg_score_a
         improvement_pct = (improvement_delta / avg_score_a * 100) if avg_score_a > 0 else 0
         
@@ -529,6 +607,7 @@ def train_ab_loop(
             generation,
             {
                 "epoch": epoch,
+                "run_id": run_id,
                 "test_prompts": [tc["prompt"] for tc in selected],
                 "avg_score_a": avg_score_a,
                 "avg_score_b": avg_score_b,
@@ -538,6 +617,7 @@ def train_ab_loop(
                 "num_improvements_attempted": len(improvements),
                 "scores_a": scores_a,
                 "scores_b": scores_b,
+                "thinking_level": thinking_level,
             },
         )
     
@@ -578,10 +658,11 @@ def run_training_loop(
     base_prompts_path: str = "prompts.json",
     output_path: str = "prompt_suite_generations.json",
     test_cases: list[dict] | None = None,
-    epochs: int = 5,
+    epochs: int = 10,
     num_test_cases_per_trial: int = 5,
     random_seed: int = 42,
     stress_test_cases_path: str = STRESS_TEST_CASES_PATH,
+    thinking_level: Literal["low", "medium_synth", "medium_plan", "high"] = "medium_synth",
 ):
     if test_cases is None:
         test_cases = load_stress_test_cases(stress_test_cases_path)
@@ -596,9 +677,9 @@ def run_training_loop(
         epochs=epochs,
         num_test_cases_per_trial=num_test_cases_per_trial,
         random_seed=random_seed,
+        thinking_level=thinking_level,
     )
 
 
 if __name__ == "__main__":
     run_training_loop()
-

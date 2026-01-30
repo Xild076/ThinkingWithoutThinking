@@ -8,6 +8,8 @@ class ParameterMapper:
         "goal": ["goal", "objective", "task", "prompt"],
         "plan": ["plan", "strategy", "approach"],
         "max_results": ["max_results", "limit", "count", "num_results"],
+        "creativity_level": ["creativity_level", "creativity", "temperature", "style"],
+        "visual_aids": ["visual_aids", "visuals", "plots", "charts", "figures"],
     }
 
     @staticmethod
@@ -31,6 +33,13 @@ class ParameterMapper:
                 if param_name in aliases and context_key in context:
                     mapped[param_name] = context[context_key]
                     break
+
+            if param_name not in mapped and "prompt" in context:
+                # Fall back to using the user prompt for common content inputs.
+                for aliases in ("query", "topic", "goal"):
+                    if param_name in ParameterMapper.PARAM_ALIASES.get(aliases, []):
+                        mapped[param_name] = context["prompt"]
+                        break
             
             if param_name not in mapped:
                 if param.default is not inspect.Parameter.empty:

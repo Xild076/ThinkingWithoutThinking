@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ThinkingWithoutThinking - Stream of Thought</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 12px;
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 8px;
+            color: #667eea;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 16px;
+        }
+
+        .input-section {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .input-section label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        textarea {
+            width: 100%;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 16px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            resize: vertical;
+            min-height: 120px;
+            margin-bottom: 16px;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .controls {
+            display: flex;
+            gap: 16px;
+            align-items: flex-end;
+        }
+
+        .control-group {
+            flex: 0 1 auto;
+        }
+
+        .control-group label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+
+        select {
+            padding: 10px 14px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+            min-width: 200px;
+        }
+
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 32px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 14px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            min-height: 500px;
+        }
+
+        .card-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 16px 20px;
+            font-weight: 600;
+            font-size: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-header.events { background: linear-gradient(135deg, #1890ff 0%, #1890ff 100%); }
+        .card-header.answer { background: linear-gradient(135deg, #722ed1 0%, #722ed1 100%); }
+        .card-header.tools { background: linear-gradient(135deg, #faad14 0%, #faad14 100%); }
+        .card-header.trace { background: linear-gradient(135deg, #13c2c2 0%, #13c2c2 100%); }
+
+        .card-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .event {
+            margin-bottom: 16px;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            line-height: 1.6;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .event.planning { background: #e7f3ff; border-left: 4px solid #1890ff; color: #0050b3; }
+        .event.plan { background: #f6ffed; border-left: 4px solid #52c41a; color: #274e0b; }
+        .event.tool_start { background: #fff7e6; border-left: 4px solid #faad14; color: #7d4e0f; }
+        .event.tool_complete { background: #f6ffed; border-left: 4px solid #52c41a; color: #274e0b; }
+        .event.response { background: #f9f0ff; border-left: 4px solid #722ed1; color: #38165f; }
+        .event.complete { background: #f6ffed; border-left: 4px solid #52c41a; color: #274e0b; font-weight: 600; }
+        .event.error { background: #fff1f0; border-left: 4px solid #ff4d4f; color: #5c0a0a; }
+
+        .event-label {
+            font-weight: 600;
+            margin-bottom: 6px;
+            opacity: 0.9;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .event-content {
+            word-wrap: break-word;
+            white-space: normal;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .markdown-content {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            font-size: 14px;
+            line-height: 1.8;
+            color: #333;
+        }
+
+        .markdown-content h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin: 24px 0 16px 0;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 8px;
+        }
+
+        .markdown-content h2 {
+            font-size: 20px;
+            font-weight: 700;
+            margin: 20px 0 12px 0;
+        }
+
+        .markdown-content h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin: 16px 0 8px 0;
+        }
+
+        .markdown-content p {
+            margin: 12px 0;
+        }
+
+        .markdown-content strong {
+            font-weight: 600;
+            color: #1f1f1f;
+        }
+
+        .markdown-content em {
+            font-style: italic;
+            color: #555;
+        }
+
+        .markdown-content a {
+            color: #667eea;
+            text-decoration: underline;
+        }
+
+        .markdown-content code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            color: #d63384;
+        }
+
+        .markdown-content pre {
+            background: #f5f5f5;
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 12px 0;
+            border-left: 4px solid #667eea;
+        }
+
+        .markdown-content pre code {
+            background: none;
+            padding: 0;
+            color: #333;
+        }
+
+        .markdown-content ul, .markdown-content ol {
+            margin: 12px 0;
+            padding-left: 24px;
+        }
+
+        .markdown-content li {
+            margin: 6px 0;
+        }
+
+        .markdown-content blockquote {
+            border-left: 4px solid #667eea;
+            padding-left: 12px;
+            margin: 12px 0;
+            color: #666;
+            font-style: italic;
+        }
+
+        .markdown-content table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 12px 0;
+        }
+
+        .markdown-content th, .markdown-content td {
+            border: 1px solid #ddd;
+            padding: 8px 12px;
+            text-align: left;
+        }
+
+        .markdown-content th {
+            background: #f5f5f5;
+            font-weight: 600;
+        }
+
+        .response-content {
+            font-size: 15px;
+            line-height: 1.8;
+            color: #333;
+        }
+
+        .image-container {
+            margin: 16px 0;
+            text-align: center;
+        }
+
+        .image-container img {
+            max-width: 100%;
+            max-height: 400px;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .status {
+            padding: 12px 20px;
+            background: #e7f3ff;
+            border-top: 2px solid #1890ff;
+            font-size: 13px;
+            color: #0050b3;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status.processing {
+            background: #fff7e6;
+            border-top-color: #faad14;
+            color: #7d4e0f;
+        }
+
+        .status.complete {
+            background: #f6ffed;
+            border-top-color: #52c41a;
+            color: #274e0b;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(0, 0, 0, 0.2);
+            border-radius: 50%;
+            border-top-color: currentColor;
+            animation: spin 0.6s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 1200px) {
+            .grid-4 {
+                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            }
+        }
+
+        @media (max-width: 768px) {
+            .grid-4 {
+                grid-template-columns: 1fr;
+            }
+
+            .card {
+                min-height: 400px;
+            }
+
+            .header {
+                padding: 24px;
+            }
+
+            .header h1 {
+                font-size: 24px;
+            }
+
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            button {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧠 ThinkingWithoutThinking</h1>
+            <p>Real-time stream of thought visualization</p>
+        </div>
+
+        <div class="input-section">
+            <label for="prompt">Your Prompt</label>
+            <textarea id="prompt" placeholder="Ask your question or give your command..."></textarea>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label for="thinking">Thinking Level</label>
+                    <select id="thinking">
+                        <option value="low">Low (Fast)</option>
+                        <option value="medium_synth" selected>Medium + Synthesis</option>
+                        <option value="medium_plan">Medium + Planning</option>
+                        <option value="high">High (Thorough)</option>
+                    </select>
+                </div>
+                <button id="submit" onclick="submitPrompt()" style="margin-top: 24px;">🚀 Submit</button>
+            </div>
+        </div>
+
+        <div class="grid-4">
+            <div class="card">
+                <div class="card-header events">📊 Events Stream</div>
+                <div class="card-content" id="events"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-header answer">💡 Final Answer</div>
+                <div class="card-content response-content markdown-content" id="response"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-header tools">🛠️ Tools Used</div>
+                <div class="card-content" id="details"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-header trace">📝 Trace & Logs</div>
+                <div class="card-content" id="trace"></div>
+            </div>
+        </div>
+
+        <div style="text-align: center; padding: 20px; color: white; font-size: 13px;">
+            <div id="status" class="status" style="width: fit-content; margin: 0 auto; background: transparent; border: none; color: white;">Ready</div>
+        </div>
+    </div>
+
+    <script>
+        const eventLog = document.getElementById('events');
+        const responsePanel = document.getElementById('response');
+        const detailsPanel = document.getElementById('details');
+        const tracePanel = document.getElementById('trace');
+        const statusEl = document.getElementById('status');
+        const submitBtn = document.getElementById('submit');
+        let isProcessing = false;
+        let currentTrace = null;
+
+        function markdownToHtml(text) {
+            if (!text) return '';
+            
+            // Escape HTML first
+            let html = escapeHtml(text);
+            
+            // Convert markdown to HTML
+            html = html
+                .replace(/^### (.*?)$/gm, '<h3>$1</h3>')
+                .replace(/^## (.*?)$/gm, '<h2>$1</h2>')
+                .replace(/^# (.*?)$/gm, '<h1>$1</h1>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+                .replace(/`([^`]+)`/g, '<code>$1</code>')
+                .replace(/^- (.*?)$/gm, '<li>$1</li>')
+                .replace(/(<li>.*?<\/li>)/s, '<ul>$1</ul>')
+                .replace(/\n{2,}/g, '</p><p>')
+                .replace(/\n/g, '<br/>');
+            
+            return `<div style="white-space: normal; word-wrap: break-word;">${html}</div>`;
+        }
+
+        function formatEvent(event) {
+            switch (event.type) {
+                case 'planning':
+                case 'routing':
+                case 'synthesizing':
+                case 'critique':
+                case 'improvement':
+                case 'final_critique':
+                case 'final_improvement':
+                    return `<span class="spinner"></span> ${event.message}`;
+                case 'plan':
+                case 'plan_improved':
+                case 'response':
+                case 'final_response':
+                    const content = event.plan || event.response || '';
+                    return `<div class="event-label">${event.type === 'plan' ? '📋 Plan' : event.type === 'plan_improved' ? '✨ Improved Plan' : '💬 Response'}</div>${markdownToHtml(content)}`;
+                case 'plan_critique':
+                case 'final_critique_complete':
+                    return `<div class="event-label">🔍 Critique</div>${markdownToHtml(event.critique || '')}`;
+                case 'tool_start':
+                    return `<span class="spinner"></span> Running: ${event.tool_id}`;
+                case 'tool_complete':
+                    const result = event.result || {};
+                    let resultHtml = `<div class="event-label">✅ ${event.tool_id}</div>`;
+                    
+                    // Display images if available
+                    if (result.plots_base64 && Array.isArray(result.plots_base64) && result.plots_base64.length > 0) {
+                        resultHtml += `<div style="margin-top: 12px;"><strong>📊 Generated Visualizations:</strong></div>`;
+                        result.plots_base64.forEach(encoded => {
+                            if (!encoded) return;
+                            resultHtml += `<div class="image-container"><img src="data:image/png;base64,${encoded}" alt="Generated plot" style="max-width: 100%; max-height: 300px; border-radius: 6px;" /></div>`;
+                        });
+                    } else if (result.plots && Array.isArray(result.plots) && result.plots.length > 0) {
+                        resultHtml += `<div style="margin-top: 12px;"><strong>📊 Generated Visualizations:</strong></div>`;
+                        result.plots.forEach(plot => {
+                            const safeUrl = plot.replace(/\\/g, '/');
+                            resultHtml += `<div class="image-container"><img src="file://${safeUrl}" alt="Generated plot" style="max-width: 100%; max-height: 300px; border-radius: 6px;" onerror="this.alt='Image failed to load'; this.style.display='block';"/></div>`;
+                        });
+                    }
+                    
+                    // Display summarized text if available
+                    if (result.summarize) {
+                        resultHtml += `<div style="margin-top: 8px;">${markdownToHtml(result.summarize)}</div>`;
+                    }
+                    
+                    // Display code output if available
+                    if (result.output && result.output.trim()) {
+                        resultHtml += `<div style="background: #f5f5f5; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 11px; margin-top: 8px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;">${escapeHtml(result.output.substring(0, 800))}</div>`;
+                    }
+                    
+                    return resultHtml;
+                case 'routed':
+                    return `<div class="event-label">🎯 Tools Selected</div><div class="event-content">${event.tools.map(t => t.tool_id).join(', ')}</div>`;
+                case 'warning':
+                    return `⚠️ ${event.message}`;
+                case 'error':
+                    return `❌ ${event.message}`;
+                case 'complete':
+                    return `✨ Complete!`;
+                default:
+                    return JSON.stringify(event);
+            }
+        }
+
+        function escapeHtml(text) {
+            if (typeof text !== 'string') return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function addEvent(event) {
+            const el = document.createElement('div');
+            el.className = `event ${event.type}`;
+            el.innerHTML = formatEvent(event);
+            eventLog.appendChild(el);
+            eventLog.scrollTop = eventLog.scrollHeight;
+        }
+
+        function updateStatus(msg, className = '') {
+            statusEl.textContent = msg;
+            statusEl.className = `status ${className}`;
+        }
+
+        async function submitPrompt() {
+            const prompt = document.getElementById('prompt').value;
+            if (!prompt.trim()) return;
+
+            isProcessing = true;
+            submitBtn.disabled = true;
+            eventLog.innerHTML = '';
+            responsePanel.innerHTML = '';
+            detailsPanel.innerHTML = '';
+            tracePanel.innerHTML = '';
+            updateStatus('⏳ Processing...', 'processing');
+
+            try {
+                const response = await fetch('/stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt: prompt,
+                        thinking_level: document.getElementById('thinking').value
+                    })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const jsonStr = line.substring(6);
+                                const event = JSON.parse(jsonStr);
+                                addEvent(event);
+
+                                if (event.type === 'response' || event.type === 'final_response') {
+                                    const response = event.response || '';
+                                    responsePanel.innerHTML = markdownToHtml(response);
+                                }
+
+                                if (event.type === 'routed' && event.tools) {
+                                    let toolsHtml = detailsPanel.innerHTML;
+                                    if (event.tools.length === 0) {
+                                        toolsHtml += `<div style="padding: 10px; background: #fff1f0; border-radius: 6px; margin-bottom: 8px; font-size: 13px; color: #a8071a;">No tools were selected for this run.</div>`;
+                                    }
+                                    toolsHtml += `<div style="margin-bottom: 16px;">`;
+                                    event.tools.forEach(tool => {
+                                        toolsHtml += `<div style="padding: 10px; background: #fff7e6; border-radius: 6px; margin-bottom: 8px; font-size: 13px;">`;
+                                        toolsHtml += `<div style="font-weight: 600; color: #7d4e0f;">🔧 ${tool.tool_id}</div>`;
+                                        if (tool.inputs) {
+                                            toolsHtml += `<div style="color: #666; font-size: 12px; margin-top: 4px;"><strong>Params:</strong> ${JSON.stringify(tool.inputs).substring(0, 150)}</div>`;
+                                        }
+                                        toolsHtml += `</div>`;
+                                    });
+                                    toolsHtml += `</div>`;
+                                    detailsPanel.innerHTML = toolsHtml;
+                                }
+
+                                if (event.type === 'complete') {
+                                    updateStatus('✅ Complete!', 'complete');
+                                    if (event.final && event.final.tools && event.final.tools.length === 0) {
+                                        detailsPanel.innerHTML += `<div style="padding: 10px; background: #f6ffed; border-radius: 6px; margin-bottom: 8px; font-size: 13px; color: #237804;">No tools were needed for this prompt.</div>`;
+                                    }
+                                    if (event.final && event.final.trace) {
+                                        currentTrace = event.final.trace;
+                                        displayTrace(currentTrace);
+                                    }
+                                }
+                            } catch (e) {
+                                console.error('Failed to parse event:', e);
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                updateStatus(`❌ Error: ${err.message}`, '');
+                const el = document.createElement('div');
+                el.className = 'event error';
+                el.innerHTML = `<div class="event-label">Error</div><div class="event-content">${escapeHtml(err.message)}</div>`;
+                eventLog.appendChild(el);
+            } finally {
+                isProcessing = false;
+                submitBtn.disabled = false;
+            }
+        }
+
+        document.getElementById('prompt').addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                submitPrompt();
+            }
+        });
+
+        function displayTrace(trace) {
+            let html = `<div style="font-size: 12px;">`;
+            html += `<div style="padding: 12px; background: #f5f5f5; border-radius: 6px; margin-bottom: 12px; font-weight: 600;">`;
+            html += `📊 Total Events: ${trace.total_events} | ⚠️ Errors: ${trace.total_errors} | ⏱️ Duration: ${(trace.duration || 0).toFixed(2)}s`;
+            html += `</div>`;
+            
+            if (trace.events && trace.events.length > 0) {
+                html += `<div style="margin-bottom: 12px;"><strong>📅 Timeline:</strong></div>`;
+                trace.events.forEach(evt => {
+                    html += `<div style="margin-left: 8px; margin-bottom: 8px; padding: 8px; background: #f9f9f9; border-left: 3px solid #667eea; border-radius: 4px; font-size: 11px;">`;
+                    html += `<span style="color: #999; font-family: monospace;">${new Date(evt.timestamp).toLocaleTimeString()}</span> | `;
+                    html += `<span style="color: #667eea; font-weight: 600;">${evt.stage}</span> | `;
+                    html += `<span>${evt.message}</span>`;
+                    if (evt.data && Object.keys(evt.data).length > 0) {
+                        const dataStr = JSON.stringify(evt.data).substring(0, 200);
+                        html += `<div style="margin-top: 4px; color: #999; font-family: monospace; font-size: 10px; word-break: break-all;">${dataStr}</div>`;
+                    }
+                    html += `</div>`;
+                });
+            }
+            
+            if (trace.errors && trace.errors.length > 0) {
+                html += `<div style="margin-top: 12px;"><strong style="color: #ff4d4f;">❌ Errors:</strong></div>`;
+                trace.errors.forEach(err => {
+                    html += `<div style="margin-left: 8px; margin-bottom: 8px; padding: 8px; background: #fff1f0; border-left: 3px solid #ff4d4f; border-radius: 4px; font-size: 11px;">`;
+                    html += `<span style="color: #ff4d4f; font-weight: 600;">${err.stage}</span> | `;
+                    html += `<span>${err.error}</span>`;
+                    html += `</div>`;
+                });
+            }
+            
+            html += `</div>`;
+            tracePanel.innerHTML = html;
+        }
+    </script>
+</body>
+</html>

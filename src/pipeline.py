@@ -1,15 +1,36 @@
 import inspect
 from typing import Any, Generator, Literal
+import time
 
 from src.pipeline_blocks import ToolBlock, PlannerPromptBlock, SelfCritiqueBlock, ImprovementCritiqueBlock, ToolRouterBlock, PythonExecutionToolBlock, WebSearchToolBlock, CreativeIdeaGeneration, ResponseSynthesizerBlock
 from src.logger import ExecutionTrace
 from src.parameter_mapper import ParameterMapper
+
+# Maximum retries for tool invocations
+TOOL_MAX_RETRIES = 3
+TOOL_RETRY_DELAY = 1.0  # seconds
 
 
 class Pipeline:
     def __init__(self, tools: list[ToolBlock] | None = None):
         self.tools = tools if tools else [WebSearchToolBlock(), PythonExecutionToolBlock(), CreativeIdeaGeneration()]
         self.trace = ExecutionTrace()
+        self.tool_errors: list[dict[str, Any]] = []  # Track tool errors for user visibility
+
+    def _invoke_tool_with_retry(self, tool: ToolBlock, inputs: dict[str, Any]) -> dict[str, Any]:
+        """Invoke a tool with retry logic for transient failures."""
+        last_error = None
+        for attempt in range(1, TOOL_MAX_RETRIES + 1):
+            try:
+                result = tool(**inputs)
+                return {"success": True, "result": result, "attempts": attempt}
+            except Exception as e:
+                last_error = str(e)
+                self.trace.log("tool_retry", f"Tool {tool.identity} attempt {attempt} failed: {last_error}")
+                if attempt < TOOL_MAX_RETRIES:
+                    time.sleep(TOOL_RETRY_DELAY * attempt)  # Exponential backoff
+        
+        return {"success": False, "error": last_error, "attempts": TOOL_MAX_RETRIES}
 
     def _invoke_tool(self, tool: ToolBlock, inputs: dict[str, Any]):
         return tool(**inputs)
@@ -76,6 +97,8 @@ class Pipeline:
             yield {"type": "routed", "tools": routed_serializable}
 
             tool_outputs = {}
+            self.tool_errors = []  # Reset tool errors for this run
+            
             for item in routed:
                 tool = item.get("tool")
                 inputs = item.get("inputs", {})
@@ -90,13 +113,26 @@ class Pipeline:
                 self.trace.log("tool_invoke", f"Starting tool: {tool.identity}", {"inputs_keys": list(inputs.keys())})
                 yield {"type": "tool_start", "tool_id": tool.identity, "description": tool.details.get("description", "")}
                 
-                try:
-                    result = self._invoke_tool(tool, inputs)
-                    self.trace.log("tool_invoke", f"Tool succeeded: {tool.identity}", {"result_size": len(str(result))})
-                except Exception as exc:
-                    error_msg = str(exc)
+                # Use retry logic for tool invocation
+                invoke_result = self._invoke_tool_with_retry(tool, inputs)
+                
+                if invoke_result["success"]:
+                    result = invoke_result["result"]
+                    self.trace.log("tool_invoke", f"Tool succeeded: {tool.identity}", 
+                                   {"result_size": len(str(result)), "attempts": invoke_result["attempts"]})
+                else:
+                    error_msg = invoke_result["error"]
                     result = {"error": error_msg}
-                    self.trace.log_error("tool_invoke", f"Tool failed: {tool.identity}", {"error": error_msg})
+                    self.tool_errors.append({
+                        "tool_id": tool.identity,
+                        "error": error_msg,
+                        "attempts": invoke_result["attempts"]
+                    })
+                    self.trace.log_error("tool_invoke", f"Tool failed after {invoke_result['attempts']} attempts: {tool.identity}", 
+                                         {"error": error_msg})
+                    # Yield error to user so they know what failed
+                    yield {"type": "tool_error", "tool_id": tool.identity, 
+                           "error": f"Tool failed after {invoke_result['attempts']} retries: {error_msg}"}
                 
                 tool_outputs[tool.identity] = result
                 yield {"type": "tool_complete", "tool_id": tool.identity, "result": result}
@@ -129,7 +165,17 @@ class Pipeline:
 
             trace_summary = self.trace.get_summary()
             self.trace.log("complete", "Pipeline completed", {"total_errors": trace_summary["total_errors"]})
-            yield {"type": "complete", "final": {"plan": plan, "tools": routed_serializable, "tool_outputs": tool_outputs, "response": final_response, "trace": trace_summary}}
+            
+            # Include tool errors in the final output so UI can display them
+            final_output = {
+                "plan": plan, 
+                "tools": routed_serializable, 
+                "tool_outputs": tool_outputs, 
+                "response": final_response, 
+                "trace": trace_summary,
+                "tool_errors": self.tool_errors  # Surface tool failures to user
+            }
+            yield {"type": "complete", "final": final_output}
         
         except Exception as e:
             self.trace.log_error("pipeline", f"Fatal error: {str(e)}")

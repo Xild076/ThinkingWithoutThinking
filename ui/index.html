@@ -3,8 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ThinkingWithoutThinking - Stream of Thought</title>
+    <title>ThinkingWithoutThinking - AI Reasoning Pipeline</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --bg-primary: #0a0a0b;
+            --bg-secondary: #111113;
+            --bg-tertiary: #18181b;
+            --bg-elevated: #1f1f23;
+            --border-subtle: #27272a;
+            --border-default: #3f3f46;
+            --text-primary: #fafafa;
+            --text-secondary: #a1a1aa;
+            --text-muted: #71717a;
+            --accent-primary: #8b5cf6;
+            --accent-secondary: #a78bfa;
+            --accent-gradient: linear-gradient(135deg, #8b5cf6 0%, #6366f1 50%, #3b82f6 100%);
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --info: #3b82f6;
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 16px;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+            --shadow-lg: 0 12px 40px rgba(0,0,0,0.6);
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -12,598 +38,912 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
             min-height: 100vh;
-            padding: 20px;
+            line-height: 1.6;
         }
 
-        .container {
-            width: 100%;
-            max-width: 1400px;
-            margin: 0 auto;
+        /* Layout */
+        .app-container {
+            display: grid;
+            grid-template-columns: 320px 1fr 300px;
+            min-height: 100vh;
         }
 
-        .header {
-            background: white;
-            border-radius: 12px;
-            padding: 32px;
-            margin-bottom: 24px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            text-align: center;
+        /* Left Sidebar - Input */
+        .sidebar-left {
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            position: sticky;
+            top: 0;
         }
 
-        .header h1 {
-            font-size: 32px;
-            margin-bottom: 8px;
-            color: #667eea;
+        .sidebar-header {
+            padding: 24px 20px;
+            border-bottom: 1px solid var(--border-subtle);
         }
 
-        .header p {
-            color: #666;
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: var(--accent-gradient);
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .logo-text h1 {
             font-size: 16px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
         }
 
-        .input-section {
-            background: white;
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 24px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-        }
-
-        .input-section label {
-            display: block;
-            font-size: 14px;
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 8px;
+        .logo-text span {
+            font-size: 11px;
+            color: var(--text-muted);
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.1em;
+        }
+
+        .input-area {
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            overflow-y: auto;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .input-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
         textarea {
-            width: 100%;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            padding: 16px;
-            font-family: 'Monaco', 'Courier New', monospace;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
             font-size: 14px;
-            resize: vertical;
-            min-height: 120px;
-            margin-bottom: 16px;
+            padding: 14px;
+            resize: none;
+            transition: all 0.2s ease;
+            min-height: 200px;
         }
 
         textarea:focus {
             outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15);
         }
 
-        .controls {
-            display: flex;
-            gap: 16px;
-            align-items: flex-end;
+        textarea::placeholder {
+            color: var(--text-muted);
         }
 
-        .control-group {
-            flex: 0 1 auto;
-        }
-
-        .control-group label {
-            display: block;
-            font-size: 12px;
-            font-weight: 600;
-            color: #666;
-            margin-bottom: 8px;
-            text-transform: uppercase;
+        .select-wrapper {
+            position: relative;
         }
 
         select {
-            padding: 10px 14px;
-            border: 2px solid #e0e0e0;
-            border-radius: 6px;
+            width: 100%;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
             font-size: 14px;
-            background: white;
+            padding: 12px 14px;
             cursor: pointer;
-            min-width: 200px;
+            appearance: none;
+            transition: all 0.2s ease;
         }
 
         select:focus {
             outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            border-color: var(--accent-primary);
         }
 
-        button {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+        .select-wrapper::after {
+            content: '▾';
+            position: absolute;
+            right: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            pointer-events: none;
+        }
+
+        .btn {
+            background: var(--accent-gradient);
             border: none;
-            padding: 12px 32px;
-            border-radius: 6px;
-            font-weight: 600;
-            cursor: pointer;
+            border-radius: var(--radius-md);
+            color: white;
+            font-family: 'Inter', sans-serif;
             font-size: 14px;
-            transition: transform 0.2s, box-shadow 0.2s;
+            font-weight: 600;
+            padding: 14px 20px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
         }
 
-        button:hover:not(:disabled) {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 16px rgba(102, 126, 234, 0.4);
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 20px rgba(139, 92, 246, 0.4);
         }
 
-        button:disabled {
+        .btn:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+            transform: none;
         }
 
-        .grid-4 {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-            gap: 24px;
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-default);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-elevated);
+            box-shadow: none;
+        }
+
+        /* Main Content */
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .main-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-secondary);
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+
+        .status-dot.active {
+            background: var(--success);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .pipeline-view {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+
+        /* Pipeline Steps */
+        .pipeline-step {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            margin-bottom: 16px;
+            overflow: hidden;
+            transition: all 0.2s ease;
+        }
+
+        .pipeline-step.active {
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+        }
+
+        .pipeline-step.error {
+            border-color: var(--error);
+        }
+
+        .step-header {
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .step-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            background: var(--bg-tertiary);
+        }
+
+        .step-icon.planning { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+        .step-icon.critique { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+        .step-icon.routing { background: rgba(139, 92, 246, 0.15); color: #8b5cf6; }
+        .step-icon.tool { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+        .step-icon.synthesis { background: rgba(236, 72, 153, 0.15); color: #ec4899; }
+        .step-icon.complete { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+        .step-icon.error { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+
+        .step-info {
+            flex: 1;
+        }
+
+        .step-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .step-subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .step-status {
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+        }
+
+        .step-status.running {
+            background: rgba(139, 92, 246, 0.15);
+            color: var(--accent-secondary);
+        }
+
+        .step-status.complete {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--success);
+        }
+
+        .step-content {
+            padding: 0 20px 20px 68px;
+            display: none;
+        }
+
+        .step-content.expanded {
+            display: block;
+        }
+
+        .step-content pre {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: var(--text-secondary);
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        /* Final Response */
+        .final-response {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+            border: 1px solid var(--accent-primary);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+            margin-top: 8px;
+        }
+
+        .final-response h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .final-response .response-content {
+            font-size: 15px;
+            line-height: 1.8;
+            color: var(--text-primary);
+            white-space: pre-wrap;
+        }
+
+        .final-response .response-content p {
+            margin-bottom: 1em;
+        }
+
+        .final-response .response-content strong {
+            color: var(--accent-secondary);
+            font-weight: 600;
+        }
+
+        .final-response .response-content ul,
+        .final-response .response-content ol {
+            margin-left: 1.5em;
+            margin-bottom: 1em;
+        }
+
+        .final-response .response-content li {
+            margin-bottom: 0.5em;
+        }
+
+        .final-response .response-content code {
+            background: var(--bg-tertiary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9em;
+        }
+
+        /* Right Sidebar - Stats */
+        .sidebar-right {
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border-subtle);
+            padding: 24px 20px;
+            height: 100vh;
+            position: sticky;
+            top: 0;
+            overflow-y: auto;
+        }
+
+        .stats-section {
             margin-bottom: 24px;
         }
 
-        .card {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            min-height: 500px;
-        }
-
-        .card-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 16px 20px;
+        .stats-title {
+            font-size: 11px;
             font-weight: 600;
-            font-size: 15px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .card-header.events { background: linear-gradient(135deg, #1890ff 0%, #1890ff 100%); }
-        .card-header.answer { background: linear-gradient(135deg, #722ed1 0%, #722ed1 100%); }
-        .card-header.tools { background: linear-gradient(135deg, #faad14 0%, #faad14 100%); }
-        .card-header.trace { background: linear-gradient(135deg, #13c2c2 0%, #13c2c2 100%); }
-
-        .card-content {
-            flex: 1;
-            overflow-y: auto;
-            padding: 20px;
-        }
-
-        .event {
-            margin-bottom: 16px;
-            padding: 12px;
-            border-radius: 6px;
-            font-size: 13px;
-            line-height: 1.6;
-            animation: slideIn 0.3s ease-out;
-        }
-
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .event.planning { background: #e7f3ff; border-left: 4px solid #1890ff; color: #0050b3; }
-        .event.plan { background: #f6ffed; border-left: 4px solid #52c41a; color: #274e0b; }
-        .event.tool_start { background: #fff7e6; border-left: 4px solid #faad14; color: #7d4e0f; }
-        .event.tool_complete { background: #f6ffed; border-left: 4px solid #52c41a; color: #274e0b; }
-        .event.response { background: #f9f0ff; border-left: 4px solid #722ed1; color: #38165f; }
-        .event.complete { background: #f6ffed; border-left: 4px solid #52c41a; color: #274e0b; font-weight: 600; }
-        .event.error { background: #fff1f0; border-left: 4px solid #ff4d4f; color: #5c0a0a; }
-
-        .event-label {
-            font-weight: 600;
-            margin-bottom: 6px;
-            opacity: 0.9;
-            font-size: 12px;
+            color: var(--text-muted);
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.1em;
+            margin-bottom: 12px;
         }
 
-        .event-content {
-            word-wrap: break-word;
-            white-space: normal;
-            font-family: 'Monaco', 'Courier New', monospace;
+        .stat-card {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 14px;
+            margin-bottom: 10px;
+        }
+
+        .stat-label {
             font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
         }
 
-        .markdown-content {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            font-size: 14px;
-            line-height: 1.8;
-            color: #333;
-        }
-
-        .markdown-content h1 {
-            font-size: 24px;
-            font-weight: 700;
-            margin: 24px 0 16px 0;
-            border-bottom: 2px solid #e0e0e0;
-            padding-bottom: 8px;
-        }
-
-        .markdown-content h2 {
+        .stat-value {
             font-size: 20px;
             font-weight: 700;
-            margin: 20px 0 12px 0;
+            color: var(--text-primary);
         }
 
-        .markdown-content h3 {
-            font-size: 16px;
-            font-weight: 600;
-            margin: 16px 0 8px 0;
+        .stat-value.small {
+            font-size: 14px;
         }
 
-        .markdown-content p {
-            margin: 12px 0;
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
         }
 
-        .markdown-content strong {
-            font-weight: 600;
-            color: #1f1f1f;
-        }
-
-        .markdown-content em {
-            font-style: italic;
-            color: #555;
-        }
-
-        .markdown-content a {
-            color: #667eea;
-            text-decoration: underline;
-        }
-
-        .markdown-content code {
-            background: #f5f5f5;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: 'Monaco', 'Courier New', monospace;
-            font-size: 12px;
-            color: #d63384;
-        }
-
-        .markdown-content pre {
-            background: #f5f5f5;
-            padding: 12px;
-            border-radius: 6px;
-            overflow-x: auto;
-            margin: 12px 0;
-            border-left: 4px solid #667eea;
-        }
-
-        .markdown-content pre code {
-            background: none;
-            padding: 0;
-            color: #333;
-        }
-
-        .markdown-content ul, .markdown-content ol {
-            margin: 12px 0;
-            padding-left: 24px;
-        }
-
-        .markdown-content li {
-            margin: 6px 0;
-        }
-
-        .markdown-content blockquote {
-            border-left: 4px solid #667eea;
-            padding-left: 12px;
-            margin: 12px 0;
-            color: #666;
-            font-style: italic;
-        }
-
-        .markdown-content table {
-            border-collapse: collapse;
-            width: 100%;
-            margin: 12px 0;
-        }
-
-        .markdown-content th, .markdown-content td {
-            border: 1px solid #ddd;
-            padding: 8px 12px;
-            text-align: left;
-        }
-
-        .markdown-content th {
-            background: #f5f5f5;
-            font-weight: 600;
-        }
-
-        .response-content {
-            font-size: 15px;
-            line-height: 1.8;
-            color: #333;
-        }
-
-        .image-container {
-            margin: 16px 0;
+        .stat-mini {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 10px;
             text-align: center;
         }
 
-        .image-container img {
-            max-width: 100%;
-            max-height: 400px;
-            border-radius: 8px;
-            border: 1px solid #e0e0e0;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        .stat-mini .stat-value {
+            font-size: 16px;
         }
 
-        .status {
-            padding: 12px 20px;
-            background: #e7f3ff;
-            border-top: 2px solid #1890ff;
+        .stat-mini .stat-label {
+            font-size: 10px;
+        }
+
+        /* Tool Errors Alert */
+        .tool-errors {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--error);
+            border-radius: var(--radius-md);
+            padding: 14px;
+            margin-bottom: 16px;
+        }
+
+        .tool-errors h4 {
+            color: var(--error);
             font-size: 13px;
-            color: #0050b3;
-            font-weight: 600;
+            margin-bottom: 8px;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
         }
 
-        .status.processing {
-            background: #fff7e6;
-            border-top-color: #faad14;
-            color: #7d4e0f;
+        .tool-errors ul {
+            list-style: none;
+            font-size: 12px;
+            color: var(--text-secondary);
         }
 
-        .status.complete {
-            background: #f6ffed;
-            border-top-color: #52c41a;
-            color: #274e0b;
+        .tool-errors li {
+            padding: 4px 0;
         }
 
-        .spinner {
+        /* Dev Actions */
+        .dev-actions {
+            margin-top: auto;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        .dev-actions .btn {
+            width: 100%;
+            margin-bottom: 8px;
+            font-size: 12px;
+            padding: 10px;
+        }
+
+        /* Loading States */
+        .loading-spinner {
             display: inline-block;
-            width: 14px;
-            height: 14px;
-            border: 2px solid rgba(0, 0, 0, 0.2);
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--border-default);
+            border-top-color: var(--accent-primary);
             border-radius: 50%;
-            border-top-color: currentColor;
-            animation: spin 0.6s linear infinite;
+            animation: spin 0.8s linear infinite;
         }
 
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
 
+        /* Empty State */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-muted);
+            text-align: center;
+            padding: 40px;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 18px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .empty-state p {
+            font-size: 14px;
+            max-width: 300px;
+        }
+
+        /* Responsive */
         @media (max-width: 1200px) {
-            .grid-4 {
-                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            .app-container {
+                grid-template-columns: 280px 1fr;
+            }
+            .sidebar-right {
+                display: none;
             }
         }
 
         @media (max-width: 768px) {
-            .grid-4 {
+            .app-container {
                 grid-template-columns: 1fr;
             }
-
-            .card {
-                min-height: 400px;
+            .sidebar-left {
+                position: relative;
+                height: auto;
             }
+        }
 
-            .header {
-                padding: 24px;
-            }
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
 
-            .header h1 {
-                font-size: 24px;
-            }
+        ::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
 
-            .controls {
-                flex-direction: column;
-                align-items: stretch;
-            }
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-default);
+            border-radius: 4px;
+        }
 
-            button {
-                width: 100%;
-            }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🧠 ThinkingWithoutThinking</h1>
-            <p>Real-time stream of thought visualization</p>
-        </div>
-
-        <div class="input-section">
-            <label for="prompt">Your Prompt</label>
-            <textarea id="prompt" placeholder="Ask your question or give your command..."></textarea>
-
-            <div class="controls">
-                <div class="control-group">
-                    <label for="thinking">Thinking Level</label>
-                    <select id="thinking">
-                        <option value="low">Low (Fast)</option>
-                        <option value="medium_synth" selected>Medium + Synthesis</option>
-                        <option value="medium_plan">Medium + Planning</option>
-                        <option value="high">High (Thorough)</option>
-                    </select>
+    <div class="app-container">
+        <!-- Left Sidebar -->
+        <aside class="sidebar-left">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon">🧠</div>
+                    <div class="logo-text">
+                        <h1>ThinkingWithoutThinking</h1>
+                        <span>AI Reasoning Pipeline</span>
+                    </div>
                 </div>
-                <button id="submit" onclick="submitPrompt()" style="margin-top: 24px;">🚀 Submit</button>
             </div>
-        </div>
+            
+            <div class="input-area">
+                <div class="input-group">
+                    <label class="input-label">Your Prompt</label>
+                    <textarea id="prompt-input" placeholder="Ask me anything... I'll think through it step by step."></textarea>
+                </div>
+                
+                <div class="input-group">
+                    <label class="input-label">Thinking Level</label>
+                    <div class="select-wrapper">
+                        <select id="thinking-level">
+                            <option value="low">Low - Quick response</option>
+                            <option value="medium_synth" selected>Medium - With synthesis</option>
+                            <option value="medium_plan">Medium - With planning</option>
+                            <option value="high">High - Full reasoning</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <button class="btn" id="submit-btn" onclick="submitPrompt()">
+                    <span>🚀</span> Generate Response
+                </button>
+                
+                <button class="btn btn-secondary" onclick="clearOutput()">
+                    Clear Output
+                </button>
+            </div>
+        </aside>
 
-        <div class="grid-4">
-            <div class="card">
-                <div class="card-header events">📊 Events Stream</div>
-                <div class="card-content" id="events"></div>
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="main-header">
+                <div class="status-indicator">
+                    <div class="status-dot" id="status-dot"></div>
+                    <span id="status-text">Ready</span>
+                </div>
+                <div id="timer" style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text-muted);">
+                    00:00.000
+                </div>
+            </header>
+
+            <div class="pipeline-view" id="pipeline-output">
+                <div class="empty-state" id="empty-state">
+                    <div class="empty-state-icon">💭</div>
+                    <h3>Ready to Think</h3>
+                    <p>Enter a prompt and I'll walk you through my reasoning process step by step.</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- Right Sidebar -->
+        <aside class="sidebar-right">
+            <div class="stats-section">
+                <div class="stats-title">Session Stats</div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Requests</div>
+                    <div class="stat-value" id="stat-requests">0</div>
+                </div>
+                <div class="stat-grid">
+                    <div class="stat-mini">
+                        <div class="stat-value" id="stat-tokens-in">0</div>
+                        <div class="stat-label">Tokens In</div>
+                    </div>
+                    <div class="stat-mini">
+                        <div class="stat-value" id="stat-tokens-out">0</div>
+                        <div class="stat-label">Tokens Out</div>
+                    </div>
+                </div>
             </div>
 
-            <div class="card">
-                <div class="card-header answer">💡 Final Answer</div>
-                <div class="card-content response-content markdown-content" id="response"></div>
+            <div class="stats-section">
+                <div class="stats-title">Cost Tracking</div>
+                <div class="stat-card">
+                    <div class="stat-label">Session Cost (est.)</div>
+                    <div class="stat-value" id="stat-cost">$0.00</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Avg Latency</div>
+                    <div class="stat-value small" id="stat-latency">-- ms</div>
+                </div>
             </div>
 
-            <div class="card">
-                <div class="card-header tools">🛠️ Tools Used</div>
-                <div class="card-content" id="details"></div>
+            <div class="stats-section" id="tool-errors-section" style="display: none;">
+                <div class="tool-errors">
+                    <h4>⚠️ Tool Errors</h4>
+                    <ul id="tool-errors-list"></ul>
+                </div>
             </div>
 
-            <div class="card">
-                <div class="card-header trace">📝 Trace & Logs</div>
-                <div class="card-content" id="trace"></div>
+            <div class="dev-actions">
+                <div class="stats-title">Developer</div>
+                <button class="btn btn-secondary" onclick="reloadPrompts()">
+                    🔄 Reload Prompts
+                </button>
+                <button class="btn btn-secondary" onclick="fetchCostStats()">
+                    📊 Refresh Stats
+                </button>
             </div>
-        </div>
-
-        <div style="text-align: center; padding: 20px; color: white; font-size: 13px;">
-            <div id="status" class="status" style="width: fit-content; margin: 0 auto; background: transparent; border: none; color: white;">Ready</div>
-        </div>
+        </aside>
     </div>
 
     <script>
-        const eventLog = document.getElementById('events');
-        const responsePanel = document.getElementById('response');
-        const detailsPanel = document.getElementById('details');
-        const tracePanel = document.getElementById('trace');
-        const statusEl = document.getElementById('status');
-        const submitBtn = document.getElementById('submit');
-        let isProcessing = false;
-        let currentTrace = null;
+        let sessionRequests = 0;
+        let timerInterval = null;
+        let startTime = null;
 
-        function markdownToHtml(text) {
-            if (!text) return '';
-            
-            // Escape HTML first
-            let html = escapeHtml(text);
-            
-            // Convert markdown to HTML
-            html = html
-                .replace(/^### (.*?)$/gm, '<h3>$1</h3>')
-                .replace(/^## (.*?)$/gm, '<h2>$1</h2>')
-                .replace(/^# (.*?)$/gm, '<h1>$1</h1>')
-                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
-                .replace(/`([^`]+)`/g, '<code>$1</code>')
-                .replace(/^- (.*?)$/gm, '<li>$1</li>')
-                .replace(/(<li>.*?<\/li>)/s, '<ul>$1</ul>')
-                .replace(/\n{2,}/g, '</p><p>')
-                .replace(/\n/g, '<br/>');
-            
-            return `<div style="white-space: normal; word-wrap: break-word;">${html}</div>`;
+        // Icon mapping for step types
+        const stepIcons = {
+            planning: '📝',
+            plan: '📋',
+            critique: '🔍',
+            plan_critique: '🔍',
+            improvement: '✨',
+            plan_improved: '✨',
+            routing: '🔀',
+            routed: '🔀',
+            tool_start: '⚙️',
+            tool_complete: '✅',
+            tool_error: '❌',
+            synthesizing: '🔮',
+            response: '💬',
+            final_critique: '🔍',
+            final_improvement: '✨',
+            final_response: '🎯',
+            complete: '✅',
+            error: '❌',
+            warning: '⚠️'
+        };
+
+        const stepTitles = {
+            planning: 'Generating Plan',
+            plan: 'Plan Generated',
+            critique: 'Self Critique',
+            plan_critique: 'Plan Critique',
+            improvement: 'Improving Plan',
+            plan_improved: 'Plan Improved',
+            routing: 'Routing to Tools',
+            routed: 'Tools Selected',
+            tool_start: 'Tool Starting',
+            tool_complete: 'Tool Complete',
+            tool_error: 'Tool Failed',
+            synthesizing: 'Synthesizing Response',
+            response: 'Initial Response',
+            final_critique: 'Final Critique',
+            final_improvement: 'Final Improvement',
+            final_response: 'Final Response',
+            complete: 'Complete',
+            error: 'Error',
+            warning: 'Warning'
+        };
+
+        function startTimer() {
+            startTime = Date.now();
+            timerInterval = setInterval(() => {
+                const elapsed = Date.now() - startTime;
+                const minutes = Math.floor(elapsed / 60000);
+                const seconds = Math.floor((elapsed % 60000) / 1000);
+                const ms = elapsed % 1000;
+                document.getElementById('timer').textContent = 
+                    `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+            }, 50);
         }
 
-        function formatEvent(event) {
-            switch (event.type) {
-                case 'planning':
-                case 'routing':
-                case 'synthesizing':
-                case 'critique':
-                case 'improvement':
-                case 'final_critique':
-                case 'final_improvement':
-                    return `<span class="spinner"></span> ${event.message}`;
-                case 'plan':
-                case 'plan_improved':
-                case 'response':
-                case 'final_response':
-                    const content = event.plan || event.response || '';
-                    return `<div class="event-label">${event.type === 'plan' ? '📋 Plan' : event.type === 'plan_improved' ? '✨ Improved Plan' : '💬 Response'}</div>${markdownToHtml(content)}`;
-                case 'plan_critique':
-                case 'final_critique_complete':
-                    return `<div class="event-label">🔍 Critique</div>${markdownToHtml(event.critique || '')}`;
-                case 'tool_start':
-                    return `<span class="spinner"></span> Running: ${event.tool_id}`;
-                case 'tool_complete':
-                    const result = event.result || {};
-                    let resultHtml = `<div class="event-label">✅ ${event.tool_id}</div>`;
-                    
-                    // Display images if available
-                    if (result.plots_base64 && Array.isArray(result.plots_base64) && result.plots_base64.length > 0) {
-                        resultHtml += `<div style="margin-top: 12px;"><strong>📊 Generated Visualizations:</strong></div>`;
-                        result.plots_base64.forEach(encoded => {
-                            if (!encoded) return;
-                            resultHtml += `<div class="image-container"><img src="data:image/png;base64,${encoded}" alt="Generated plot" style="max-width: 100%; max-height: 300px; border-radius: 6px;" /></div>`;
-                        });
-                    } else if (result.plots && Array.isArray(result.plots) && result.plots.length > 0) {
-                        resultHtml += `<div style="margin-top: 12px;"><strong>📊 Generated Visualizations:</strong></div>`;
-                        result.plots.forEach(plot => {
-                            const safeUrl = plot.replace(/\\/g, '/');
-                            resultHtml += `<div class="image-container"><img src="file://${safeUrl}" alt="Generated plot" style="max-width: 100%; max-height: 300px; border-radius: 6px;" onerror="this.alt='Image failed to load'; this.style.display='block';"/></div>`;
-                        });
-                    }
-                    
-                    // Display summarized text if available
-                    if (result.summarize) {
-                        resultHtml += `<div style="margin-top: 8px;">${markdownToHtml(result.summarize)}</div>`;
-                    }
-                    
-                    // Display code output if available
-                    if (result.output && result.output.trim()) {
-                        resultHtml += `<div style="background: #f5f5f5; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 11px; margin-top: 8px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;">${escapeHtml(result.output.substring(0, 800))}</div>`;
-                    }
-                    
-                    return resultHtml;
-                case 'routed':
-                    return `<div class="event-label">🎯 Tools Selected</div><div class="event-content">${event.tools.map(t => t.tool_id).join(', ')}</div>`;
-                case 'warning':
-                    return `⚠️ ${event.message}`;
-                case 'error':
-                    return `❌ ${event.message}`;
-                case 'complete':
-                    return `✨ Complete!`;
-                default:
-                    return JSON.stringify(event);
+        function stopTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
             }
         }
 
+        function setStatus(text, active = false) {
+            document.getElementById('status-text').textContent = text;
+            const dot = document.getElementById('status-dot');
+            if (active) {
+                dot.classList.add('active');
+            } else {
+                dot.classList.remove('active');
+            }
+        }
+
+        function clearOutput() {
+            document.getElementById('pipeline-output').innerHTML = `
+                <div class="empty-state" id="empty-state">
+                    <div class="empty-state-icon">💭</div>
+                    <h3>Ready to Think</h3>
+                    <p>Enter a prompt and I'll walk you through my reasoning process step by step.</p>
+                </div>
+            `;
+            document.getElementById('tool-errors-section').style.display = 'none';
+            setStatus('Ready', false);
+            stopTimer();
+            document.getElementById('timer').textContent = '00:00.000';
+        }
+
+        function createStep(type, title, subtitle = '', content = '', isActive = false) {
+            const iconClass = type.split('_')[0];
+            const step = document.createElement('div');
+            step.className = `pipeline-step ${isActive ? 'active' : ''} ${type === 'error' ? 'error' : ''}`;
+            step.innerHTML = `
+                <div class="step-header" onclick="this.nextElementSibling.classList.toggle('expanded')">
+                    <div class="step-icon ${iconClass}">${stepIcons[type] || '📌'}</div>
+                    <div class="step-info">
+                        <div class="step-title">${title}</div>
+                        ${subtitle ? `<div class="step-subtitle">${subtitle}</div>` : ''}
+                    </div>
+                    <div class="step-status ${isActive ? 'running' : 'complete'}">${isActive ? 'Running...' : 'Done'}</div>
+                </div>
+                <div class="step-content ${content ? 'expanded' : ''}">
+                    <pre>${escapeHtml(content)}</pre>
+                </div>
+            `;
+            return step;
+        }
+
         function escapeHtml(text) {
-            if (typeof text !== 'string') return '';
+            if (typeof text !== 'string') {
+                text = JSON.stringify(text, null, 2);
+            }
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
         }
 
-        function addEvent(event) {
-            const el = document.createElement('div');
-            el.className = `event ${event.type}`;
-            el.innerHTML = formatEvent(event);
-            eventLog.appendChild(el);
-            eventLog.scrollTop = eventLog.scrollHeight;
+        // Simple markdown to HTML converter
+        function renderMarkdown(text) {
+            if (typeof text !== 'string') {
+                text = JSON.stringify(text, null, 2);
+            }
+            
+            // Escape HTML first
+            let html = escapeHtml(text);
+            
+            // Convert **bold** to <strong>
+            html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            
+            // Convert *italic* to <em>
+            html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+            
+            // Convert `code` to <code>
+            html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+            
+            // Convert newlines to <br> for proper line breaks
+            html = html.replace(/\n/g, '<br>');
+            
+            // Convert double line breaks to paragraph breaks
+            html = html.replace(/<br><br>/g, '</p><p>');
+            
+            return '<p>' + html + '</p>';
         }
 
-        function updateStatus(msg, className = '') {
-            statusEl.textContent = msg;
-            statusEl.className = `status ${className}`;
+        function showFinalResponse(response) {
+            // Remove any existing final response
+            const existing = document.querySelector('.final-response');
+            if (existing) existing.remove();
+            
+            const container = document.createElement('div');
+            container.className = 'final-response';
+            container.innerHTML = `
+                <h3>🎯 Final Response</h3>
+                <div class="response-content">${renderMarkdown(response)}</div>
+            `;
+            document.getElementById('pipeline-output').appendChild(container);
+            
+            // Mark all steps as complete
+            document.querySelectorAll('.pipeline-step.active').forEach(step => {
+                step.classList.remove('active');
+                const statusEl = step.querySelector('.step-status');
+                if (statusEl) {
+                    statusEl.classList.remove('running');
+                    statusEl.classList.add('complete');
+                    statusEl.textContent = 'Done';
+                }
+            });
+        }
+
+        function showToolErrors(errors) {
+            if (!errors || errors.length === 0) return;
+            
+            const section = document.getElementById('tool-errors-section');
+            const list = document.getElementById('tool-errors-list');
+            list.innerHTML = errors.map(e => 
+                `<li><strong>${e.tool_id}</strong>: ${e.error} (${e.attempts} attempts)</li>`
+            ).join('');
+            section.style.display = 'block';
         }
 
         async function submitPrompt() {
-            const prompt = document.getElementById('prompt').value;
-            if (!prompt.trim()) return;
+            const prompt = document.getElementById('prompt-input').value.trim();
+            const thinkingLevel = document.getElementById('thinking-level').value;
+            
+            if (!prompt) {
+                alert('Please enter a prompt');
+                return;
+            }
 
-            isProcessing = true;
-            submitBtn.disabled = true;
-            eventLog.innerHTML = '';
-            responsePanel.innerHTML = '';
-            detailsPanel.innerHTML = '';
-            tracePanel.innerHTML = '';
-            updateStatus('⏳ Processing...', 'processing');
+            // Clear previous output
+            const output = document.getElementById('pipeline-output');
+            output.innerHTML = '';
+            document.getElementById('tool-errors-section').style.display = 'none';
+
+            // Update UI state
+            const btn = document.getElementById('submit-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading-spinner"></span> Processing...';
+            setStatus('Processing', true);
+            startTimer();
+
+            sessionRequests++;
+            document.getElementById('stat-requests').textContent = sessionRequests;
 
             try {
                 const response = await fetch('/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        prompt: prompt,
-                        thinking_level: document.getElementById('thinking').value
-                    })
+                    body: JSON.stringify({ prompt, thinking_level: thinkingLevel })
                 });
 
                 const reader = response.body.getReader();
@@ -619,101 +959,151 @@
                     for (const line of lines) {
                         if (line.startsWith('data: ')) {
                             try {
-                                const jsonStr = line.substring(6);
-                                const event = JSON.parse(jsonStr);
-                                addEvent(event);
-
-                                if (event.type === 'response' || event.type === 'final_response') {
-                                    const response = event.response || '';
-                                    responsePanel.innerHTML = markdownToHtml(response);
-                                }
-
-                                if (event.type === 'routed' && event.tools) {
-                                    let toolsHtml = detailsPanel.innerHTML;
-                                    if (event.tools.length === 0) {
-                                        toolsHtml += `<div style="padding: 10px; background: #fff1f0; border-radius: 6px; margin-bottom: 8px; font-size: 13px; color: #a8071a;">No tools were selected for this run.</div>`;
-                                    }
-                                    toolsHtml += `<div style="margin-bottom: 16px;">`;
-                                    event.tools.forEach(tool => {
-                                        toolsHtml += `<div style="padding: 10px; background: #fff7e6; border-radius: 6px; margin-bottom: 8px; font-size: 13px;">`;
-                                        toolsHtml += `<div style="font-weight: 600; color: #7d4e0f;">🔧 ${tool.tool_id}</div>`;
-                                        if (tool.inputs) {
-                                            toolsHtml += `<div style="color: #666; font-size: 12px; margin-top: 4px;"><strong>Params:</strong> ${JSON.stringify(tool.inputs).substring(0, 150)}</div>`;
-                                        }
-                                        toolsHtml += `</div>`;
-                                    });
-                                    toolsHtml += `</div>`;
-                                    detailsPanel.innerHTML = toolsHtml;
-                                }
-
-                                if (event.type === 'complete') {
-                                    updateStatus('✅ Complete!', 'complete');
-                                    if (event.final && event.final.tools && event.final.tools.length === 0) {
-                                        detailsPanel.innerHTML += `<div style="padding: 10px; background: #f6ffed; border-radius: 6px; margin-bottom: 8px; font-size: 13px; color: #237804;">No tools were needed for this prompt.</div>`;
-                                    }
-                                    if (event.final && event.final.trace) {
-                                        currentTrace = event.final.trace;
-                                        displayTrace(currentTrace);
-                                    }
-                                }
+                                const data = JSON.parse(line.slice(6));
+                                handleEvent(data);
                             } catch (e) {
-                                console.error('Failed to parse event:', e);
+                                console.error('Parse error:', e);
                             }
                         }
                     }
                 }
-            } catch (err) {
-                updateStatus(`❌ Error: ${err.message}`, '');
-                const el = document.createElement('div');
-                el.className = 'event error';
-                el.innerHTML = `<div class="event-label">Error</div><div class="event-content">${escapeHtml(err.message)}</div>`;
-                eventLog.appendChild(el);
+            } catch (error) {
+                const step = createStep('error', 'Connection Error', '', error.message);
+                output.appendChild(step);
             } finally {
-                isProcessing = false;
-                submitBtn.disabled = false;
+                btn.disabled = false;
+                btn.innerHTML = '<span>🚀</span> Generate Response';
+                setStatus('Complete', false);
+                stopTimer();
             }
         }
 
-        document.getElementById('prompt').addEventListener('keydown', (e) => {
+        function handleEvent(data) {
+            const output = document.getElementById('pipeline-output');
+            const type = data.type;
+
+            // Mark all previous active steps as complete
+            document.querySelectorAll('.pipeline-step.active').forEach(step => {
+                step.classList.remove('active');
+                const statusEl = step.querySelector('.step-status');
+                if (statusEl) {
+                    statusEl.classList.remove('running');
+                    statusEl.classList.add('complete');
+                    statusEl.textContent = 'Done';
+                }
+            });
+
+            switch (type) {
+                case 'planning':
+                case 'critique':
+                case 'improvement':
+                case 'routing':
+                case 'synthesizing':
+                case 'final_critique':
+                case 'final_improvement':
+                    output.appendChild(createStep(type, stepTitles[type], data.message || '', '', true));
+                    break;
+
+                case 'plan':
+                case 'plan_improved':
+                    output.appendChild(createStep(type, stepTitles[type], '', data.plan));
+                    break;
+
+                case 'plan_critique':
+                case 'final_critique_complete':
+                    output.appendChild(createStep('critique', 'Critique Complete', '', data.critique));
+                    break;
+
+                case 'routed':
+                    const toolList = (data.tools || []).map(t => t.tool_id).join(', ') || 'None';
+                    output.appendChild(createStep(type, stepTitles[type], `Tools: ${toolList}`, JSON.stringify(data.tools, null, 2)));
+                    break;
+
+                case 'tool_start':
+                    output.appendChild(createStep(type, `Starting: ${data.tool_id}`, data.description || '', '', true));
+                    break;
+
+                case 'tool_complete':
+                    const result = typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2);
+                    output.appendChild(createStep(type, `${data.tool_id} Complete`, '', result.substring(0, 1000)));
+                    break;
+
+                case 'tool_error':
+                    output.appendChild(createStep(type, `${data.tool_id} Failed`, '', data.error));
+                    break;
+
+                case 'response':
+                    output.appendChild(createStep(type, stepTitles[type], '', data.response));
+                    break;
+
+                case 'final_response':
+                    showFinalResponse(data.response);
+                    break;
+
+                case 'complete':
+                    if (data.final) {
+                        if (data.final.tool_errors && data.final.tool_errors.length > 0) {
+                            showToolErrors(data.final.tool_errors);
+                        }
+                        if (data.final.response && !document.querySelector('.final-response')) {
+                            showFinalResponse(data.final.response);
+                        }
+                    }
+                    break;
+
+                case 'error':
+                    output.appendChild(createStep('error', 'Error', '', data.message));
+                    break;
+
+                case 'warning':
+                    output.appendChild(createStep('warning', 'Warning', '', data.message));
+                    break;
+            }
+
+            // Auto-scroll to bottom
+            output.scrollTop = output.scrollHeight;
+        }
+
+        async function reloadPrompts() {
+            try {
+                const response = await fetch('/reload-prompts', { method: 'POST' });
+                const data = await response.json();
+                if (data.status === 'ok') {
+                    alert(`Prompts reloaded! Found ${data.prompt_count} prompts: ${data.prompt_ids.join(', ')}`);
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            } catch (error) {
+                alert('Failed to reload prompts: ' + error.message);
+            }
+        }
+
+        async function fetchCostStats() {
+            try {
+                const response = await fetch('/cost-stats');
+                const data = await response.json();
+                if (data.status === 'ok') {
+                    const session = data.session;
+                    document.getElementById('stat-tokens-in').textContent = session.total_input_tokens.toLocaleString();
+                    document.getElementById('stat-tokens-out').textContent = session.total_output_tokens.toLocaleString();
+                    document.getElementById('stat-cost').textContent = `$${session.estimated_cost.toFixed(4)}`;
+                    document.getElementById('stat-latency').textContent = `${session.average_latency_ms.toFixed(0)} ms`;
+                }
+            } catch (error) {
+                console.error('Failed to fetch cost stats:', error);
+            }
+        }
+
+        // Keyboard shortcut: Ctrl/Cmd + Enter to submit
+        document.getElementById('prompt-input').addEventListener('keydown', (e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
                 submitPrompt();
             }
         });
 
-        function displayTrace(trace) {
-            let html = `<div style="font-size: 12px;">`;
-            html += `<div style="padding: 12px; background: #f5f5f5; border-radius: 6px; margin-bottom: 12px; font-weight: 600;">`;
-            html += `📊 Total Events: ${trace.total_events} | ⚠️ Errors: ${trace.total_errors} | ⏱️ Duration: ${(trace.duration || 0).toFixed(2)}s`;
-            html += `</div>`;
-            
-            if (trace.events && trace.events.length > 0) {
-                html += `<div style="margin-bottom: 12px;"><strong>📅 Timeline:</strong></div>`;
-                trace.events.forEach(evt => {
-                    html += `<div style="margin-left: 8px; margin-bottom: 8px; padding: 8px; background: #f9f9f9; border-left: 3px solid #667eea; border-radius: 4px; font-size: 11px;">`;
-                    html += `<span style="color: #999; font-family: monospace;">${new Date(evt.timestamp).toLocaleTimeString()}</span> | `;
-                    html += `<span style="color: #667eea; font-weight: 600;">${evt.stage}</span> | `;
-                    html += `<span>${evt.message}</span>`;
-                    if (evt.data && Object.keys(evt.data).length > 0) {
-                        const dataStr = JSON.stringify(evt.data).substring(0, 200);
-                        html += `<div style="margin-top: 4px; color: #999; font-family: monospace; font-size: 10px; word-break: break-all;">${dataStr}</div>`;
-                    }
-                    html += `</div>`;
-                });
-            }
-            
-            if (trace.errors && trace.errors.length > 0) {
-                html += `<div style="margin-top: 12px;"><strong style="color: #ff4d4f;">❌ Errors:</strong></div>`;
-                trace.errors.forEach(err => {
-                    html += `<div style="margin-left: 8px; margin-bottom: 8px; padding: 8px; background: #fff1f0; border-left: 3px solid #ff4d4f; border-radius: 4px; font-size: 11px;">`;
-                    html += `<span style="color: #ff4d4f; font-weight: 600;">${err.stage}</span> | `;
-                    html += `<span>${err.error}</span>`;
-                    html += `</div>`;
-                });
-            }
-            
-            html += `</div>`;
-            tracePanel.innerHTML = html;
-        }
+        // Fetch initial stats
+        fetchCostStats();
+        setInterval(fetchCostStats, 10000); // Refresh every 10 seconds
     </script>
 </body>
 </html>

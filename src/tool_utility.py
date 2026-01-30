@@ -16,11 +16,25 @@ import contextlib
 import base64
 import time
 import logging
+import ssl
+import urllib3
+
+# Suppress SSL warnings when verification is disabled
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
 _LINK_CACHE: dict[tuple[str, int], list[str]] = {}
 _TEXT_CACHE: dict[str, str | None] = {}
+_INSECURE_SSL = os.getenv("TWT_INSECURE_SSL", "").lower() in ("1", "true", "yes")
+
+# Create an unverified SSL context for environments with certificate issues
+try:
+    _ssl_context = ssl.create_default_context()
+    _ssl_context.check_hostname = False
+    _ssl_context.verify_mode = ssl.CERT_NONE
+except Exception:
+    _ssl_context = None
 
 
 def retrieve_links(query, max_results=5, max_retries=3, base_delay=1.0):
@@ -33,7 +47,7 @@ def retrieve_links(query, max_results=5, max_retries=3, base_delay=1.0):
     
     for attempt in range(max_retries):
         try:
-            with DDGS(timeout=20) as ddgs:
+            with DDGS(timeout=20, verify=not _INSECURE_SSL) as ddgs:
                 try:
                     results = list(ddgs.text(
                         query,
@@ -72,7 +86,7 @@ def retrieve_links(query, max_results=5, max_retries=3, base_delay=1.0):
             if links:
                 links = list(dict.fromkeys(links))
                 _LINK_CACHE[cache_key] = links
-                return links
+            return links
                 
         except Exception as e:
             last_error = e
@@ -85,7 +99,7 @@ def retrieve_links(query, max_results=5, max_retries=3, base_delay=1.0):
     logger.error(f"DuckDuckGo search failed after {max_retries} attempts for query '{query[:50]}...': {last_error}")
     _LINK_CACHE[cache_key] = []
     return []
-    return links
+
 
 def retrieve_text(url):
     """
@@ -101,7 +115,7 @@ def retrieve_text(url):
         return _TEXT_CACHE[url]
 
     try:
-        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"}, verify=not _INSECURE_SSL)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         for script in soup(["script", "style", "noscript"]):
@@ -142,7 +156,7 @@ def _check_safety(tree):
         ValueError: If dangerous code is detected.
     """
     unsafe_modules = {'os', 'sys', 'subprocess', 'shutil'}
-    unsafe_calls = {'exec', 'eval', 'open'}
+    unsafe_calls = {'exec', 'eval', 'open', '__import__'}
     
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -240,7 +254,23 @@ def python_exec_tool(code, install_packages=None, timeout=30, save_plots=True):
 
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
         try:
+            unsafe_modules = {'os', 'sys', 'subprocess', 'shutil'}
+            def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+                root = name.split('.')[0]
+                if root in unsafe_modules:
+                    raise ImportError(f"Importing '{root}' is not allowed.")
+                return __import__(name, globals, locals, fromlist, level)
+
             env = {"__name__": "__main__"}
+            try:
+                import builtins as _builtins
+                safe_builtins = _builtins.__dict__.copy()
+                for blocked in ("open", "exec", "eval"):
+                    safe_builtins.pop(blocked, None)
+                safe_builtins["__import__"] = safe_import
+                env["__builtins__"] = safe_builtins
+            except Exception:
+                pass
             code_obj, result_var = _prepare_code(code)
             exec(code_obj, env, env)
             if result_var and result_var in env:
