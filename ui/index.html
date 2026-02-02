@@ -640,10 +640,9 @@
                     <label class="input-label">Thinking Level</label>
                     <div class="select-wrapper">
                         <select id="thinking-level">
-                            <option value="low">Low - Quick response</option>
-                            <option value="medium_synth" selected>Medium - With synthesis</option>
-                            <option value="medium_plan">Medium - With planning</option>
-                            <option value="high">High - Full reasoning</option>
+                            <option value="low">Low - No self-correction</option>
+                            <option value="medium" selected>Medium - Synthesis self-correction</option>
+                            <option value="high">High - Full self-correction (plan + synthesis)</option>
                         </select>
                     </div>
                 </div>
@@ -852,42 +851,66 @@
             return div.innerHTML;
         }
 
-        // Simple markdown to HTML converter
         function renderMarkdown(text) {
             if (typeof text !== 'string') {
                 text = JSON.stringify(text, null, 2);
             }
-            
-            // Escape HTML first
-            let html = escapeHtml(text);
-            
-            // Convert **bold** to <strong>
+
+            const images = [];
+            const content = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
+                const idx = images.length;
+                images.push({ alt, url });
+                return `@@IMAGE_${idx}@@`;
+            });
+
+            let html = escapeHtml(content);
             html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-            
-            // Convert *italic* to <em>
             html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-            
-            // Convert `code` to <code>
             html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-            
-            // Convert newlines to <br> for proper line breaks
             html = html.replace(/\n/g, '<br>');
-            
-            // Convert double line breaks to paragraph breaks
             html = html.replace(/<br><br>/g, '</p><p>');
-            
+
+            images.forEach((img, i) => {
+                const safeAlt = escapeHtml(img.alt || '');
+                const url = img.url || '';
+                const safeUrl = url.replace(/"/g, '&quot;');
+                const isAllowed = safeUrl.startsWith('data:image/') || safeUrl.startsWith('http://') || safeUrl.startsWith('https://');
+                const imgTag = isAllowed
+                    ? `<img src="${safeUrl}" alt="${safeAlt}" style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border-subtle);">`
+                    : safeAlt;
+                html = html.replace(`@@IMAGE_${i}@@`, imgTag);
+            });
+
             return '<p>' + html + '</p>';
         }
 
-        function showFinalResponse(response) {
+        function showFinalResponse(response, plotsBase64 = []) {
             // Remove any existing final response
             const existing = document.querySelector('.final-response');
             if (existing) existing.remove();
+            
+            // Build plots HTML if any
+            let plotsHtml = '';
+            const hasMarkdownImages = /!\[[^\]]*]\(([^)]+)\)/.test(response || '');
+            if (!hasMarkdownImages && plotsBase64 && plotsBase64.length > 0) {
+                plotsHtml = '<div class="plots-container" style="margin: 16px 0;">';
+                plotsBase64.forEach((b64, i) => {
+                    if (b64) {
+                        plotsHtml += `<div style="margin-bottom: 12px; text-align: center;">
+                            <img src="data:image/png;base64,${b64}" 
+                                 alt="Plot ${i + 1}" 
+                                 style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border-subtle);">
+                        </div>`;
+                    }
+                });
+                plotsHtml += '</div>';
+            }
             
             const container = document.createElement('div');
             container.className = 'final-response';
             container.innerHTML = `
                 <h3>🎯 Final Response</h3>
+                ${plotsHtml}
                 <div class="response-content">${renderMarkdown(response)}</div>
             `;
             document.getElementById('pipeline-output').appendChild(container);
@@ -948,21 +971,44 @@
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
+                let buffer = '';  // Buffer for incomplete SSE data
 
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
 
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n');
-
+                    buffer += decoder.decode(value, { stream: true });
+                    
+                    // Process complete SSE messages (ending with \n\n)
+                    const messages = buffer.split('\n\n');
+                    // Keep the last incomplete message in the buffer
+                    buffer = messages.pop() || '';
+                    
+                    for (const message of messages) {
+                        const lines = message.split('\n');
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const data = JSON.parse(line.slice(6));
+                                    handleEvent(data);
+                                } catch (e) {
+                                    console.error('Parse error:', e, 'Line:', line.substring(0, 100));
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Process any remaining buffer
+                if (buffer.trim()) {
+                    const lines = buffer.split('\n');
                     for (const line of lines) {
                         if (line.startsWith('data: ')) {
                             try {
                                 const data = JSON.parse(line.slice(6));
                                 handleEvent(data);
                             } catch (e) {
-                                console.error('Parse error:', e);
+                                console.error('Parse error on final buffer:', e);
                             }
                         }
                     }
@@ -1024,8 +1070,46 @@
                     break;
 
                 case 'tool_complete':
-                    const result = typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2);
-                    output.appendChild(createStep(type, `${data.tool_id} Complete`, '', result.substring(0, 1000)));
+                    let resultContent = '';
+                    let plotsHtml = '';
+                    
+                    if (typeof data.result === 'object' && data.result !== null) {
+                        // Extract plots_base64 for rendering
+                        if (data.result.plots_base64 && data.result.plots_base64.length > 0) {
+                            plotsHtml = '<div class="plots-container" style="margin-top: 12px;">';
+                            data.result.plots_base64.forEach((b64, i) => {
+                                if (b64) {
+                                    plotsHtml += `<div style="margin-bottom: 12px;">
+                                        <img src="data:image/png;base64,${b64}" 
+                                             alt="Plot ${i + 1}" 
+                                             style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border-subtle);">
+                                        <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Plot ${i + 1}</p>
+                                    </div>`;
+                                }
+                            });
+                            plotsHtml += '</div>';
+                        }
+                        // Show result without base64 data (too long)
+                        const displayResult = {...data.result};
+                        delete displayResult.plots_base64;
+                        resultContent = JSON.stringify(displayResult, null, 2);
+                    } else {
+                        resultContent = typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2);
+                    }
+                    
+                    const toolStep = createStep(type, `${data.tool_id} Complete`, '', resultContent.substring(0, 1000));
+                    if (plotsHtml) {
+                        // Append plots after the step content
+                        const plotsDiv = document.createElement('div');
+                        plotsDiv.innerHTML = plotsHtml;
+                        const details = toolStep.querySelector('.step-details');
+                        if (details) {
+                            details.appendChild(plotsDiv);
+                        } else {
+                            toolStep.appendChild(plotsDiv);
+                        }
+                    }
+                    output.appendChild(toolStep);
                     break;
 
                 case 'tool_error':
@@ -1037,7 +1121,7 @@
                     break;
 
                 case 'final_response':
-                    showFinalResponse(data.response);
+                    showFinalResponse(data.response, data.plots_base64 || []);
                     break;
 
                 case 'complete':
@@ -1046,7 +1130,7 @@
                             showToolErrors(data.final.tool_errors);
                         }
                         if (data.final.response && !document.querySelector('.final-response')) {
-                            showFinalResponse(data.final.response);
+                            showFinalResponse(data.final.response, data.final.plots_base64 || []);
                         }
                     }
                     break;

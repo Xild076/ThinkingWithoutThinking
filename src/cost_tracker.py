@@ -9,8 +9,8 @@ from typing import Literal
 COST_LOG_PATH = "data/cost_tracking.csv"
 
 MODEL_COSTS = {
-    "gemma": {"input": 0.0, "output": 0.0},
-    "nemotron": {"input": 0.0, "output": 0.0},
+    "gemma": {"input": 0.040, "output": 0.150},
+    "nemotron": {"input": 0.050, "output": 0.200},
 }
 
 @dataclass

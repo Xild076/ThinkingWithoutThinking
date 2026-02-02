@@ -1,9 +1,13 @@
 import inspect
 import json
+import logging
+import re
 from random import random
 from src.utility import generate_text, load_prompts, reload_prompts
 from src.tool_utility import python_exec_tool, retrieve_text_many, retrieve_links
 from src.parameter_mapper import ParameterMapper
+
+logger = logging.getLogger(__name__)
 
 from enum import Enum
 
@@ -41,6 +45,43 @@ class CreativityLevel(float, Enum):
     HIGH = 1.5
     ROUGHLY_RANDOM = 2.0
 
+
+class PlannerPlanSchema(BaseModel):
+    role: str = Field(description="The persona the execution agent should adopt.")
+    objective: str = Field(description="The overall objective of the plan.")
+    feasibility: str = Field(description="Feasibility assessment.")
+    safety: str = Field(description="Safety assessment.")
+    tools: list[str] = Field(description="Tool categories needed, e.g. Web Search, Code Execution, None.")
+    steps: list[str] = Field(description="Atomic, ordered steps to complete the task.")
+    search_queries: list[str] = Field(description="Specific search queries if external info is needed.")
+    success_metrics: list[str] = Field(description="Clear success criteria for the final response.")
+
+
+class SelfCritiqueSchema(BaseModel):
+    verdict: str = Field(description="PASS or NEEDS REVISION.")
+    critical_issues: list[str] = Field(description="Major flaws that must be fixed.")
+    minor_issues: list[str] = Field(description="Minor improvements.")
+    praise: list[str] = Field(description="What was done well.")
+
+
+class ImprovementSchema(BaseModel):
+    improved_output: str = Field(description="The revised output.")
+
+
+class SynthesizerSchema(BaseModel):
+    body: str = Field(description="The response body with embedded citations like [S1].")
+    used_sources: list[str] = Field(default_factory=list, description="List of source IDs cited in the body.")
+
+
+class WebSourceSchema(BaseModel):
+    id: str = Field(description="Stable identifier like S1, S2.")
+    url: str = Field(description="Source URL.")
+    snippet: str = Field(description="Short snippet supporting the summary.")
+
+
+class WebSearchSummarySchema(BaseModel):
+    summary: str = Field(description="Concise summary grounded in the sources.")
+    sources: list[WebSourceSchema] = Field(description="List of cited sources with IDs.")
 
 class PipelineBlock:
     details: dict = {
@@ -104,13 +145,31 @@ class PlannerPromptBlock(PipelineBlock):
     def __call__(self, prompt: str) -> str:
         full_prompt = self.prompt.replace("{prompt}", prompt)
         full_prompt = self._with_task_context(full_prompt)
-        plan = generate_text(
+        plan_obj = generate_text(
             prompt=full_prompt,
             model='gemma',
+            schema=PlannerPlanSchema,
             temperature=CreativityLevel.MEDIUM.value,
             max_tokens=2048
         )
-        return plan
+        plan_lines = [
+            f"ROLE: {plan_obj.role}",
+            f"OBJECTIVE: {plan_obj.objective}",
+            f"FEASIBILITY: {plan_obj.feasibility}",
+            f"SAFETY: {plan_obj.safety}",
+            f"TOOLS: {', '.join(plan_obj.tools)}",
+            "STEPS:"
+        ]
+        for idx, step in enumerate(plan_obj.steps):
+            cleaned = re.sub(r'^\s*\d+[\.\)]\s*', '', step or '').strip()
+            plan_lines.append(f"{idx + 1}. {cleaned}")
+        if plan_obj.search_queries:
+            plan_lines.append("SEARCH QUERIES:")
+            plan_lines.extend(f"- {q}" for q in plan_obj.search_queries)
+        if plan_obj.success_metrics:
+            plan_lines.append("SUCCESS METRICS:")
+            plan_lines.extend(f"- {m}" for m in plan_obj.success_metrics)
+        return "\n".join(plan_lines)
 
 
 class SelfCritiqueBlock(PipelineBlock):
@@ -133,13 +192,23 @@ class SelfCritiqueBlock(PipelineBlock):
     def __call__(self, input: str, output: str, init_task: str) -> str:
         full_prompt = self.prompt.replace("{input}", input).replace("{output}", output).replace("{initial_task}", init_task)
         full_prompt = self._with_task_context(full_prompt)
-        critique = generate_text(
+        critique_obj = generate_text(
             prompt=full_prompt,
             model='nemotron',
+            schema=SelfCritiqueSchema,
             temperature=CreativityLevel.LOW.value,
             max_tokens=1024
         )
-        return critique
+        critique_lines = [
+            f"VERDICT: {critique_obj.verdict}",
+            "CRITICAL ISSUES:"
+        ]
+        critique_lines.extend(f"- {issue}" for issue in (critique_obj.critical_issues or ["None."]))
+        critique_lines.append("MINOR ISSUES:")
+        critique_lines.extend(f"- {issue}" for issue in (critique_obj.minor_issues or ["None."]))
+        critique_lines.append("PRAISE:")
+        critique_lines.extend(f"- {item}" for item in (critique_obj.praise or ["None."]))
+        return "\n".join(critique_lines)
 
 
 class ImprovementCritiqueBlock(PipelineBlock):
@@ -162,13 +231,14 @@ class ImprovementCritiqueBlock(PipelineBlock):
     def __call__(self, input: str, output: str, critique: str, init_task: str) -> str:
         full_prompt = self.prompt.replace("{input}", input).replace("{output}", output).replace("{critique}", critique).replace("{initial_task}", init_task)
         full_prompt = self._with_task_context(full_prompt)
-        improvements = generate_text(
+        improvements_obj = generate_text(
             prompt=full_prompt,
             model='gemma',
+            schema=ImprovementSchema,
             temperature=CreativityLevel.MEDIUM.value,
             max_tokens=2048
         )
-        return improvements
+        return improvements_obj.improved_output
 
 
 class ToolChoice(BaseModel):
@@ -195,53 +265,155 @@ class ToolRouterBlock(PipelineBlock):
     def __init__(self):
         self.identity = "tool_router_block"
         self.prompt = get_prompts().get(self.identity, "")
+    
+    def _extract_json_from_response(self, raw: str) -> str:
+        """Extract JSON from various response formats."""
+        cleaned = raw.strip()
+        
+        # Remove markdown code fences
+        if "```" in cleaned:
+            # Find content between code fences
+            parts = cleaned.split("```")
+            for part in parts:
+                part = part.strip()
+                if part.startswith("json"):
+                    part = part[4:].strip()
+                if part.startswith("{") or part.startswith("["):
+                    cleaned = part
+                    break
+        
+        # Find the JSON object/array
+        start_brace = cleaned.find("{")
+        start_bracket = cleaned.find("[")
+        
+        if start_brace == -1 and start_bracket == -1:
+            return "{\"tool_choice\": []}"
+        
+        # Use whichever comes first
+        if start_brace == -1:
+            start = start_bracket
+        elif start_bracket == -1:
+            start = start_brace
+        else:
+            start = min(start_brace, start_bracket)
+        
+        # Find matching closing bracket
+        depth = 0
+        end = start
+        opening = cleaned[start]
+        closing = "}" if opening == "{" else "]"
+        
+        for i, char in enumerate(cleaned[start:], start):
+            if char == opening:
+                depth += 1
+            elif char == closing:
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        
+        return cleaned[start:end]
 
     def _parse_tool_choice(self, raw: str) -> list[ToolChoice]:
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            parts = cleaned.split("```")
-            if len(parts) >= 2:
-                cleaned = parts[1].strip()
-            if cleaned.startswith("json"):
-                cleaned = cleaned[4:].strip()
-
+        """Parse tool choice from LLM response with multiple fallback strategies."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
         try:
+            cleaned = self._extract_json_from_response(raw)
             data = json.loads(cleaned)
-        except Exception:
+        except json.JSONDecodeError as e:
+            logger.warning(f"JSON parse failed: {e}. Raw: {raw[:200]}")
             return []
 
+        # Handle various response formats
         if isinstance(data, list):
+            # Direct list of tool choices
             data = {"tool_choice": data}
-
-        if not isinstance(data, dict) or "tool_choice" not in data:
+        
+        if not isinstance(data, dict):
             return []
-
-        return ToolRouterSchema.model_validate(data).tool_choice
+        
+        # Try to find tool_choice in various keys
+        tool_choices = data.get("tool_choice") or data.get("tools") or data.get("selected_tools") or []
+        
+        if not isinstance(tool_choices, list):
+            tool_choices = [tool_choices] if tool_choices else []
+        
+        try:
+            return ToolRouterSchema.model_validate({"tool_choice": tool_choices}).tool_choice
+        except Exception as e:
+            logger.warning(f"Schema validation failed: {e}")
+            return []
     
     def __call__(self, prompt: str, plan: str, allowed_tools: list[ToolBlock]) -> list[dict]:
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Build tool info with clearer formatting
         possible_tools = []
         for tool in allowed_tools:
-            tool_info = f"Tool Name: {tool.identity}\nDescription: {tool.details['description']}\nRequired Inputs: {', '.join(tool.details['inputs'])}\nRequired Outputs: {', '.join(tool.details['outputs'])}"
+            tool_info = (
+                f"TOOL: {tool.identity}\n"
+                f"  Description: {tool.details['description']}\n"
+                f"  Inputs: {', '.join(tool.details['inputs'])}"
+            )
             possible_tools.append(tool_info)
+        
         full_prompt = self.prompt.replace("{tools}", "\n\n".join(possible_tools)).replace("{prompt}", prompt).replace("{plan}", plan)
         full_prompt = self._with_task_context(full_prompt)
+        
+        llm_choices = []
+        
+        # Strategy 1: Try schema-based parsing
         try:
             tool_choice = generate_text(
                 prompt=full_prompt,
                 model='nemotron',
                 schema=ToolRouterSchema,
-                temperature=CreativityLevel.LOW.value,
+                temperature=CreativityLevel.STRICT.value,  # Use 0.0 for deterministic routing
             )
             llm_choices = tool_choice.tool_choice
-        except Exception:
-            raw_choice = generate_text(
-                prompt=full_prompt,
-                model='nemotron',
-                temperature=CreativityLevel.LOW.value,
-                max_tokens=512
+            logger.debug(f"Schema parsing succeeded: {len(llm_choices)} tools")
+        except Exception as e:
+            logger.warning(f"Schema parsing failed: {e}")
+        
+        # Strategy 2: If schema failed, try raw text with stricter prompt
+        if not llm_choices:
+            logger.info("Attempting raw JSON parsing fallback")
+            retry_prompt = (
+                f"{full_prompt}\n\n"
+                "IMPORTANT: Return ONLY a JSON object. No other text.\n"
+                "Example: {\"tool_choice\": [{\"tool_id\": \"web_search_tool_block\", \"inputs\": {\"query\": \"search term\"}}]}"
             )
-            llm_choices = self._parse_tool_choice(raw_choice)
+            try:
+                raw_choice = generate_text(
+                    prompt=retry_prompt,
+                    model='nemotron',
+                    temperature=CreativityLevel.STRICT.value,
+                    max_tokens=512
+                )
+                llm_choices = self._parse_tool_choice(raw_choice)
+                logger.debug(f"Raw parsing result: {len(llm_choices)} tools from: {raw_choice[:100]}")
+            except Exception as e:
+                logger.warning(f"Raw parsing also failed: {e}")
+        
+        # Strategy 3: Try with gemma as backup model
+        if not llm_choices and self._plan_suggests_tools(plan):
+            logger.info("Attempting with backup model (gemma)")
+            try:
+                raw_choice = generate_text(
+                    prompt=full_prompt,
+                    model='gemma',
+                    temperature=CreativityLevel.STRICT.value,
+                    max_tokens=512
+                )
+                llm_choices = self._parse_tool_choice(raw_choice)
+                logger.debug(f"Gemma fallback result: {len(llm_choices)} tools")
+            except Exception as e:
+                logger.warning(f"Gemma fallback failed: {e}")
 
+        # Build lookup for tool matching
         allowed_lookup = {tool.identity: tool for tool in allowed_tools}
         allowed_lookup.update({tool.details.get("id", tool.identity): tool for tool in allowed_tools})
 
@@ -249,7 +421,16 @@ class ToolRouterBlock(PipelineBlock):
         for choice in llm_choices:
             tool = allowed_lookup.get(choice.tool_id)
             if not tool:
+                # Try partial matching
+                for tool_id, t in allowed_lookup.items():
+                    if choice.tool_id.lower() in tool_id.lower() or tool_id.lower() in choice.tool_id.lower():
+                        tool = t
+                        break
+            
+            if not tool:
+                logger.warning(f"Unknown tool_id: {choice.tool_id}")
                 continue
+            
             provided_inputs = choice.inputs if isinstance(choice.inputs, dict) else {}
             context = {"prompt": prompt, "plan": plan}
             
@@ -262,6 +443,17 @@ class ToolRouterBlock(PipelineBlock):
             routed_tools.append({"tool": tool, "inputs": prepared_inputs})
 
         return routed_tools
+    
+    def _plan_suggests_tools(self, plan: str) -> bool:
+        """Check if the plan text suggests tools should be used."""
+        plan_lower = plan.lower()
+        tool_keywords = [
+            'web search', 'search', 'look up', 'internet', 'online',
+            'calculate', 'compute', 'code', 'execute', 'algorithm',
+            'creative', 'brainstorm', 'ideas', 'generate',
+            'current', 'latest', 'today', 'price', 'weather'
+        ]
+        return any(kw in plan_lower for kw in tool_keywords)
 
 
 class WebSearchToolBlock(ToolBlock):
@@ -287,15 +479,28 @@ class WebSearchToolBlock(ToolBlock):
             if not valid_results:
                 return {"summarize": f"Search found {len(links)} links but could not extract readable content. URLs: {', '.join(links[:3])}", "links": links, "error": "No readable content"}
             
-            content_text = "\n\n".join(f"Source: {url}\n{text[:600]}" for url, text in list(valid_results.items())[:5])
-            summarize_prompt = f"Summarize the following web search results about '{query}'. Focus on key facts, cite sources when making specific claims:\n\n{content_text}"
-            summarize = generate_text(
+            content_text = "\n\n".join(
+                f"Source URL: {url}\nSnippet: {text[:600]}"
+                for url, text in list(valid_results.items())[:5]
+            )
+            summarize_prompt = (
+                f"Summarize the following web search results about '{query}'.\n"
+                "Return a concise summary and a list of sources with IDs like S1, S2.\n"
+                "Each source must include the URL and a short snippet grounded in the text.\n\n"
+                f"{content_text}"
+            )
+            summary_obj = generate_text(
                 prompt=self._with_task_context(summarize_prompt),
                 model='gemma',
+                schema=WebSearchSummarySchema,
                 temperature=CreativityLevel.LOW.value,
                 max_tokens=2048
             )
-            output = {"summarize": summarize, "links": links}
+            output = {
+                "summary": summary_obj.summary,
+                "sources": [s.model_dump() for s in summary_obj.sources],
+                "links": links
+            }
             return output
         except Exception as e:
             return {"summarize": f"Web search failed: {str(e)}", "links": [], "error": str(e)}
@@ -331,8 +536,22 @@ class PythonExecutionToolBlock(ToolBlock):
         while not works and failures < 3:
             code_prompt = (
                 "Generate Python code to achieve the following goal:\n\n" + goal +
-                (f"\n\nInclude visual aids (save as temporary files)." if visual_aids else "") +
-                (f"\n\n Previous code: {previous_code}" if previous_code else "") +
+                "\n\nSECURITY RESTRICTIONS (code will be rejected if violated):\n"
+                "- DO NOT import: os, sys, subprocess, shutil\n"
+                "- DO NOT use: exec(), eval(), open(), __import__()\n"
+                "- For file operations, use tempfile module only\n" +
+                ("\n\nIMPORTANT: Create matplotlib plots/charts as requested. "
+                 "DO NOT call plt.show() or plt.savefig() - the system will automatically capture all figures. "
+                 "Just create the figure and plot the data. Example:\n"
+                 "  import matplotlib.pyplot as plt\n"
+                 "  import numpy as np\n"
+                 "  x = np.linspace(-10, 10, 100)\n"
+                 "  y = x**2\n"
+                 "  fig, ax = plt.subplots()\n"
+                 "  ax.plot(x, y)\n"
+                 "  ax.set_title('f(x) = x^2')\n"
+                 "  # DO NOT call plt.show() or plt.savefig()" if visual_aids else "") +
+                (f"\n\nPrevious code: {previous_code}" if previous_code else "") +
                 (f"\n\nError from previous code: {errors}" if errors else "")
             )
             code_outline = generate_text(
@@ -348,11 +567,14 @@ class PythonExecutionToolBlock(ToolBlock):
             errors = output['error'] if not works else None
             failures += 1
         if failures >= 3:
-            return {"output": f"Code execution failed after multiple attempts. DO NOT HIDE THIS FACT. Last error: {errors}", "visuals": []}
+            return {"output": f"Code execution failed after multiple attempts. DO NOT HIDE THIS FACT. Last error: {errors}", "visuals": [], "plots_base64": []}
         text_output = output['output']
         plots = output['plots']
         plots_base64 = output.get('plots_base64', [])
-        return {"output": text_output, "visuals": plots, "plots_base64": plots_base64}
+        logger.info(f"PythonExecutionToolBlock returning: plots={len(plots)}, plots_base64={len(plots_base64)}")
+        result = {"output": text_output, "visuals": plots, "plots_base64": plots_base64}
+        logger.info(f"PythonExecutionToolBlock result keys: {result.keys()}")
+        return result
 
 
 class CreativeIdeaListSchema(BaseModel):
@@ -425,9 +647,10 @@ class ResponseSynthesizerBlock(PipelineBlock):
         combined_sources = "\n\n".join(f"Tool used: {i+1}\nContent:\n{content}" for i, content in enumerate(sources.values()) if content)
         prompt = self.prompt.replace("{sources}", combined_sources).replace("{plan}", plan).replace("{prompt}", prompt)
         prompt = self._with_task_context(prompt)
-        summary = generate_text(
+        summary_obj = generate_text(
             prompt=prompt,
             model='gemma',
+            schema=SynthesizerSchema,
             temperature=CreativityLevel.LOW.value,
         )
-        return summary
+        return {"body": summary_obj.body, "used_sources": summary_obj.used_sources}

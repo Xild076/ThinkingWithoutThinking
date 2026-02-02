@@ -240,6 +240,7 @@ def render_step(event: dict, is_active: bool = False):
     
     # Determine content
     content = None
+    plots_base64 = []
     if 'plan' in event:
         content = event['plan']
     elif 'critique' in event:
@@ -252,7 +253,14 @@ def render_step(event: dict, is_active: bool = False):
         content = json.dumps(event['tools'], indent=2)
     elif 'result' in event:
         result = event['result']
-        content = result if isinstance(result, str) else json.dumps(result, indent=2)
+        # Extract plots_base64 if present
+        if isinstance(result, dict):
+            plots_base64 = result.get('plots_base64', [])
+            # Remove plots_base64 from display content to avoid clutter
+            display_result = {k: v for k, v in result.items() if k != 'plots_base64'}
+            content = json.dumps(display_result, indent=2)
+        else:
+            content = result if isinstance(result, str) else json.dumps(result, indent=2)
     elif 'error' in event:
         content = event['error']
     
@@ -280,20 +288,29 @@ def render_step(event: dict, is_active: bool = False):
                         st.code(content[:2000] + "\n\n... (truncated)", language=None)
                     else:
                         st.code(content, language=None)
+            
+            # Render plots if present
+            if plots_base64:
+                st.markdown("**📊 Generated Visualizations:**")
+                for i, plot_b64 in enumerate(plots_base64):
+                    if plot_b64:
+                        try:
+                            import base64
+                            # Display the image
+                            st.image(
+                                f"data:image/png;base64,{plot_b64}",
+                                caption=f"Plot {i + 1}",
+                                use_container_width=True
+                            )
+                        except Exception as e:
+                            st.warning(f"Could not render plot {i + 1}: {e}")
 
 
 def render_final_response(response: str):
     """Render the final response prominently."""
     st.markdown("---")
     st.markdown("### 🎯 Final Response")
-    st.markdown(
-        f"""<div class="final-response">
-        <p style="color: #fafafa; font-size: 1rem; line-height: 1.7;">{response}</p>
-        </div>""",
-        unsafe_allow_html=True
-    )
-    # Also show as regular text for better readability
-    st.write(response)
+    st.markdown(response, unsafe_allow_html=True)
 
 
 # Sidebar
@@ -312,13 +329,12 @@ with st.sidebar:
     
     thinking_level = st.selectbox(
         "Thinking Level",
-        options=["low", "medium_synth", "medium_plan", "high"],
+        options=["low", "medium", "high"],
         index=1,
         format_func=lambda x: {
-            "low": "🚀 Low - Quick response",
-            "medium_synth": "⚡ Medium - With synthesis",
-            "medium_plan": "📋 Medium - With planning",
-            "high": "🧠 High - Full reasoning"
+            "low": "🚀 Low - No self-correction",
+            "medium": "⚡ Medium - Synthesis self-correction",
+            "high": "🧠 High - Full self-correction (plan + synthesis)"
         }[x]
     )
     

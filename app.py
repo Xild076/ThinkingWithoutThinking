@@ -46,7 +46,7 @@ async def root():
 @app.post("/stream")
 async def stream_pipeline(request: dict):
     prompt = request.get("prompt", "").strip()
-    thinking_level = request.get("thinking_level", "medium_synth")
+    thinking_level = request.get("thinking_level", "medium")
     
     if not prompt:
         async def error_stream():
@@ -55,7 +55,7 @@ async def stream_pipeline(request: dict):
 
     def event_stream():
         try:
-            for event in pipeline.stream(prompt, thinking_level):
+            for event in pipeline.stream(prompt, thinking_level=thinking_level):
                 yield f"data: {json.dumps(event, cls=JSONEncoder)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
