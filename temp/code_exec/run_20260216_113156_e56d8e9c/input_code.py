@@ -1,0 +1,1 @@
+import sympy as sp; x=sp.symbols('x'); u=sp.log(1+x); dv=x**2; v=sp.integrate(dv, x); du=sp.diff(u, x); I=u*v - sp.integrate(v*du, x); result=sp.simplify(I).subs(x,1); print(result)

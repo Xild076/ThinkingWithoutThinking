@@ -1,0 +1,1368 @@
+{
+  "generations": [
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "note": "initial",
+        "run_id": "602de0d8-9649-42d9-83d0-e415782eecb1"
+      },
+      "timestamp": 1771212362.713428
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "note": "initial",
+        "run_id": "58f384da-7a58-4471-bc6c-1cdd87f9ec9b"
+      },
+      "timestamp": 1771213748.228807
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "note": "initial",
+        "run_id": "120bd3c9-fae5-4124-bd88-c30e3c2719b6"
+      },
+      "timestamp": 1771215197.9276538
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "note": "initial",
+        "run_id": "59e49d42-2ede-4aad-8831-2f0bcad5b507"
+      },
+      "timestamp": 1771216851.863161
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "note": "initial",
+        "run_id": "de4dfff4-aba7-4525-9f06-87fdd3ff7c97"
+      },
+      "timestamp": 1771218710.416758
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "epoch": 0,
+        "run_id": "de4dfff4-aba7-4525-9f06-87fdd3ff7c97",
+        "avg_score_a": 8.9,
+        "avg_score_b": 7.433333333333333,
+        "improvement_delta": -1.4666666666666677,
+        "winner": "baseline",
+        "changed_keys": [],
+        "scores_a": [
+          8.666666666666666,
+          9.333333333333334,
+          8.666666666666666,
+          8.333333333333334,
+          9.5
+        ],
+        "scores_b": [
+          6.333333333333333,
+          3.1666666666666665,
+          8.666666666666666,
+          9.666666666666666,
+          9.333333333333334
+        ],
+        "thinking_level": "med-synth",
+        "num_failures_in_a": 3,
+        "num_rca_items": 12,
+        "generalizer": null,
+        "prompt_scoring": [
+          {
+            "block_id": "improvement_block",
+            "analysis_count": 2,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 25,
+            "candidate_total": 25,
+            "delta_total": 0,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well-structured, and includes all necessary placeholders and requirements. It aligns well with the described creation criteria, guiding the model to produce an improved item while preserving schema fidelity. The use of generic placeholders and broad instructions helps avoid overfitting to a specific instance, though minor ambiguities in conditional instructions (e.g., handling of target_schema values) could be refined for perfection."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well-structured, and provides comprehensive instructions, placeholders, and a success rubric. It aligns well with the scoring criteria, guiding the model to produce a targeted improvement while avoiding overfitting to a single example. Minor improvements could be made to reduce redundancy, but overall it meets the objectives effectively."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are an expert prompt engineer tasked with improving content based on a critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved v"
+          },
+          {
+            "block_id": "initial_plan_creation_block",
+            "analysis_count": 2,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "candidate_score_lt_baseline",
+            "required_placeholders_count": 2,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 24,
+            "delta_total": -2,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well-structured, and provides detailed requirements and placeholders, facilitating generation of a rigorous multi-stage plan. It aligns closely with the specified creation criteria, covering accuracy, feasibility, and completeness. The use of generic placeholders and flexible tool lists helps avoid overfitting to a particular scenario, though slight room for improvement exists in simplifying language for broader applicability."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 7,
+              "notes": "The prompt is clear, detailed, and well-structured, guiding the model to produce a rubric-aligned plan with specific tool usage. It aligns closely with the creation criteria, referencing the success rubric and objective. However, the extensive constraints (e.g., specific flags, audience fields) may introduce some overfitting to this particular pipeline design, slightly lowering the anti-overfit rating."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous, rubric\u2011aligned plan for the user objective that explicitly references the success rubric weights (accuracy, feasibility, completeness) and maps each step to "
+          },
+          {
+            "block_id": "long_response_synthesis_block",
+            "analysis_count": 1,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 23,
+            "candidate_total": 25,
+            "delta_total": 2,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 7,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well\u2011structured, and provides concrete placeholders and constraints that guide the model without being overly prescriptive. It aligns reasonably well with the rubric criteria (fit, coherence, insightfulness) by specifying the role, output format, and style expectations, though it could benefit from more explicit weighting guidance for the rubric. The use of generic placeholders and emphasis on net\u2011new value reduces the risk of over\u2011fitting to specific examples, supporting a solid anti\u2011overfit rating."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well-structured, and provides comprehensive instructions with placeholders, making it broadly applicable. It aligns well with the provided creation criteria, emphasizing fit, coherence, and insightfulness. Its generic placeholders and focus on fresh content help avoid overfitting to specific contexts."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are drafting a single segment of a multi-part long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Prod"
+          },
+          {
+            "block_id": "self_critique_block",
+            "analysis_count": 2,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 25,
+            "candidate_total": 28,
+            "delta_total": 3,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well\u2011structured, and uses placeholders to stay generic, which helps prevent over\u2011fitting to a single use case. It aligns closely with the provided rubric by asking for insightfulness, relevance, and actionability, and it explicitly requests a strict JSON response. Minor improvements could include a brief example of the expected JSON format to avoid ambiguity, but overall it meets the criteria effectively."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 10,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well\u2011structured, and specifies exact JSON output without extra text. It aligns perfectly with the creation criteria by asking for a critique of an item against a given objective and context, and it remains broadly applicable across domains. Minor room for improvement: the mention of the rubric weights could be clarified whether they are for internal scoring or just guidance, but overall the prompt is high\u2011quality and not over\u2011fitted."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are an internal reviewer tasked with critiquing the provided item against the given objective within the specified context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nUsing the success rubric (insightfulness\u202f"
+          },
+          {
+            "block_id": "synthesis_block",
+            "analysis_count": 2,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 23,
+            "candidate_total": 25,
+            "delta_total": 2,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 7,
+              "notes": "The prompt is clear, well\u2011structured, and provides comprehensive guidance for generating a synthesis. It aligns closely with the stated creation criteria (objective, rubric dimensions) and encourages use of evidence and natural prose. While flexible, it includes specific formatting rules that could limit adaptation to very different contexts, resulting in a slightly lower anti\u2011overfit rating."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well\u2011structured, and provides concrete guidelines while remaining flexible through placeholders. It aligns closely with the stated creation criteria (comprehensiveness, coherence, insightfulness) and avoids domain\u2011specific bias, supporting general applicability. Minor room for improvement lies in reducing occasional redundancy and tightening wording."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are tasked with producing a concise, insightful synthesis that directly addresses the objective while weaving together all provided inputs.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}"
+          }
+        ],
+        "prompt_scoring_summary": {
+          "scored_blocks": 5,
+          "accepted_blocks": 4,
+          "rejected_blocks": 1,
+          "baseline_avg_total": 24.4,
+          "candidate_avg_total": 25.4,
+          "delta_avg_total": 1.0
+        }
+      },
+      "timestamp": 1771220355.844619
+    },
+    {
+      "generation": 1,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer tasked with critiquing the provided item against its objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses, gaps, and any misalignments with the objective.\n- Clearly separate major issues (those that undermine the core goal) from minor refinements (polishing or optimization).\n- For each identified issue, propose a specific, actionable remediation (e.g., a verification checklist, a trade\u2011off matrix, or a concrete revision step).\n- Ensure the critique is insightful, relevant, and directly tied to the success rubric (insightfulness, relevance, actionability).\n\nReturn your critique as a JSON object matching the following schema:\n{\n  \"weaknesses\": [{\n    \"type\": \"major\" | \"minor\",\n    \"description\": \"<brief description of the issue>\",\n    \"remediation\": \"<concrete action to address the issue>\"\n  }, ...]\n}\n",
+        "improvement_block": "You are an expert prompt engineer tasked with improving a piece of content based on a detailed critique.\n\n**Original item**:\n{{{item}}}\n\n**Critique**:\n{{{critique}}}\n\n**Objective**:\n{{{objective}}}\n\n**Target schema** (one of `plan` or `synthesis`):\n{{{target_schema}}}\n\n**Improvement requirements**:\n- Directly address each critique point; no unrelated additions.\n- Preserve full fidelity to the target schema:\n  * If `target_schema` = `plan`, maintain logical consistency among `steps`, `complex_response`, `long_response`, and `response_criteria`.\n  * If `target_schema` = `synthesis`, ensure coherent narrative, factual caution, and natural human prose.\n- Eliminate redundancy and keep the response concise.\n- Include only verifiable citations; replace any fabricated references.\n- When the content spans multiple domains, add a brief trade\u2011off analysis that links each domain to the critique.\n\n**Success rubric** (weight\u2011based evaluation):\n- **Effectiveness** (0.5): How well the revised item fulfills the objective and integrates the critique.\n- **Feasibility** (0.3): Practicality of the changes within the original item's constraints.\n- **Coherence** (0.2): Logical flow and structural integrity relative to the original.\n\n**Root\u2011Cause Analysis insights to incorporate**:\n- Re\u2011frame the rubric to prioritize conciseness and clarity.\n- Condense verbose sections and add concrete, verifiable references.\n- Replace any fabricated source links with real citations.\n- Provide a dedicated trade\u2011off discussion for cross\u2011domain content.\n\n**Output**: Return a strict JSON object that conforms to the `{{{target_schema}}}` definition, containing the improved version of the original item.\n\n**Placeholders to retain**: `{{{critique}}}`, `{{{item}}}`, `{{{objective}}}`, `{{{target_schema}}}`.",
+        "synthesis_block": "You are tasked with producing a concise final synthesis for a non\u2011long\u2011response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nGuidelines:\n- Incorporate any relevant evidence from the tool/context.\n- Align the synthesis with the plan steps and the success rubric (comprehensiveness, coherence, insightfulness).\n- Deliver a unified narrative that weaves together the four domains (e.g., thermodynamics, ecological externalities, financing, geopolitical stability), emphasizing key trade\u2011offs and insights.\n- Write natural, direct prose aimed at the target audience; avoid checklist\u2011style wording unless explicitly requested.\n- When a visual output is available, insert an inline marker such as [image_1] immediately after the sentence that references it; do not create a separate list.\n- Do not reference internal mechanics (plan routing, critique loops, etc.).\n- If any evidence is uncertain, state the uncertainty plainly.\n- Avoid verbatim repetition of earlier points.\n\nReturn the synthesis as a JSON object with a single key `synthesis`. ",
+        "long_response_synthesis_block": "You are tasked with drafting a distinct subsection of a long\u2011form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Produce only the requested part, injecting fresh, value\u2011adding content that advances the overall objective.\n- Write in natural, audience\u2011appropriate prose; avoid robotic checklist language unless the user explicitly asks for it.\n- If the subsection refers to a visual element, insert an inline marker such as [image_1] at the relevant point.\n- Do not repeat material already covered in earlier sections of the outline.\n- Keep style, tone, and level of detail consistent with the surrounding parts.\n- Use clear transitional sentences that both isolate this portion and signal how it connects to the broader synthesis.\n- Prioritize originality and insightful connections across the provided inputs.\n- Do not expose internal pipeline mechanics.\n\nDeliver the completed subsection as plain text (no JSON or markup).",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting guidelines:\n- Choose a tool whose `id` exactly matches one of the IDs listed in **available_tools**.\n- For each selected tool, provide a complete `inputs` object covering all required parameters.\n- Set `continuity\": true only when downstream sub\u2011routing can leverage the outputs from the current routing pass.\n- Favor the minimal sufficient set of tools that accomplishes the objective; avoid unnecessary fan\u2011out.\n- Align routing decisions with the goal of producing a unified four\u2011section briefing that includes a clear trade\u2011off discussion.\n- Follow the success rubric (accuracy\u202f0.5, relevance\u202f0.3, clarity\u202f0.2) to ensure high\u2011quality routing.\n\nReturn a strict JSON object that conforms to the router schema, containing the selected `id`, `inputs`, and optional `continuity` flag for each routing step.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are tasked with dividing a long response into a set of high\u2011quality, mutually exclusive synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria (explicit evaluation guidelines the router must follow):\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Produce an ordered array called `response_parts` in strict JSON format.\n- Each part must cover a distinct aspect of the objective; together they must be collectively comprehensive.\n- Avoid generic filler or overlapping scopes.\n- For every part, include a brief justification linking the chosen tool or approach to the objective and the provided context.\n- Ensure the rationale demonstrates how the part contributes to the overall synthesis and meets the defined response criteria.\n\nReturn only the JSON structure as specified.\n"
+      },
+      "metadata": {
+        "epoch": 1,
+        "run_id": "de4dfff4-aba7-4525-9f06-87fdd3ff7c97",
+        "avg_score_a": 8.7,
+        "avg_score_b": 8.9,
+        "improvement_delta": 0.20000000000000107,
+        "winner": "candidate",
+        "changed_keys": [
+          "self_critique_block",
+          "improvement_block",
+          "synthesis_block",
+          "long_response_synthesis_block",
+          "primary_tool_router_block",
+          "large_response_router_block"
+        ],
+        "scores_a": [
+          9.0,
+          8.666666666666666,
+          9.166666666666666,
+          8.666666666666666,
+          8.0
+        ],
+        "scores_b": [
+          9.5,
+          9.0,
+          8.666666666666666,
+          8.666666666666666,
+          8.666666666666666
+        ],
+        "thinking_level": "med-synth",
+        "num_failures_in_a": 3,
+        "num_rca_items": 27,
+        "generalizer": null,
+        "prompt_scoring": [
+          {
+            "block_id": "improvement_block",
+            "analysis_count": 3,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 26,
+            "delta_total": 0,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well-structured, and includes necessary placeholders and requirements. It aligns well with the provided creation criteria and rubric, and its generic placeholders prevent overfitting to specific instances. Minor improvements could include clarifying the exact format of the returned JSON and handling cases where target_schema is neither 'plan' nor 'synthesis'."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well\u2011structured, and includes detailed instructions, success rubric, and placeholders, making it highly usable. It aligns closely with the stated creation criteria, ensuring the output follows the target schema and addresses the critique. While comprehensive, it retains enough flexibility to adapt to varied content, avoiding excessive over\u2011fitting. Minor points: the extensive list of requirements could be streamlined slightly, but overall it balances specificity with generality effectively."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are an expert prompt engineer tasked with improving a piece of content based on a detailed critique.\n\n**Original item**:\n{{{item}}}\n\n**Critique**:\n{{{critique}}}\n\n**Objective**:\n{{{objective}}}\n\n**Target schema** (one of `plan` or `synt"
+          },
+          {
+            "block_id": "large_response_router_block",
+            "analysis_count": 3,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 17,
+            "candidate_total": 23,
+            "delta_total": 6,
+            "baseline_scores": {
+              "generic_quality_score": 7,
+              "criteria_alignment_score": 4,
+              "anti_overfit_score": 6,
+              "notes": "The prompt is clear, well-structured, and specifies concrete output requirements, which gives it a solid generic quality score. However, the 'Prompt creation criteria' section is empty, making it difficult to assess alignment with any specific criteria, resulting in a lower criteria alignment score. The use of placeholders ({{{...}}}) keeps the prompt flexible and reduces overfitting, but the reliance on those placeholders without further guidance limits the anti-overfit score slightly."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 7,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well\u2011structured, and specifies an exact JSON output format, supporting high generic quality. It references placeholders for objective, plan, response criteria, and tool context, and instructs the router to follow explicit response criteria, giving good alignment, though the empty 'Prompt creation criteria' section and reliance on external placeholders slightly reduce certainty of fit. The prompt is not overly specific to a single task and uses generic placeholders, indicating low risk of overfitting, hence a solid anti\u2011overfit score."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are tasked with dividing a long response into a set of high\u2011quality, mutually exclusive synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria (explicit evaluation guidelines the router must follow):\n"
+          },
+          {
+            "block_id": "synthesis_block",
+            "analysis_count": 3,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 26,
+            "delta_total": 0,
+            "baseline_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well\u2011structured, and provides concrete requirements while remaining flexible through placeholders. It aligns closely with the stated creation criteria and success rubric, guiding the model to produce a comprehensive, coherent, and insightful synthesis. The use of generic placeholders and balanced instructions reduces the risk of over\u2011fitting to particular content, though minor improvements could further enhance generality."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well\u2011structured, and provides comprehensive guidelines, placeholders, and explicit output format, which supports high generic quality. It aligns closely with the stated creation criteria and success rubric, ensuring that the synthesis task meets comprehensiveness, coherence, and insightfulness requirements. The use of generic placeholders ({{{prompt}}}, {{{plan}}}, {{{tool_context}}}) makes it adaptable to various inputs, though the mention of \"four domains\" and a specific visual marker syntax introduces slight domain specificity that could limit flexibility in some contexts, hence a slightly lower anti\u2011overfit rating."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are tasked with producing a concise final synthesis for a non\u2011long\u2011response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nGuidelines:\n- Incorporate any relevant evidence from the"
+          },
+          {
+            "block_id": "long_response_synthesis_block",
+            "analysis_count": 2,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 24,
+            "candidate_total": 26,
+            "delta_total": 2,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 7,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well\u2011structured, and provides concrete placeholders and constraints that guide the model effectively. It covers key requirements (net\u2011new value, natural prose, image markers, style consistency) which support overall quality. Alignment with the provided success rubric (Fit, Coherence, Insightfulness) is decent but could be tighter; explicit references to the rubric criteria would improve fit. The prompt is highly reusable and avoids hard\u2011coded examples, giving it strong anti\u2011overfit characteristics."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clearly written, with well\u2011defined placeholders and concrete requirements that guide the model to produce a focused, original subsection. It addresses style, originality, transition, and avoidance of repetition, which support the rubric\u2019s Fit, Coherence, and Insightfulness criteria. Minor improvement could be to explicitly tie the success rubric weights to the instruction set, but overall the prompt is high\u2011quality, well\u2011aligned, and resistant to overfitting."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are tasked with drafting a distinct subsection of a long\u2011form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n"
+          },
+          {
+            "block_id": "self_critique_block",
+            "analysis_count": 2,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 26,
+            "delta_total": 0,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well\u2011structured, and includes explicit requirements that map directly onto the success rubric (insightfulness, relevance, actionability). It uses placeholders for item, objective, and context, making it reusable across tasks, which supports anti\u2011overfit. Minor improvements could include specifying the output format (e.g., bullet points) and limiting response length to keep critiques concise."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well\u2011structured, and provides explicit instructions, placeholders, and a precise output schema, which supports high generic quality. It directly maps to the success rubric (insightfulness, relevance, actionability) by requesting concrete, actionable critiques and separating major/minor issues, ensuring strong criteria alignment. The design is generic enough to apply to many items without over\u2011fitting to a specific domain, though the reliance on a fixed JSON schema may limit flexibility in edge cases, yielding a slightly lower anti\u2011overfit rating."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are an internal reviewer tasked with critiquing the provided item against its objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses, gaps, and any misa"
+          },
+          {
+            "block_id": "sub_plan_creation_block",
+            "analysis_count": 2,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "candidate_score_lt_baseline",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 25,
+            "candidate_total": 24,
+            "delta_total": -1,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well-structured, and includes necessary placeholders and constraints, aligning well with the detailed sub-plan creation criteria. It remains generic enough to avoid overfitting to a particular context while providing sufficient guidance for accurate and feasible sub-plans."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 7,
+              "notes": "The prompt is clear, well\u2011structured, and provides concrete formatting instructions, which makes it high quality. It aligns closely with the creation criteria by explicitly requesting a detailed sub\u2011plan tied to the main plan and objective, and it incorporates the rubric weights, supporting strong criteria fit. However, the heavy reliance on specific sections and weight references makes it slightly less universally applicable, reducing the anti\u2011overfit score."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are tasked with generating a detailed sub\u2011plan for a single step within a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequireme"
+          },
+          {
+            "block_id": "initial_plan_creation_block",
+            "analysis_count": 1,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "candidate_score_lt_baseline",
+            "required_placeholders_count": 2,
+            "missing_placeholders": [],
+            "baseline_total": 25,
+            "candidate_total": 21,
+            "delta_total": -4,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well-structured, and provides comprehensive requirements that guide the creation of a detailed, multi-stage plan. It aligns closely with the creation criteria by requesting a general yet rigorous plan and includes success rubrics. The use of placeholders makes it adaptable to various objectives, minimizing overfitting. Minor improvements could include simplifying some language for broader accessibility and explicitly defining the placeholder syntax for users unfamiliar with templating."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 7,
+              "anti_overfit_score": 6,
+              "notes": "The prompt is clear, well\u2011structured, and provides comprehensive instructions for creating a detailed, ordered plan, which reflects strong generic quality. It aligns reasonably well with the creation criteria of producing a detailed general plan, though it adds numerous pipeline\u2011specific requirements (tool routing, verification checkpoints, response flags) that go beyond the basic objective, causing a slight mismatch. The prompt is somewhat over\u2011engineered for a generic planning task, suggesting a modest risk of over\u2011fitting to this particular multi\u2011stage reasoning context."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are the planning lead for a multi\u2011stage reasoning pipeline. Create a rigorous, ordered plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a list of non\u2011overlapping st"
+          },
+          {
+            "block_id": "primary_tool_router_block",
+            "analysis_count": 1,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 25,
+            "candidate_total": 25,
+            "delta_total": 0,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well\u2011structured, and provides explicit routing rules, placeholders, and success criteria that align closely with the stated evaluation rubric (accuracy, relevance, clarity). It balances specificity (exact match, continuity flag) with flexibility, avoiding over\u2011specialisation. Minor improvements could include example inputs/outputs to further reduce ambiguity and ensure consistency across implementations."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well-structured, and includes all necessary placeholders and guidelines for routing. It aligns well with the provided creation criteria and success rubric, offering a generic framework that can be applied to various objectives without being overly specific. Minor verbosity prevents a perfect score, but overall it avoids overfitting to any particular use case."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting guidelines:\n- Choose a tool whose `id` exactly matches one of the IDs listed in **available_tools**"
+          },
+          {
+            "block_id": "secondary_tool_router_block",
+            "analysis_count": 1,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "candidate_score_lt_baseline",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 22,
+            "delta_total": -4,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well-structured, and uses placeholders effectively, making it adaptable to various contexts. It provides explicit routing rules and a detailed success rubric, which aligns well with the intended criteria. Minor drawbacks include a slightly dense presentation of the creation criteria JSON, which could be streamlined for readability, but overall the design is strong and avoids overfitting to specific tools or scenarios."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 7,
+              "anti_overfit_score": 7,
+              "notes": "The prompt is well\u2011structured, comprehensive, and clear, covering objective, context, tool list, routing rules, return format, and evaluation rubric, which supports high generic quality. It aligns well with the criteria by providing explicit success metrics (accuracy, relevance, clarity) and guidance for decision\u2011making, though the integration of anti\u2011overfit considerations is implicit rather than explicit, slightly limiting its alignment. Overall, the prompt balances detail with flexibility, earning solid scores across the three dimensions."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are the continuity sub\u2011router.\n\n---\n**Objective**\n{{{objective}}}\n\n**Current Plan / Context**\n{{{plan}}}\n\n**Summary of Tool Output from Prior Routing**\n{{{tool_output}}}\n\n**Available Tools**\n{{{available_tools}}}\n\n---\n**Routing Rules**\n"
+          }
+        ],
+        "prompt_scoring_summary": {
+          "scored_blocks": 9,
+          "accepted_blocks": 6,
+          "rejected_blocks": 3,
+          "baseline_avg_total": 24.444444444444443,
+          "candidate_avg_total": 24.333333333333332,
+          "delta_avg_total": -0.1111111111111111
+        }
+      },
+      "timestamp": 1771222553.710599
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n- Return strict JSON with keys: `given_item`, `general_critique`, `list_of_issues`.\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n- Return JSON only with key `synthesis`.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "note": "initial",
+        "run_id": "7f781f13-0428-4068-a688-ca774c28f2d9"
+      },
+      "timestamp": 1771225586.068813
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n- Return strict JSON with keys: `given_item`, `general_critique`, `list_of_issues`.\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n- Return JSON only with key `synthesis`.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "note": "initial",
+        "run_id": "d03150d0-8233-4dfb-91bd-185ddef4889a"
+      },
+      "timestamp": 1771225602.123335
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n- Return strict JSON with keys: `given_item`, `general_critique`, `list_of_issues`.\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n- Return JSON only with key `synthesis`.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "epoch": 0,
+        "run_id": "d03150d0-8233-4dfb-91bd-185ddef4889a",
+        "avg_score_a": 8.4,
+        "avg_score_b": 7.566666666666667,
+        "improvement_delta": -0.833333333333333,
+        "winner": "baseline",
+        "changed_keys": [],
+        "scores_a": [
+          6.5,
+          8.833333333333334,
+          8.666666666666666,
+          9.833333333333334,
+          8.166666666666666
+        ],
+        "scores_b": [
+          7.5,
+          8.833333333333334,
+          5.0,
+          7.5,
+          9.0
+        ],
+        "thinking_level": "med-synth",
+        "num_failures_in_a": 3,
+        "num_rca_items": 27,
+        "generalizer": null,
+        "prompt_scoring": [
+          {
+            "block_id": "improvement_block",
+            "analysis_count": 3,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 23,
+            "candidate_total": 26,
+            "delta_total": 3,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 7,
+              "notes": "The prompt is clear, well-structured, and includes comprehensive instructions and conditional handling for different target schemas. It aligns well with the intended criteria for an improvement block, using placeholders and a rubric to guide output. While generally robust, there is slight room for improvement in ensuring broader applicability across varied contexts, hence a modest anti-overfit score."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, comprehensive, and well\u2011structured, covering all required steps (use of placeholders, strict JSON output, handling of specific target schemas, and RCA guidance). It aligns closely with the creation criteria and success rubric, providing concrete evaluation dimensions. Minor over\u2011specificity around \"plan\" and \"synthesis\" handling could limit flexibility for other schema types, hence a slightly lower anti\u2011overfit score."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are an expert prompt engineer tasked with improving a piece of content based on a detailed critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- D"
+          },
+          {
+            "block_id": "initial_plan_creation_block",
+            "analysis_count": 3,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 2,
+            "missing_placeholders": [],
+            "baseline_total": 25,
+            "candidate_total": 26,
+            "delta_total": 1,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well\u2011structured, and includes concrete requirements (ordered steps, tool routing, response criteria, audience consistency). It aligns well with the creation criteria by demanding a detailed plan and success rubric, while remaining generic enough to apply across many objectives, reducing over\u2011fitting risk."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, comprehensive, and well\u2011structured, providing explicit formatting, tool integration, and success checks that align tightly with the creation criteria. It remains general enough to apply across domains, avoiding overly specific constraints, though a slight reduction in anti\u2011overfit score reflects minor reliance on a fixed response schema."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are the planning lead for a multi\u2011stage reasoning pipeline. Create a rigorous, general\u2011purpose plan that fulfills the objective described below.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce"
+          },
+          {
+            "block_id": "long_response_synthesis_block",
+            "analysis_count": 3,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "candidate_score_lt_baseline",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 25,
+            "candidate_total": 23,
+            "delta_total": -2,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well-structured, and includes comprehensive placeholders and constraints, making it broadly applicable. It aligns well with the provided rubric criteria, and its generic placeholders reduce risk of overfitting to a particular context."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 7,
+              "notes": "The prompt is clear, well\u2011structured, and provides comprehensive guidance (placeholders, style, content, and formatting requirements). It aligns closely with the stated objective and success rubric, ensuring the generated segment fits, is coherent, and offers insight. While detailed, it retains enough flexibility for creative input, limiting over\u2011fitting, though the strict JSON output requirement and specific sub\u2011section format introduce some constraints."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are drafting a single segment of a long\u2011form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Produce only th"
+          },
+          {
+            "block_id": "primary_tool_router_block",
+            "analysis_count": 2,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "prompt_contract_violation",
+            "contract_issues": [
+              "explicit_json_keys_do_not_match_schema"
+            ],
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": null,
+            "candidate_total": null,
+            "delta_total": 0.0,
+            "baseline_scores": {},
+            "candidate_scores": {},
+            "score_models": {},
+            "candidate_prompt_preview": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Choose a `id` that exactly matches one Tool ID from the available tools.\n- Provide complet"
+          },
+          {
+            "block_id": "self_critique_block",
+            "analysis_count": 3,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 27,
+            "delta_total": 1,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well\u2011structured, and includes all necessary placeholders and output requirements. It aligns closely with the success rubric by asking for concrete, actionable, and relevant critique. Minor improvements could include explicitly stating that no additional keys should be added to the JSON output and reminding the model to ensure the JSON is syntactically valid."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well\u2011structured, and includes explicit formatting requirements, making it easy to implement. It aligns closely with the creation criteria by asking for a critique based on the given objective and providing a rubric that mirrors the evaluation dimensions. The use of placeholders ({{{item}}}, {{{objective}}}, {{{context}}}) keeps it generic and prevents over\u2011fitting to any particular content. Minor improvements could include specifying a maximum length for the JSON output to avoid overly verbose responses."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are an internal reviewer tasked with critiquing the provided item against its objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and any missing cov"
+          },
+          {
+            "block_id": "sub_plan_creation_block",
+            "analysis_count": 2,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 25,
+            "candidate_total": 26,
+            "delta_total": 1,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well-structured, and provides concrete requirements and placeholders, making it easy to follow. It aligns closely with the stated creation criteria and rubric, covering accuracy, feasibility, and completeness. The use of generic placeholders and flexible instructions helps avoid overfitting to a particular scenario, though a slight improvement could be made by explicitly limiting optional tool usage to reduce potential verbosity."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, comprehensive, and well\u2011aligned with the creation criteria while remaining sufficiently generic to avoid over\u2011fitting."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are tasked with drafting a detailed sub\u2011plan for a single step within a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirement"
+          },
+          {
+            "block_id": "synthesis_block",
+            "analysis_count": 3,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "candidate_score_lt_baseline",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 25,
+            "candidate_total": 23,
+            "delta_total": -2,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well\u2011structured, and includes all necessary placeholders and constraints, making it easy to follow. It aligns closely with the provided creation criteria, covering objective, success rubric, and required output format. While it is broadly applicable to synthesis tasks, the inclusion of very specific formatting rules (e.g., image marker placement) introduces slight domain specificity, but overall it remains sufficiently generic to avoid overfitting."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 6,
+              "notes": "The prompt is clear, comprehensive, and well\u2011aligned with the success rubric, providing detailed instructions and placeholders. However, its strong focus on a specific synthesis task and domain\u2011specific requirements (e.g., theological dimensions) makes it somewhat over\u2011specialised, limiting broader applicability."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are generating the final synthesis for a non\u2011long\u2011response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Integrate the evidence where it strengthens the argument;"
+          },
+          {
+            "block_id": "large_response_router_block",
+            "analysis_count": 1,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "candidate_score_lt_baseline",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 25,
+            "delta_total": -1,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well-structured, and specifies concrete requirements for splitting responses. Minor improvements could include explicit JSON field naming for the output. It aligns well with the intended criteria and remains broadly applicable, minimizing overfit risk."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well\u2011structured, and specifies exact JSON output, with placeholders for dynamic content. It aligns well with the intended criteria and avoids overly specific constraints, reducing overfit risk."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are tasked with decomposing a lengthy answer into a set of high\u2011quality, focused synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context"
+          },
+          {
+            "block_id": "secondary_tool_router_block",
+            "analysis_count": 1,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "candidate_score_lt_baseline",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 25,
+            "delta_total": -1,
+            "baseline_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well\u2011structured, and uses placeholders to stay generic. It defines routing rules and includes a rubric that aligns with the evaluation criteria, supporting accurate and relevant routing decisions. Minor improvements could include explicit examples for edge cases, but overall it meets the criteria well."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well-structured, and includes all necessary sections (objective, context, tool output, rules, and output format). It aligns closely with the stated criteria of routing based on input, objective, and context, and uses generic placeholders rather than overly specific examples, supporting good generalization. Minor improvements could include explicit examples of the expected JSON schema for the router output to further reduce ambiguity."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are the continuity subrouter.\n\n**Objective**\n{{{objective}}}\n\n**Current Plan / Context**\n{{{plan}}}\n\n**Summary of Previous Tool Output**\n{{{tool_output}}}\n\n**Available Tools**\n{{{available_tools}}}\n\n**Routing Rules**\n- Choose a `id` tha"
+          }
+        ],
+        "prompt_scoring_summary": {
+          "scored_blocks": 9,
+          "accepted_blocks": 4,
+          "rejected_blocks": 5,
+          "baseline_avg_total": 25.125,
+          "candidate_avg_total": 25.125,
+          "delta_avg_total": 0.0
+        }
+      },
+      "timestamp": 1771229544.779757
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n- Return strict JSON with keys: `given_item`, `general_critique`, `list_of_issues`.\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n- Return JSON only with key `synthesis`.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "epoch": 1,
+        "run_id": "d03150d0-8233-4dfb-91bd-185ddef4889a",
+        "avg_score_a": 7.466666666666667,
+        "avg_score_b": 8.666666666666668,
+        "improvement_delta": 1.200000000000001,
+        "winner": "baseline",
+        "changed_keys": [],
+        "scores_a": [
+          4.666666666666667,
+          9.166666666666666,
+          7.833333333333333,
+          8.5,
+          7.166666666666667
+        ],
+        "scores_b": [
+          8.833333333333334,
+          8.166666666666666,
+          8.333333333333334,
+          9.5,
+          8.5
+        ],
+        "thinking_level": "med-synth",
+        "num_failures_in_a": 4,
+        "num_rca_items": 32,
+        "generalizer": null,
+        "prompt_scoring": [
+          {
+            "block_id": "improvement_block",
+            "analysis_count": 4,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 27,
+            "delta_total": 1,
+            "baseline_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well-structured, and provides comprehensive instructions with placeholders and conditional handling for different target schemas. It aligns well with the provided creation criteria, covering details, objective, and a success rubric. Minor improvements could include explicitly stating the expected format for the returned JSON (e.g., indentation) to avoid ambiguity. Overall, it avoids overfitting by remaining generic and reusable across contexts."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well\u2011structured, and includes all necessary instructions (preserve placeholders, return strict JSON, avoid specific facts). It aligns tightly with the creation criteria and success rubric, ensuring the output meets the target schema. Minor redundancy in repeated sections could be trimmed, but overall it is high\u2011quality and robust against over\u2011fitting to particular data."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are an expert prompt engineer tasked with improving a piece of content based on a detailed critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- P"
+          },
+          {
+            "block_id": "initial_plan_creation_block",
+            "analysis_count": 3,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 2,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 26,
+            "delta_total": 0,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well-structured, and aligns closely with the creation criteria, while remaining generic enough to avoid overfitting to a single use case."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well\u2011structured, and provides explicit formatting instructions, which supports high generic quality. It aligns closely with the stated creation criteria, covering accuracy, feasibility, and completeness in the success rubric, and adds a natural\u2011prose requirement, earning a strong criteria alignment score. The use of placeholders ({{{prompt}}}, {{{available_tools}}}) and generic guidelines ensures the prompt is not over\u2011fitted to a specific scenario, resulting in a high anti\u2011overfit rating. Minor improvements could include simplifying some instructions to boost readability further."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are the planning lead for a multi\u2011stage reasoning pipeline. Based on the user's objective ({{{prompt}}}), devise a concise, ordered plan where each step directly aligns with a specific tool from {{{available_tools}}}. For each step incl"
+          },
+          {
+            "block_id": "large_response_router_block",
+            "analysis_count": 2,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "prompt_contract_violation",
+            "contract_issues": [
+              "explicit_json_keys_do_not_match_schema"
+            ],
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": null,
+            "candidate_total": null,
+            "delta_total": 0.0,
+            "baseline_scores": {},
+            "candidate_scores": {},
+            "score_models": {},
+            "candidate_prompt_preview": "You are tasked with decomposing a lengthy response into a set of high\u2011quality, focused synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_conte"
+          },
+          {
+            "block_id": "long_response_synthesis_block",
+            "analysis_count": 3,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "candidate_score_lt_baseline",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 25,
+            "candidate_total": 23,
+            "delta_total": -2,
+            "baseline_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well-structured, and provides comprehensive instructions with placeholders for dynamic content. It aligns well with the stated synthesis objectives and includes detailed requirements to ensure consistency and originality. While highly effective, minor improvements could be made in explicitly emphasizing the balance between adherence to the outline and creative freedom, which would further strengthen criteria fit and anti-overfit considerations."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 7,
+              "notes": "The prompt is clear, well\u2011structured, and provides comprehensive instructions (placeholders, guidelines, output format). It aligns closely with the success rubric by explicitly referencing Fit, Coherence, and Insightfulness weights, ensuring the generated segment contributes appropriately to the overall synthesis. The use of generic placeholders and emphasis on fresh analytical value keeps it broadly applicable, limiting over\u2011fitting to a single context, though the detailed constraints could still steer responses toward a narrow style."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are an expert writer tasked with composing a single segment of a multi\u2011part long\u2011form synthesis.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_o"
+          },
+          {
+            "block_id": "primary_tool_router_block",
+            "analysis_count": 2,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 25,
+            "candidate_total": 25,
+            "delta_total": 0,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, concise, and provides explicit routing rules that support accurate and relevant routing decisions. It uses generic placeholders, making it adaptable to various objectives and tool sets, which reduces overfitting. Minor improvements could include specifying the expected JSON schema format for the output to further enhance clarity."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well\u2011structured, and preserves placeholders, making it reusable. It aligns closely with the stated criteria for routing based on objective and plan, and avoids over\u2011specificity, though minor improvements in conciseness could raise the generic quality."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are the primary tool router.\n\nObjective:\n{{objective}}\n\nPlan/subplan text:\n{{plan}}\n\nAvailable tools:\n{{available_tools}}\n\nRouting instructions:\n- Choose one or more tool IDs from the **Available tools** list that directly address each "
+          },
+          {
+            "block_id": "secondary_tool_router_block",
+            "analysis_count": 3,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "candidate_score_lt_baseline",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 23,
+            "delta_total": -3,
+            "baseline_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well\u2011structured, and uses placeholders to stay generic. It provides explicit routing rules and a detailed rubric that aligns with the scoring criteria (accuracy, relevance, clarity). The language is concise and avoids over\u2011specific examples, minimizing overfit risk."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 7,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well-structured, and provides comprehensive instructions, placeholders, and a decision checklist, which supports accurate routing. Minor issues include extraneous RCA analysis lines and a slight mismatch between the described router output schema and the earlier scoring schema, which could cause confusion. Overall, it aligns well with the stated creation criteria and avoids over\u2011specificity, making it broadly applicable."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- The `id` you return must "
+          },
+          {
+            "block_id": "self_critique_block",
+            "analysis_count": 3,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 27,
+            "candidate_total": 27,
+            "delta_total": 0,
+            "baseline_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well\u2011structured, and explicitly defines the required JSON output, which supports the rubric dimensions of insightfulness, relevance, and actionability. It could be marginally improved by specifying the exact structure of `list_of_issues` (e.g., an array of objects with severity flags) to reduce ambiguity, but overall it aligns strongly with the creation criteria and remains broadly applicable without over\u2011fitting to a specific use case."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well-structured, and provides detailed requirements for a JSON-formatted critique, aligning closely with the stated creation criteria. It is broadly applicable across domains due to its use of placeholders. Minor improvements could include explicit guidance on handling missing or empty placeholders and ensuring proper escaping of braces in the output JSON."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are an internal reviewer tasked with critiquing the given item against its objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses, missing coverage, and"
+          },
+          {
+            "block_id": "sub_plan_creation_block",
+            "analysis_count": 2,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 26,
+            "delta_total": 0,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well\u2011structured, and provides necessary placeholders and requirements. It aligns closely with the specified creation criteria and includes a detailed success rubric. It avoids overfitting by using generic placeholders and no concrete examples, though minor wording tweaks could improve consistency."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well\u2011structured, and provides comprehensive instructions, including placeholders, output schema, and success rubric. It aligns closely with the creation criteria and remains generic enough to be reused across different plans, though minor verbosity prevents a perfect score."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are an expert tasked with drafting a detailed sub\u2011plan for a single step within a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nR"
+          },
+          {
+            "block_id": "synthesis_block",
+            "analysis_count": 3,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "candidate_score_lt_baseline",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 27,
+            "candidate_total": 24,
+            "delta_total": -3,
+            "baseline_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well-structured, and includes comprehensive requirements and a detailed rubric. It aligns closely with the creation criteria and uses generic placeholders, avoiding overfitting to any particular content."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 7,
+              "notes": "The prompt is clear, well\u2011structured, and provides comprehensive instructions with placeholders and explicit guidelines, earning a high generic quality rating. It aligns closely with the stated creation criteria, referencing the objective and success rubric directly, which justifies a strong criteria alignment score. While the prompt is specific to a synthesis block, its components (evidence integration, rubric adherence, JSON output) are reusable across similar tasks, resulting in a moderate anti\u2011overfit rating."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are tasked with generating a comprehensive final synthesis for a non\u2011long\u2011response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nGuidelines:\n- Incorporate all provided evidence, "
+          }
+        ],
+        "prompt_scoring_summary": {
+          "scored_blocks": 9,
+          "accepted_blocks": 5,
+          "rejected_blocks": 4,
+          "baseline_avg_total": 26.0,
+          "candidate_avg_total": 25.125,
+          "delta_avg_total": -0.7777777777777778
+        }
+      },
+      "timestamp": 1771236875.71858
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n- Return strict JSON with keys: `given_item`, `general_critique`, `list_of_issues`.\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n- Return JSON only with key `synthesis`.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "note": "initial",
+        "run_id": "0712af72-4b55-46e4-8131-287ff7b190f0"
+      },
+      "timestamp": 1771264667.588274
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n- Return strict JSON with keys: `given_item`, `general_critique`, `list_of_issues`.\n- `list_of_issues` must be an array of plain strings only (no objects, no nested structures).\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n- Return JSON only with key `synthesis`.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "note": "initial",
+        "run_id": "3f32af59-0693-4688-a499-f1af749ee6ab"
+      },
+      "timestamp": 1771269407.0274591
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n- Return strict JSON with keys: `given_item`, `general_critique`, `list_of_issues`.\n- `list_of_issues` must be an array of plain strings only (no objects, no nested structures).\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n- Return JSON only with key `synthesis`.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "note": "initial",
+        "run_id": "0a9dca90-4ddb-4e98-855f-ec3cb129fbd9"
+      },
+      "timestamp": 1771270196.5364978
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n- Return strict JSON with keys `sub_plan`, `steps`, and `tool_uses`.\n- `sub_plan` must be a string.\n- `steps` must be an array of strings.\n- `tool_uses` must be an array of strings.\n- Do not return `sub_plan` as an object or array.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n- Return strict JSON with keys: `given_item`, `general_critique`, `list_of_issues`.\n- `list_of_issues` must be an array of plain strings only (no objects, no nested structures).\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- Do not expose internal pipeline mechanics.\n- Return JSON only with key `synthesis`.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n- Return strict JSON with top-level keys `routes` and `continuity`.\n- `routes` must always be an array, even when there is only one route.\n- Each route must be an object with keys `id` and `inputs`.\n- Never return top-level `id`/`inputs` without `routes`.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n- Return strict JSON with top-level keys `routes` and `continuity`.\n- `routes` must always be an array, even when there is only one route.\n- Each route must be an object with keys `id` and `inputs`.\n- Never return top-level `id`/`inputs` without `routes`.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema."
+      },
+      "metadata": {
+        "note": "initial",
+        "run_id": "d270bcb2-db43-462c-9b31-f328f78eaee0"
+      },
+      "timestamp": 1771273223.640235
+    }
+  ]
+}

@@ -1,39 +1,48 @@
 # Plan
 
-System goal: simulated thinking using Gemma 3 27B Instruct + self improvement capabilities. 
+## Pipeline Blocks
 
-## Pipeline:
+Represent the general building blocks to a pipeline. 
 
-Input -> Plan -> [Tools] -> Synthesize -> Output
+### General
 
-### Plan
+These blocks are responsible for general tasks like:
+- Planning
+- Synthesis
+- Critiques
+Conventionally "textual" tasks will be left up to these tasks.
 
-Make Plan -> Critique Plan -> Improve Plan -> Router
+#### List of General Blocks
 
-1. Make a plan to respond to the input text
-2. Critique the plan to find faults
-3. Improve based on critique
-4. Use plan to route to tool use if necessary
+- [x] Plan generation block
+- [ ] Critique block
+- [ ] Improvement block
+- [ ] Synthesis block
 
-### Tools
+### Tool
 
-1. Web search
-2. Creative idea generation
-    - High temp responses for more creative ones
-    - Generate 10 random ideas based on the criteria -> Choose the best idea
-3. Code execute
-    - Input requirements -> Makes code -> Runs code -/ (Recursively fixes code until it runs properly) /-> Collects output
-4. Summarize
+These blocks are responsible for functional tasks and information gathering.
 
-### Synthesize
+#### List of Tool Blocks
 
-Synthesize -> Critique Synthesis -> Improve Response
+- [ ] Creative idea generation block
+- [ ] Python excution block
+- [ ] Web search block
+- [ ] Wikipedia search block
 
-1. All the information together
-2. Critique response to find faults
-3. Improve based on critique
+### Routing
 
-## Improvement System
+These blocks are responsible for routing the pipeline to different tools / tool blocks
 
-Hallucination/Inaccuracy/Harm check -> Root cause analysis -> Root cause confirmation -> Prompt update -> Run system with new prompts -> Compare output with old output -> If new prompt outperforms, use new prompt, else, retain old and move on to new question.
+#### List of Routing Blocks
+
+- [ ] Tool routing block
+- [ ] Response routing block (for longer responses)
+
+## Pipeline Formation
+
+The only requirements for pipeline formation are:
+
+1. It starts with a planner block
+2. It ends with a synthesis block
 

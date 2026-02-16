@@ -1,0 +1,1 @@
+import sympy as sp; x = sp.Symbol('x'); a_series = sp.series((1 - x)**(-3), x, 0, 11).removeO(); b_series = sp.series((1 + x)**(-2), x, 0, 11).removeO(); product = sp.expand(a_series * b_series); coeff = sp.expand(product).coeff(x, 10); result = coeff; print(result)

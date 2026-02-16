@@ -1,3 +1,33 @@
+
+## Live Apps
+
+### Streamlit (live progress)
+
+Run:
+
+```bash
+streamlit run src/streamlit_app.py
+```
+
+This UI now shows live progress while the pipeline runs:
+- real-time logs
+- current phase
+- discovered subplans as they are created
+- recent events
+- final response, citations, images, and full tool context
+
+### Desktop app (non-Streamlit)
+
+Run:
+
+```bash
+python src/tk_app.py
+```
+
+This Tkinter app provides a non-Streamlit interface with:
+- live logs and phase updates
+- subplan progress as it happens
+- full final output (plan, steps, response, citations, images, tool context)
 # Thinking Without Thinking
 
 This is just a fun little project to make a streamlit app that somewhat simulates "thought" and "chain of reasoning" with prompt engineering. Its aim is to mirror some aspect of human psychology with how we come up with structured responses to problems. It currently uses the Gemma 27B model, so if you get a google API key, its free to use.

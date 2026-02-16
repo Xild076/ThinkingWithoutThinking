@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ThinkingWithoutThinking Browser UI</title>
+  <style>
+    :root {
+      --bg: #f5ecd9;
+      --panel: #fbf6eb;
+      --panel-strong: #eee1ca;
+      --ink: #3e3222;
+      --ink-soft: #7b6a52;
+      --accent: #ad7a46;
+      --accent-2: #3f7c4a;
+      --border: rgba(126, 102, 67, 0.25);
+      --ok: #3f7c4a;
+      --warn: #a67222;
+      --bad: #ad4f4f;
+      --mono: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(1000px 420px at 10% -10%, rgba(182, 138, 87, 0.24), transparent),
+        radial-gradient(1000px 500px at 100% 0%, rgba(191, 167, 121, 0.22), transparent),
+        var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      min-height: 100vh;
+    }
+
+    .layout {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 20px;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 18px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 16px 32px rgba(73, 56, 33, 0.2);
+    }
+
+    .controls {
+      padding: 18px;
+      position: sticky;
+      top: 18px;
+      align-self: start;
+    }
+
+    .title {
+      font-size: 1.28rem;
+      margin: 0 0 4px;
+    }
+
+    .subtitle {
+      color: var(--ink-soft);
+      font-size: 0.92rem;
+      margin: 0 0 14px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--ink-soft);
+      margin-top: 12px;
+      margin-bottom: 8px;
+    }
+
+    textarea,
+    select {
+      width: 100%;
+      border: 1px solid var(--border);
+      background: #fff8ed;
+      color: var(--ink);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 0.95rem;
+      font-family: var(--sans);
+    }
+
+    textarea {
+      min-height: 180px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+
+    textarea:focus,
+    select:focus {
+      outline: 2px solid rgba(13, 122, 106, 0.22);
+      border-color: var(--accent);
+    }
+
+    .btn-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    button {
+      appearance: none;
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+      padding: 11px 12px;
+      border-radius: 10px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 120ms ease, opacity 120ms ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+    }
+
+    button.secondary {
+      background: #8f7350;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .nav-link {
+      margin-top: 10px;
+    }
+
+    .nav-link a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--ink-soft);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 0.82rem;
+      background: rgba(173, 122, 70, 0.12);
+    }
+
+    .nav-link a:hover {
+      color: var(--ink);
+      border-color: rgba(126, 102, 67, 0.35);
+    }
+
+    .meta {
+      margin-top: 12px;
+      font-size: 0.84rem;
+      color: var(--ink-soft);
+      line-height: 1.45;
+    }
+
+    .workspace {
+      display: grid;
+      gap: 12px;
+    }
+
+    .status-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      padding: 14px 16px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 0.74rem;
+      border: 1px solid var(--border);
+      background: var(--panel-strong);
+      color: var(--ink-soft);
+    }
+
+    .chip.ok {
+      color: var(--ok);
+      border-color: rgba(34, 108, 80, 0.35);
+      background: rgba(34, 108, 80, 0.08);
+    }
+
+    .chip.warn {
+      color: var(--warn);
+      border-color: rgba(153, 101, 21, 0.35);
+      background: rgba(153, 101, 21, 0.08);
+    }
+
+    .chip.bad {
+      color: var(--bad);
+      border-color: rgba(154, 42, 42, 0.35);
+      background: rgba(154, 42, 42, 0.08);
+    }
+
+    .event-feed {
+      padding: 10px 14px 16px;
+      max-height: 54vh;
+      overflow: auto;
+    }
+
+    .event {
+      border: 1px solid var(--border);
+      border-left: 5px solid var(--accent);
+      border-radius: 10px;
+      background: #f7efdf;
+      margin-top: 10px;
+      overflow: hidden;
+      animation: reveal 180ms ease;
+    }
+
+    .event.warn {
+      border-left-color: var(--warn);
+    }
+
+    .event.bad {
+      border-left-color: var(--bad);
+    }
+
+    .event-header {
+      padding: 10px 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: baseline;
+      background: var(--panel-strong);
+      cursor: pointer;
+    }
+
+    .event-title {
+      font-size: 0.86rem;
+      font-weight: 700;
+      color: var(--ink);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .event-stage {
+      font-size: 0.76rem;
+      color: var(--ink-soft);
+      font-family: var(--mono);
+    }
+
+    .event-body {
+      display: none;
+      padding: 10px 12px 12px;
+    }
+
+    .event.open .event-body {
+      display: block;
+    }
+
+    pre {
+      margin: 0;
+      font-size: 0.78rem;
+      line-height: 1.34;
+      font-family: var(--mono);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .response {
+      padding: 16px;
+      line-height: 1.58;
+      font-size: 0.97rem;
+    }
+
+    .response h3 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+    }
+
+    .response-body {
+      background: #fff8ed;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      max-height: 38vh;
+      overflow: auto;
+      white-space: pre-wrap;
+    }
+
+    .rca {
+      padding: 14px;
+    }
+
+    .rca-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .rca-header h3 {
+      margin: 0;
+      font-size: 0.94rem;
+    }
+
+    .rca button {
+      font-size: 0.75rem;
+      padding: 8px 9px;
+      background: var(--accent-2);
+      color: #fdf7ec;
+    }
+
+    .insights {
+      padding: 14px;
+    }
+
+    .insights-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .insights-header h3 {
+      margin: 0;
+      font-size: 0.95rem;
+    }
+
+    .insights-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .insight-col {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff8ed;
+      padding: 10px;
+      min-height: 130px;
+    }
+
+    .insight-col h4 {
+      margin: 0 0 8px;
+      font-size: 0.84rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--ink-soft);
+    }
+
+    .insight-list {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 0.84rem;
+      line-height: 1.4;
+      color: var(--ink);
+    }
+
+    .insight-list li {
+      margin: 0 0 6px;
+    }
+
+    .insight-empty {
+      color: var(--ink-soft);
+      font-size: 0.82rem;
+      margin: 0;
+    }
+
+    @keyframes reveal {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 980px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+      .controls {
+        position: static;
+      }
+      .event-feed {
+        max-height: 45vh;
+      }
+      .insights-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <section class="panel controls">
+      <h1 class="title">ThinkingWithoutThinking</h1>
+      <p class="subtitle">Browser UI with full trace payloads for RCA.</p>
+
+      <label for="prompt">Prompt</label>
+      <textarea id="prompt" placeholder="Ask for analysis, code, synthesis, planning, or mixed tasks."></textarea>
+
+      <label for="thinking">Thinking Level</label>
+      <select id="thinking">
+        <option value="low">low</option>
+        <option value="med-synth" selected>med-synth</option>
+        <option value="med-plan">med-plan</option>
+        <option value="high">high</option>
+      </select>
+
+      <div class="btn-row">
+        <button id="run-btn">Run Stream</button>
+        <button class="secondary" id="clear-btn">Clear</button>
+      </div>
+
+      <div class="nav-link">
+        <a href="/training" target="_blank" rel="noopener noreferrer">Open Training Monitor</a>
+      </div>
+
+      <div class="meta" id="meta">
+        Ready.
+      </div>
+    </section>
+
+    <section class="workspace">
+      <section class="panel status-bar" id="status-bar">
+        <span class="chip" id="status-chip">idle</span>
+        <span class="chip" id="event-count-chip">events: 0</span>
+        <span class="chip" id="eta-chip">eta: --</span>
+      </section>
+
+      <section class="panel event-feed" id="event-feed"></section>
+
+      <section class="panel response">
+        <h3>Final Response</h3>
+        <div class="response-body" id="final-response">No result yet.</div>
+      </section>
+
+      <section class="panel insights">
+        <div class="insights-header">
+          <h3>Critique & Improvements</h3>
+          <span class="chip" id="feedback-chip">0 items</span>
+        </div>
+        <div class="insights-grid">
+          <div class="insight-col">
+            <h4>Critique</h4>
+            <ul class="insight-list" id="critique-list"></ul>
+            <p class="insight-empty" id="critique-empty">No critique signals detected yet.</p>
+          </div>
+          <div class="insight-col">
+            <h4>Improvements</h4>
+            <ul class="insight-list" id="improvement-list"></ul>
+            <p class="insight-empty" id="improvement-empty">No improvement suggestions detected yet.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel rca">
+        <div class="rca-header">
+          <h3>RCA Bundle (full payload)</h3>
+          <button id="download-btn" disabled>Download JSON</button>
+        </div>
+        <pre id="rca-json">No result bundle.</pre>
+      </section>
+    </section>
+  </div>
+
+  <script>
+    const promptEl = document.getElementById('prompt');
+    const thinkingEl = document.getElementById('thinking');
+    const runBtn = document.getElementById('run-btn');
+    const clearBtn = document.getElementById('clear-btn');
+    const downloadBtn = document.getElementById('download-btn');
+
+    const eventFeed = document.getElementById('event-feed');
+    const finalResponse = document.getElementById('final-response');
+    const rcaJson = document.getElementById('rca-json');
+    const critiqueList = document.getElementById('critique-list');
+    const improvementList = document.getElementById('improvement-list');
+    const critiqueEmpty = document.getElementById('critique-empty');
+    const improvementEmpty = document.getElementById('improvement-empty');
+    const feedbackChip = document.getElementById('feedback-chip');
+
+    const statusChip = document.getElementById('status-chip');
+    const eventCountChip = document.getElementById('event-count-chip');
+    const etaChip = document.getElementById('eta-chip');
+    const meta = document.getElementById('meta');
+
+    let latestResult = null;
+    let abortController = null;
+    let eventCount = 0;
+    let allEvents = [];
+
+    function setStatus(text, style = '') {
+      statusChip.textContent = text;
+      statusChip.className = `chip ${style}`.trim();
+    }
+
+    function formatJson(value) {
+      try {
+        return JSON.stringify(value, null, 2);
+      } catch (error) {
+        return String(value);
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function renderMarkdown(mdText) {
+      let html = escapeHtml(mdText || '');
+
+      html = html.replace(
+        /!\[([^\]]*)\]\((data:image\/[a-zA-Z0-9.+-]+;base64,[^)]+)\)/g,
+        (_, alt, src) => (
+          `<img alt="${escapeHtml(alt)}" src="${escapeHtml(src)}" ` +
+          `style="max-width:100%;height:auto;border:1px solid var(--border);border-radius:10px;display:block;margin:10px 0;" loading="lazy" />`
+        ),
+      );
+
+      html = html.replace(
+        /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+        (_, text, href) => (
+          `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`
+        ),
+      );
+
+      return html.replace(/\n/g, '<br>');
+    }
+
+    function eventClass(event) {
+      if (event.event_type === 'error') return 'bad';
+      if (event.event_type === 'warning') return 'warn';
+      return '';
+    }
+
+    function normalizeItems(value) {
+      if (value == null) return [];
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        return trimmed ? [trimmed] : [];
+      }
+      if (Array.isArray(value)) {
+        const out = [];
+        for (const item of value) {
+          if (typeof item === 'string' && item.trim()) out.push(item.trim());
+          else if (item && typeof item === 'object') {
+            const msg = item.text || item.message || item.detail || item.reason;
+            if (typeof msg === 'string' && msg.trim()) out.push(msg.trim());
+          }
+        }
+        return out;
+      }
+      if (typeof value === 'object') {
+        return Object.entries(value)
+          .filter(([, v]) => typeof v === 'string' && v.trim())
+          .map(([k, v]) => `${k}: ${v.trim()}`);
+      }
+      return [];
+    }
+
+    function uniqueLines(lines) {
+      const seen = new Set();
+      const out = [];
+      for (const line of lines) {
+        const key = String(line).toLowerCase().trim();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(String(line));
+      }
+      return out;
+    }
+
+    function extractFeedback(result, events) {
+      const critiqueKeys = ['critique', 'critiques', 'limitations', 'weaknesses', 'caveats', 'risks', 'issues'];
+      const improveKeys = ['improvements', 'improvement', 'suggestions', 'next_steps', 'action_items', 'recommendations'];
+
+      const critiques = [];
+      const improvements = [];
+
+      const payload = result && typeof result === 'object' ? result : {};
+      for (const key of critiqueKeys) critiques.push(...normalizeItems(payload[key]));
+      for (const key of improveKeys) improvements.push(...normalizeItems(payload[key]));
+
+      for (const event of events || []) {
+        const eventType = String(event?.event_type || '');
+        const stage = String(event?.stage || '');
+        const eventPayload = event?.payload;
+
+        if (eventType === 'warning' || eventType === 'error') {
+          const message = eventPayload?.message || eventPayload?.error;
+          if (typeof message === 'string' && message.trim()) {
+            critiques.push(`${eventType.toUpperCase()} (${stage}): ${message.trim()}`);
+          }
+        }
+
+        if ((stage === 'improvement' || stage === 'improvements') && eventPayload && typeof eventPayload === 'object') {
+          for (const key of improveKeys) improvements.push(...normalizeItems(eventPayload[key]));
+        }
+      }
+
+      return {
+        critiques: uniqueLines(critiques),
+        improvements: uniqueLines(improvements),
+      };
+    }
+
+    function renderFeedback(feedback) {
+      const critiques = feedback?.critiques || [];
+      const improvements = feedback?.improvements || [];
+
+      critiqueList.innerHTML = critiques.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
+      improvementList.innerHTML = improvements.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
+
+      critiqueEmpty.style.display = critiques.length ? 'none' : 'block';
+      improvementEmpty.style.display = improvements.length ? 'none' : 'block';
+
+      const total = critiques.length + improvements.length;
+      feedbackChip.textContent = `${total} item${total === 1 ? '' : 's'}`;
+      feedbackChip.className = `chip ${total ? 'ok' : ''}`.trim();
+    }
+
+    function appendEvent(event) {
+      eventCount += 1;
+      eventCountChip.textContent = `events: ${eventCount}`;
+      etaChip.textContent = `eta: ${event.eta_seconds == null ? '--' : event.eta_seconds + 's'}`;
+
+      const wrapper = document.createElement('article');
+      wrapper.className = `event ${eventClass(event)}`.trim();
+
+      const header = document.createElement('div');
+      header.className = 'event-header';
+      header.innerHTML = `
+        <span class="event-title">${event.event_type}</span>
+        <span class="event-stage">${event.stage}</span>
+      `;
+
+      const body = document.createElement('div');
+      body.className = 'event-body';
+      const pre = document.createElement('pre');
+      pre.textContent = formatJson(event.payload);
+      body.appendChild(pre);
+
+      header.addEventListener('click', () => {
+        wrapper.classList.toggle('open');
+      });
+
+      wrapper.appendChild(header);
+      wrapper.appendChild(body);
+      eventFeed.appendChild(wrapper);
+      allEvents.push(event);
+
+      if (eventCount <= 2 || event.event_type === 'error' || event.event_type === 'warning') {
+        wrapper.classList.add('open');
+      }
+
+      renderFeedback(extractFeedback(latestResult, allEvents));
+
+      eventFeed.scrollTop = eventFeed.scrollHeight;
+    }
+
+    function clearUI() {
+      eventFeed.innerHTML = '';
+      finalResponse.innerHTML = 'No result yet.';
+      rcaJson.textContent = 'No result bundle.';
+      meta.textContent = 'Cleared.';
+      latestResult = null;
+      allEvents = [];
+      downloadBtn.disabled = true;
+      eventCount = 0;
+      eventCountChip.textContent = 'events: 0';
+      etaChip.textContent = 'eta: --';
+      setStatus('idle');
+      renderFeedback({ critiques: [], improvements: [] });
+    }
+
+    async function streamRun() {
+      const prompt = promptEl.value.trim();
+      if (!prompt) {
+        meta.textContent = 'Prompt cannot be empty.';
+        return;
+      }
+
+      clearUI();
+      setStatus('running', 'ok');
+      meta.textContent = 'Streaming pipeline events...';
+
+      runBtn.disabled = true;
+      clearBtn.disabled = true;
+
+      abortController = new AbortController();
+
+      try {
+        const response = await fetch('/stream', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ prompt, thinking_level: thinkingEl.value }),
+          signal: abortController.signal,
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const chunks = buffer.split('\n\n');
+          buffer = chunks.pop() || '';
+
+          for (const chunk of chunks) {
+            const line = chunk
+              .split('\n')
+              .map((row) => row.trim())
+              .find((row) => row.startsWith('data:'));
+
+            if (!line) continue;
+
+            const payloadText = line.slice(5).trim();
+            if (!payloadText) continue;
+
+            let event;
+            try {
+              event = JSON.parse(payloadText);
+            } catch {
+              continue;
+            }
+
+            appendEvent(event);
+
+            if (event.event_type === 'final_result') {
+              latestResult = event.payload;
+              finalResponse.innerHTML = renderMarkdown(event.payload.response || '(empty response)');
+              rcaJson.textContent = formatJson(event.payload);
+              downloadBtn.disabled = false;
+              renderFeedback(extractFeedback(latestResult, allEvents));
+            }
+
+            if (event.event_type === 'error') {
+              setStatus('error', 'bad');
+              meta.textContent = event?.payload?.message || 'Unknown error.';
+            }
+
+            if (event.event_type === 'complete') {
+              setStatus('complete', 'ok');
+              meta.textContent = `Complete in ${event?.payload?.duration_seconds ?? '--'}s`;
+            }
+          }
+        }
+      } catch (error) {
+        setStatus('error', 'bad');
+        meta.textContent = `Streaming error: ${error}`;
+      } finally {
+        runBtn.disabled = false;
+        clearBtn.disabled = false;
+      }
+    }
+
+    runBtn.addEventListener('click', streamRun);
+    clearBtn.addEventListener('click', clearUI);
+
+    downloadBtn.addEventListener('click', () => {
+      if (!latestResult) return;
+      const blob = new Blob([JSON.stringify(latestResult, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'rca_bundle.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    renderFeedback({ critiques: [], improvements: [] });
+  </script>
+</body>
+</html>

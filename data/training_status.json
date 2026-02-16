@@ -1,0 +1,32 @@
+{
+  "run_id": "d270bcb2-db43-462c-9b31-f328f78eaee0",
+  "state": "running",
+  "started_at": "2026-02-16T20:20:23+00:00",
+  "updated_at": "2026-02-16T20:22:21+00:00",
+  "epoch_current": 1,
+  "epochs_total": 10,
+  "phase": "phase_a_eval",
+  "step": "case_run",
+  "message": "Running case 2/5",
+  "events_count": 7,
+  "last_event_type": "case_started",
+  "current_case": {
+    "index": 2,
+    "total": 5,
+    "id": "math-02",
+    "category": "mathematics",
+    "difficulty": "hard",
+    "prompt_preview": "Compute the exact value of integral from 0 to 1 of x^2 ln(1+x) dx and provide one independent cross-check."
+  },
+  "elapsed_seconds": 118.094,
+  "phase_elapsed_seconds": 118.091,
+  "metrics": {
+    "generation": 0,
+    "latest_case_score": 5.166666666666667
+  },
+  "paths": {
+    "status_path": "data/training_status.json",
+    "events_path": "data/training_events.jsonl",
+    "log_path": "logs/prompt_training.log"
+  }
+}

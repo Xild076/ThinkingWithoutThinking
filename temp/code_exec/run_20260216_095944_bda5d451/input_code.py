@@ -1,0 +1,1 @@
+import sympy as sp\nx = sp.symbols('x')\nresult = sp.integrate(x**2 * sp.log(1+x), (x, 0, 1))\nprint(result)
