@@ -1,0 +1,1 @@
+import sympy as sp;recurrence=lambda n:sum(range(1,n+1));closed_form=lambda n:sp.binomial(n+1,2);mismatches=sum(1 for i in range(11) if recurrence(i)!=int(closed_form(i)));result=mismatches;print(result)

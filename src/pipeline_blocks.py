@@ -1,5 +1,6 @@
 import sys
 import inspect
+import json
 import re
 import time
 from urllib.parse import urlparse, urlunparse
@@ -162,12 +163,26 @@ class PipelineBlock(object):
             logger.error(message)
             raise ValueError(message)
 
-    def _prompt_builder(self, inputs):
-        prompt = get_prompt(self.details['id'])
-        for key, value in inputs.items():
-            prompt = prompt.replace(f"{{{{{{{key}}}}}}}", str(value))
-            prompt = prompt.replace(f"{{{{{key}}}}}", str(value))
+    def _prompt_value(self, value):
+        if isinstance(value, str):
+            return value
+        if value is None:
+            return ""
+        try:
+            return json.dumps(value, ensure_ascii=False, default=str)
+        except Exception:
+            return str(value)
+
+    def _render_prompt_template(self, prompt_id: str, values: dict[str, object]) -> str:
+        prompt = get_prompt(prompt_id)
+        for key, value in values.items():
+            formatted = self._prompt_value(value)
+            prompt = prompt.replace(f"{{{{{{{key}}}}}}}", formatted)
+            prompt = prompt.replace(f"{{{{{key}}}}}", formatted)
         return prompt
+
+    def _prompt_builder(self, inputs):
+        return self._render_prompt_template(self.details['id'], inputs)
 
     def process(self, inputs: dict) -> dict:
         block_name = self.details.get('name', 'UnknownBlock')
@@ -1019,6 +1034,15 @@ class WebSearchToolBlock(ToolBlock):
         "id": "web_search_tool_block",
         "name": "Web Search Tool Block",
         "description": "Performs a web search based on the given query and returns relevant information.",
+        "prompt_creation_parameters": {
+            "details": "Summarize retrieved web evidence grounded strictly in supplied sources.",
+            "objective": "Produce concise, evidence-grounded summaries with uncertainty caveats and citation markers.",
+            "success_rubric": {
+                "evidence_fidelity": {"description": "Uses only provided sources without hallucination.", "weight": 0.45},
+                "relevance": {"description": "Prioritizes most relevant evidence to the user query.", "weight": 0.35},
+                "clarity": {"description": "Delivers concise, structured synthesis.", "weight": 0.2},
+            },
+        },
         "inputs": [PipelineObject("query", "The query for which to perform the web search", "str")],
         "outputs": [PipelineObject("cited_summary", "The relevant information returned from the web search summarized", "str"),
                     PipelineObject("search_result_links", "The relevant information returned from the web search in the form of links", "dict")],
@@ -1242,12 +1266,18 @@ class WebSearchToolBlock(ToolBlock):
         logger.debug(
             f"WebSearchToolBlock: prompt assembled with {len(url_numbered)} sources, chars={len(prompt)}"
         )
-        prompt += (
-            f"You are summarizing web evidence for query: '{query}'. "
-            "Use only provided sources. "
-            "If evidence is partial or adjacent-but-relevant, include it with caveats instead of discarding it. "
-            "Do not invent facts. Cite reference IDs in-line using [Reference ID]. "
-            "Return a concise synthesis with strongest evidence first."
+        output_contract = json.dumps(
+            {
+                "summary": "string",
+            },
+            indent=2,
+        )
+        prompt += "\n\n" + self._render_prompt_template(
+            self.details["id"],
+            {
+                "query": query,
+                "output_contract": output_contract,
+            },
         )
 
         output = generate_text(
@@ -1279,6 +1309,15 @@ class PythonCodeExecutionToolBlock(ToolBlock):
         "id": "python_code_execution_tool_block",
         "name": "Python Code Execution Tool Block",
         "description": "Executes the given Python code and returns the output.",
+        "prompt_creation_parameters": {
+            "details": "Generate deterministic Python code with a strict JSON output contract and repair loop.",
+            "objective": "Solve objective-specific computation tasks safely while minimizing retries and runtime.",
+            "success_rubric": {
+                "schema_fidelity": {"description": "Returns valid JSON fields code_to_run/packages_needed.", "weight": 0.35},
+                "execution_reliability": {"description": "Code executes successfully with bounded complexity.", "weight": 0.4},
+                "safety_and_constraints": {"description": "Respects visual and import constraints.", "weight": 0.25},
+            },
+        },
         "inputs": [PipelineObject("objective", "The objective of the code execution", "str"),
                    PipelineObject("visuals_needed", "Whether the code needs to create visuals or not", "bool")],
         "outputs": [PipelineObject("results", "The output of the code execution", "str"),
@@ -1387,25 +1426,24 @@ class PythonCodeExecutionToolBlock(ToolBlock):
         retry = 0
         while retry < retries: 
             logger.debug(f"PythonCodeExecutionToolBlock: attempt {retry+1}/{retries}")
-            prompt = "\n".join([
-                f"Write Python code to achieve the following objective: {objective}. Only return the code with no explanations or comments.",
-                "- If visuals are needed, use matplotlib to create them and return the code to do so. Do not actually create the visuals, just return the code to create them.",
-                "- If visuals are NOT needed, do not import or use matplotlib, seaborn, or plotly. Do not call plotting or display functions.",
-                "- If math is needed, use sympy to perform the math to ensure highest accuracy.",
-                "- Avoid computationally explosive operations (e.g., full symbolic expansion of very high-degree expressions). Prefer targeted coefficient extraction, simplification identities, recurrence, or numeric/symbolic hybrid methods.",
-                "- Package/tool selection policy:"
-                " use sympy for symbolic algebra; numpy for numerical linear algebra; pandas for table/dataframe tasks;"
-                " scipy/statsmodels for statistics; matplotlib/seaborn for static plots; plotly for interactive plots; requests+beautifulsoup4 for HTML scraping.",
-                "- Return executable Python statements only. Do NOT include markdown, triple-quoted text blocks, narrative text, or pseudo-code.",
-                "- Ensure the script computes a concrete final value and stores it in a variable named result, then prints(result).",
-                "- If any packages, place the name under which they are installed through pip in a list.",
-                f"- Package hints for this objective: {package_hint_text}",
-                f"Visuals required: {visuals_needed}",
-                f"Previous errors: {errors}",
-                f"Previous code: {prev_code}",
-                "If there is any previous code or errors, resolve them in the new code. "
-                "Return only the code with no explanations or comments in code to run, and return the packages needed. Ensure that the code is correct and will run without errors.",
-            ])
+            output_contract = json.dumps(
+                {
+                    "code_to_run": "string",
+                    "packages_needed": ["string"],
+                },
+                indent=2,
+            )
+            prompt = self._render_prompt_template(
+                self.details["id"],
+                {
+                    "objective": objective,
+                    "visuals_needed": visuals_needed,
+                    "package_hints": package_hint_text,
+                    "previous_error": errors or "none",
+                    "previous_code": prev_code or "",
+                    "output_contract": output_contract,
+                },
+            )
 
             generated_plan = generate_text(
                 prompt=prompt,
@@ -1514,6 +1552,15 @@ class WikipediaSearchToolBlock(ToolBlock):
         "id": "wikipedia_search_tool_block",
         "name": "Wikipedia Search Tool Block",
         "description": "Performs a search on Wikipedia based on the given query and returns relevant information.",
+        "prompt_creation_parameters": {
+            "details": "Summarize Wikipedia content with explicit relevance checks and fallback wording.",
+            "objective": "Provide concise, query-aligned summaries and state insufficient relevance explicitly.",
+            "success_rubric": {
+                "query_alignment": {"description": "Summary stays directly tied to query intent.", "weight": 0.45},
+                "faithfulness": {"description": "No fabricated claims beyond provided Wikipedia content.", "weight": 0.35},
+                "fallback_quality": {"description": "Signals insufficient relevance clearly when needed.", "weight": 0.2},
+            },
+        },
         "inputs": [PipelineObject("query", "The query for which to perform the Wikipedia search", "str")],
         "outputs": [PipelineObject("summary", "The relevant information returned from the Wikipedia search summarized", "str"),
                     PipelineObject("url", "The URL of the Wikipedia page from which the information was retrieved", "str")],
@@ -1533,10 +1580,19 @@ class WikipediaSearchToolBlock(ToolBlock):
         logger.debug(f"WikipediaSearchToolBlock: found page '{page}'")
 
         content = get_wikipedia_page_content(page)
+        output_contract = json.dumps({"summary": "string"}, indent=2)
 
         if fast_mode:
             logger.debug(f"WikipediaSearchToolBlock: using fast mode summarization")
-            prompt = (f"Summarize the following Wikipedia page content that is relevant to the query '{query}', making it concise. If there is no relevant information, return 'No relevant information found.' Only include information that is directly relevant to the query.\n\n{content['content']}")
+            prompt = self._render_prompt_template(
+                self.details["id"],
+                {
+                    "query": query,
+                    "content": content.get("content", ""),
+                    "mode": "fast",
+                    "output_contract": output_contract,
+                },
+            )
 
             output = generate_text(
                 prompt=prompt,
@@ -1552,10 +1608,14 @@ class WikipediaSearchToolBlock(ToolBlock):
             query_terms = {term for term in re.findall(r"[a-zA-Z0-9]+", (query or "").lower()) if len(term) >= 4}
             summary_lower = (summary or "").lower()
             if query_terms and not any(term in summary_lower for term in query_terms):
-                prompt = (
-                    f"Summarize only parts of this Wikipedia content relevant to query '{query}'. "
-                    "If relevance is weak, include closest adjacent context and say so briefly.\n\n"
-                    f"{content.get('content', '')}"
+                prompt = self._render_prompt_template(
+                    self.details["id"],
+                    {
+                        "query": query,
+                        "content": content.get("content", ""),
+                        "mode": "relevance_repair",
+                        "output_contract": output_contract,
+                    },
                 )
                 output = generate_text(
                     prompt=prompt,
@@ -1582,6 +1642,15 @@ class CreativeIdeaGeneratorToolBlock(ToolBlock):
         "id": "creative_idea_generator_tool_block",
         "name": "Creative Idea Generator Tool Block",
         "description": "Generates creative ideas based on the given, art-related objective.",
+        "prompt_creation_parameters": {
+            "details": "Generate diverse idea sets with explicit feasibility tagging.",
+            "objective": "Produce practical and novel ideas without duplication.",
+            "success_rubric": {
+                "diversity": {"description": "Ideas span distinct creative directions.", "weight": 0.4},
+                "feasibility": {"description": "Each idea includes concrete feasibility signal.", "weight": 0.3},
+                "novelty": {"description": "Includes high-variance, non-generic options.", "weight": 0.3},
+            },
+        },
         "inputs": [PipelineObject("objective", "The objective for which to generate creative ideas", "str")],
         "outputs": [PipelineObject("ideas", "A list of creative ideas generated based on the objective", "list")],
         "creativity_level": CreativityLevel.HIGH,
@@ -1596,11 +1665,12 @@ class CreativeIdeaGeneratorToolBlock(ToolBlock):
         objective = inputs.get("objective") or ""
         logger.info(f"CreativeIdeaGeneratorToolBlock: generating ideas for '{objective[:50]}...'")
 
-        prompt = (
-            "You are an eccentric artist and practical strategist. "
-            f"Generate creative ideas for objective: {objective}. "
-            "Return a list with diverse ideas: at least 3 practical and at least 3 highly novel ideas. "
-            "Avoid duplicates and vague one-liners."
+        prompt = self._render_prompt_template(
+            self.details["id"],
+            {
+                "objective": objective,
+                "output_contract": json.dumps({"ideas": ["string"]}, indent=2),
+            },
         )
 
         output = generate_text(
@@ -1638,6 +1708,15 @@ class DeductiveReasoningToolBlock(ToolBlock):
         "id": "deductive_reasoning_premise_tool_block",
         "name": "Deductive Reasoning Premise Tool Block",
         "description": "Generates premises based on the given objective for use in a deductive reasoning process.",
+        "prompt_creation_parameters": {
+            "details": "Generate and validate premises, then derive conclusion constrained to validated premises.",
+            "objective": "Increase reasoning trace reliability with explicit premise and conclusion checks.",
+            "success_rubric": {
+                "premise_validity": {"description": "Premises are precise, non-redundant, and checkable.", "weight": 0.35},
+                "logical_consistency": {"description": "Conclusion depends only on validated premises.", "weight": 0.45},
+                "explanatory_clarity": {"description": "Reasoning text is concise and easy to audit.", "weight": 0.2},
+            },
+        },
         "inputs": [PipelineObject("objective", "The objective of which deductive reasoning is needed to solve.", "str")],
         "outputs": [PipelineObject("premise_reasoning", "The reasoning process used to generate the premises", "str"),
                     PipelineObject("premises", "A list of premises used in the deductive reasoning process", "list"),
@@ -1658,10 +1737,18 @@ class DeductiveReasoningToolBlock(ToolBlock):
         objective = inputs.get("objective") or ""
         logger.info(f"DeductiveReasoningPremiseToolBlock: generating premises for '{objective[:50]}...'")
 
-        prompt_premise = (
-            f"Generate 3-7 precise premises for deductive reasoning on objective: {objective}. "
-            "Premises must be explicit, non-redundant, and checkable. "
-            "Return reasoning and premises."
+        prompt_premise = self._render_prompt_template(
+            "deductive_reasoning_premise_tool_block",
+            {
+                "objective": objective,
+                "output_contract": json.dumps(
+                    {
+                        "reasoning": "string",
+                        "premises": ["string"],
+                    },
+                    indent=2,
+                ),
+            },
         )
 
         output = generate_text(
@@ -1673,9 +1760,20 @@ class DeductiveReasoningToolBlock(ToolBlock):
 
         logger.info(f"DeductiveReasoningPremiseToolBlock: generated {len(output.premises)} premises")
 
-        prompt_confirm_premise = (
-            f"Validate each premise for objective '{objective}': {output.premises}. "
-            "Return reasoning and a boolean list premise_validations aligned by index."
+        prompt_confirm_premise = self._render_prompt_template(
+            "deductive_reasoning_confirm_premise_tool_block",
+            {
+                "objective": objective,
+                "premises": output.premises,
+                "validated_premises_instruction": "Only validate against objective-grounded criteria.",
+                "output_contract": json.dumps(
+                    {
+                        "reasoning": "string",
+                        "premise_validations": ["boolean"],
+                    },
+                    indent=2,
+                ),
+            },
         )
 
         output_confirm = generate_text(
@@ -1699,9 +1797,20 @@ class DeductiveReasoningToolBlock(ToolBlock):
         if not valid_premises:
             valid_premises = output.premises[:1]
 
-        prompt_conclusion = (
-            f"Generate a deductive conclusion for objective '{objective}' using only these valid premises: {valid_premises}. "
-            "Return reasoning and conclusion."
+        prompt_conclusion = self._render_prompt_template(
+            "deductive_reasoning_conclusion_tool_block",
+            {
+                "objective": objective,
+                "valid_premises": valid_premises,
+                "validated_premises_instruction": "Use only validated premises; do not introduce new assumptions.",
+                "output_contract": json.dumps(
+                    {
+                        "reasoning": "string",
+                        "conclusion": "string",
+                    },
+                    indent=2,
+                ),
+            },
         )
 
         output_conclusion = generate_text(
@@ -1711,9 +1820,20 @@ class DeductiveReasoningToolBlock(ToolBlock):
             temperature=self.details['creativity_level']
         )
 
-        prompt_confirm_conclusion = (
-            f"Validate this conclusion for objective '{objective}': {output_conclusion.conclusion}. "
-            "Return reasoning and conclusion_valid boolean."
+        prompt_confirm_conclusion = self._render_prompt_template(
+            "deductive_reasoning_conclusion_confirmation_tool_block",
+            {
+                "objective": objective,
+                "conclusion": output_conclusion.conclusion,
+                "validated_premises_instruction": "Check logical dependence on validated premises only.",
+                "output_contract": json.dumps(
+                    {
+                        "reasoning": "string",
+                        "conclusion_valid": "boolean",
+                    },
+                    indent=2,
+                ),
+            },
         )
 
         output_confirm_conclusion = generate_text(
@@ -1731,6 +1851,59 @@ class DeductiveReasoningToolBlock(ToolBlock):
             "conclusion": output_conclusion.conclusion,
             "conclusion_valid": output_confirm_conclusion.conclusion_valid
         }
+
+
+def get_tool_prompt_descriptors() -> dict[str, dict[str, object]]:
+    return {
+        "web_search_tool_block": {
+            "id": "web_search_tool_block",
+            "name": "Web Search Tool Prompt",
+            "schema": WebSearchToolBlockSchema,
+            "prompt_creation_parameters": WebSearchToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "wikipedia_search_tool_block": {
+            "id": "wikipedia_search_tool_block",
+            "name": "Wikipedia Search Tool Prompt",
+            "schema": WikipediaSearchToolBlockSchema,
+            "prompt_creation_parameters": WikipediaSearchToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "python_code_execution_tool_block": {
+            "id": "python_code_execution_tool_block",
+            "name": "Python Code Execution Tool Prompt",
+            "schema": PythonCodeExecutionToolBlockSchema,
+            "prompt_creation_parameters": PythonCodeExecutionToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "creative_idea_generator_tool_block": {
+            "id": "creative_idea_generator_tool_block",
+            "name": "Creative Idea Generator Tool Prompt",
+            "schema": CreativeIdeaGeneratorSchemaToolBlock,
+            "prompt_creation_parameters": CreativeIdeaGeneratorToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "deductive_reasoning_premise_tool_block": {
+            "id": "deductive_reasoning_premise_tool_block",
+            "name": "Deductive Premise Tool Prompt",
+            "schema": DeductiveReasoningPremiseToolBlockSchema,
+            "prompt_creation_parameters": DeductiveReasoningToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "deductive_reasoning_confirm_premise_tool_block": {
+            "id": "deductive_reasoning_confirm_premise_tool_block",
+            "name": "Deductive Premise Validation Prompt",
+            "schema": DeductiveReasoningConfirmPremiseToolBlockSchema,
+            "prompt_creation_parameters": DeductiveReasoningToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "deductive_reasoning_conclusion_tool_block": {
+            "id": "deductive_reasoning_conclusion_tool_block",
+            "name": "Deductive Conclusion Prompt",
+            "schema": DeductiveReasoningConclusionToolBlockSchema,
+            "prompt_creation_parameters": DeductiveReasoningToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "deductive_reasoning_conclusion_confirmation_tool_block": {
+            "id": "deductive_reasoning_conclusion_confirmation_tool_block",
+            "name": "Deductive Conclusion Validation Prompt",
+            "schema": DeductiveReasoningConclusionConfirmationToolBlockSchema,
+            "prompt_creation_parameters": DeductiveReasoningToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+    }
 
 
 validate_prompts()

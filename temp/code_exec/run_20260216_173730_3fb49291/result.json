@@ -1,0 +1,1 @@
+{"success": true, "output": "{'placebo_coefficient': np.float64(0.021148269428557256), 'alternative_spec_coefficient': np.float64(-0.006469388492570518), 'sensitivity_coefficients': {'id': np.float64(0.00460204376028058)}}", "result": null, "plots": [], "error": null}

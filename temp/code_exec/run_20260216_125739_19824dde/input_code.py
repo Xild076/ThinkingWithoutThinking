@@ -1,0 +1,1 @@
+x,y=1,0;x_next=9*x+20*y;y_next=4*x+9*y;result=(x_next,y_next);print(result)

@@ -1,0 +1,1 @@
+{"success": true, "output": "{'serviceA': {'input': 'string', 'output': 'int'}, 'serviceC': {'request': 'json', 'response': 'text'}}", "result": null, "plots": [], "error": null}

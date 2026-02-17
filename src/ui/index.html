@@ -1,790 +1,520 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ThinkingWithoutThinking Browser UI</title>
-  <style>
-    :root {
-      --bg: #f5ecd9;
-      --panel: #fbf6eb;
-      --panel-strong: #eee1ca;
-      --ink: #3e3222;
-      --ink-soft: #7b6a52;
-      --accent: #ad7a46;
-      --accent-2: #3f7c4a;
-      --border: rgba(126, 102, 67, 0.25);
-      --ok: #3f7c4a;
-      --warn: #a67222;
-      --bad: #ad4f4f;
-      --mono: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      --sans: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-    }
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>ThinkingWithoutThinking</title>
+<style>
+:root{
+  --bg:#f5ecd9;--bg-g1:rgba(182,138,87,.18);--bg-g2:rgba(131,115,82,.12);
+  --surface:#fbf6eb;--surface-alt:#f0e6d0;--surface-hover:#f5eed5;
+  --ink:#2c2416;--ink2:#70604a;--ink3:#9c8b72;
+  --accent:#ad7a46;--accent-h:#c08a4a;--accent-soft:rgba(173,122,70,.12);
+  --ok:#3f7c4a;--ok-bg:rgba(63,124,74,.08);
+  --warn:#a67222;--warn-bg:rgba(166,114,34,.08);
+  --bad:#ad4f4f;--bad-bg:rgba(173,79,79,.08);
+  --border:rgba(126,102,67,.18);--border-f:rgba(173,122,70,.5);
+  --mono:"SF Mono","Fira Code","JetBrains Mono",Menlo,Monaco,Consolas,monospace;
+  --sans:"Inter","Avenir Next",-apple-system,"Segoe UI",sans-serif;
+  --r:12px;--rs:8px;
+  --shadow:0 1px 3px rgba(0,0,0,.06),0 8px 24px rgba(73,56,33,.1);
+  --shadow-lg:0 4px 12px rgba(0,0,0,.08),0 20px 40px rgba(73,56,33,.14);
+  --t:160ms cubic-bezier(.22,1,.36,1);
+}
+[data-theme="dark"]{
+  --bg:#1f1c17;--bg-g1:rgba(120,90,50,.12);--bg-g2:rgba(80,65,42,.1);
+  --surface:#2a261e;--surface-alt:#322d23;--surface-hover:#3a342a;
+  --ink:#ddd5c4;--ink2:#b0a48e;--ink3:#8a7d6a;
+  --accent:#c49050;--accent-h:#d4a060;--accent-soft:rgba(196,144,80,.12);
+  --ok:#6aad6a;--ok-bg:rgba(106,173,106,.1);
+  --warn:#c49050;--warn-bg:rgba(196,144,80,.1);
+  --bad:#c46a6a;--bad-bg:rgba(196,106,106,.1);
+  --border:rgba(160,140,100,.2);--border-f:rgba(196,144,80,.45);
+  --shadow:0 1px 3px rgba(0,0,0,.2),0 8px 24px rgba(0,0,0,.18);
+  --shadow-lg:0 4px 12px rgba(0,0,0,.25),0 20px 40px rgba(0,0,0,.22);
+}
+*{box-sizing:border-box;margin:0}
+body{
+  background:radial-gradient(ellipse 900px 380px at 8% -8%,var(--bg-g1),transparent),
+             radial-gradient(ellipse 900px 420px at 95% 5%,var(--bg-g2),transparent),var(--bg);
+  color:var(--ink);font-family:var(--sans);min-height:100vh;line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+/* ─── Layout ─── */
+.layout{max-width:1340px;margin:0 auto;padding:16px;display:grid;grid-template-columns:340px 1fr;gap:16px;min-height:100vh}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);transition:box-shadow var(--t)}
 
-    * {
-      box-sizing: border-box;
-    }
+/* ─── Sidebar ─── */
+.sidebar{padding:20px;position:sticky;top:16px;align-self:start;max-height:calc(100vh - 32px);overflow-y:auto;display:flex;flex-direction:column;gap:16px}
+.logo-row{display:flex;align-items:center;justify-content:space-between}
+.logo{font-size:1.1rem;font-weight:800;letter-spacing:-.02em}.logo span{color:var(--accent)}
+.theme-btn{appearance:none;background:var(--surface-alt);border:1px solid var(--border);border-radius:999px;width:36px;height:20px;cursor:pointer;position:relative;transition:background var(--t);padding:0}
+.theme-btn::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--accent);transition:transform var(--t)}
+[data-theme="dark"] .theme-btn::after{transform:translateX(16px)}
+.subtitle{color:var(--ink3);font-size:.82rem;line-height:1.4}
+.form-group{display:flex;flex-direction:column;gap:6px}
+.form-label{font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2)}
+.prompt-wrap{position:relative}
+textarea{width:100%;border:1px solid var(--border);background:var(--surface-alt);color:var(--ink);border-radius:var(--rs);padding:12px 14px 28px;font-size:.92rem;font-family:var(--sans);line-height:1.5;min-height:170px;resize:vertical;transition:border-color var(--t),box-shadow var(--t)}
+textarea:focus{outline:none;border-color:var(--border-f);box-shadow:0 0 0 3px var(--accent-soft)}
+textarea::placeholder{color:var(--ink3)}
+.prompt-meta{position:absolute;bottom:6px;right:10px;font-size:.68rem;color:var(--ink3);font-family:var(--mono);pointer-events:none}
+select{width:100%;border:1px solid var(--border);background:var(--surface-alt);color:var(--ink);border-radius:var(--rs);padding:9px 12px;font-size:.88rem;font-family:var(--sans);cursor:pointer;transition:border-color var(--t)}
+select:focus{outline:none;border-color:var(--border-f);box-shadow:0 0 0 3px var(--accent-soft)}
+.btn-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+button{appearance:none;border:none;border-radius:var(--rs);padding:10px 14px;font-weight:700;font-size:.85rem;font-family:var(--sans);cursor:pointer;transition:all var(--t);display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover:not(:disabled){background:var(--accent-h);transform:translateY(-1px);box-shadow:0 4px 12px rgba(176,125,62,.25)}
+.btn-secondary{background:var(--surface-alt);color:var(--ink2);border:1px solid var(--border)}
+.btn-secondary:hover:not(:disabled){background:var(--surface-hover);color:var(--ink)}
+button:disabled{opacity:.4;cursor:not-allowed;transform:none!important;box-shadow:none!important}
+.btn-icon{background:transparent;border:1px solid var(--border);border-radius:var(--rs);color:var(--ink2);padding:6px 8px;font-size:.78rem}
+.btn-icon:hover:not(:disabled){background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+.nav-link a{display:flex;align-items:center;gap:6px;color:var(--ink2);text-decoration:none;border:1px solid var(--border);border-radius:var(--rs);padding:8px 12px;font-size:.8rem;transition:all var(--t)}
+.nav-link a:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
+.kbd{display:inline-block;font-family:var(--mono);font-size:.65rem;background:var(--surface-alt);border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:var(--ink3);margin-left:4px}
+.meta-text{font-size:.82rem;color:var(--ink2);line-height:1.5;min-height:1.5em}
+.history-section{display:flex;flex-direction:column;gap:4px}
+.history-list{display:flex;flex-direction:column;gap:3px;max-height:140px;overflow-y:auto}
+.history-item{font-size:.78rem;color:var(--ink2);background:var(--surface-alt);border:1px solid transparent;border-radius:6px;padding:5px 8px;cursor:pointer;transition:all var(--t);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.history-item:hover{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
 
-    body {
-      margin: 0;
-      background:
-        radial-gradient(1000px 420px at 10% -10%, rgba(182, 138, 87, 0.24), transparent),
-        radial-gradient(1000px 500px at 100% 0%, rgba(191, 167, 121, 0.22), transparent),
-        var(--bg);
-      color: var(--ink);
-      font-family: var(--sans);
-      min-height: 100vh;
-    }
+/* loading */
+.loading-bar{height:2px;background:var(--border);border-radius:2px;overflow:hidden;opacity:0;transition:opacity var(--t)}
+.loading-bar.active{opacity:1}
+.loading-bar-inner{height:100%;width:30%;background:var(--accent);border-radius:2px;animation:loadSlide 1.2s ease-in-out infinite}
+@keyframes loadSlide{0%{transform:translateX(-100%)}100%{transform:translateX(400%)}}
 
-    .layout {
-      max-width: 1280px;
-      margin: 0 auto;
-      padding: 20px;
-      display: grid;
-      grid-template-columns: 360px 1fr;
-      gap: 18px;
-    }
+/* ─── Workspace ─── */
+.workspace{display:flex;flex-direction:column;gap:12px}
+.status-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 14px}
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:3px 10px;font-size:.72rem;font-weight:600;border:1px solid var(--border);background:var(--surface-alt);color:var(--ink2);transition:all var(--t)}
+.chip.ok{color:var(--ok);border-color:var(--ok);background:var(--ok-bg)}
+.chip.warn{color:var(--warn);border-color:var(--warn);background:var(--warn-bg)}
+.chip.bad{color:var(--bad);border-color:var(--bad);background:var(--bad-bg)}
+.pulse-dot{width:6px;height:6px;border-radius:50%;background:var(--ok);animation:pulse 1.5s ease-in-out infinite;display:inline-block}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
 
-    .panel {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      box-shadow: 0 16px 32px rgba(73, 56, 33, 0.2);
-    }
+/* tabs */
+.tab-bar{display:flex;gap:2px;padding:6px;background:var(--surface-alt);border-radius:var(--r);border:1px solid var(--border)}
+.tab-btn{flex:1;padding:8px 10px;font-size:.78rem;font-weight:600;border-radius:var(--rs);color:var(--ink2);background:transparent;transition:all var(--t);border:none}
+.tab-btn:hover{background:var(--surface);color:var(--ink)}
+.tab-btn.active{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.tab-badge{font-size:.65rem;background:var(--accent);color:#fff;border-radius:999px;padding:1px 6px;margin-left:4px;font-weight:700}
+.tab-panel{display:none}.tab-panel.active{display:block}
 
-    .controls {
-      padding: 18px;
-      position: sticky;
-      top: 18px;
-      align-self: start;
-    }
+/* events */
+.event-feed{padding:12px;max-height:60vh;overflow-y:auto}
+.event-search{width:100%;border:1px solid var(--border);background:var(--surface-alt);color:var(--ink);border-radius:999px;padding:7px 14px;font-size:.82rem;font-family:var(--sans);margin-bottom:8px;transition:border-color var(--t)}
+.event-search:focus{outline:none;border-color:var(--border-f)}
+.event-search::placeholder{color:var(--ink3)}
+.event-list{display:flex;flex-direction:column;gap:6px}
+.event{border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:var(--rs);background:var(--surface-alt);overflow:hidden;animation:slideUp 200ms ease}
+.event.warn{border-left-color:var(--warn)}.event.bad{border-left-color:var(--bad)}.event.hidden{display:none}
+.event-header{padding:8px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;transition:background var(--t);user-select:none}
+.event-header:hover{background:var(--surface-hover)}
+.event-title{font-size:.8rem;font-weight:700;color:var(--ink);letter-spacing:.02em}
+.event-meta{font-size:.72rem;color:var(--ink3);font-family:var(--mono);display:flex;align-items:center;gap:6px}
+.event-chevron{transition:transform var(--t);color:var(--ink3);font-size:.7rem}
+.event.open .event-chevron{transform:rotate(90deg)}
+.event-body{display:none;padding:8px 12px 12px;border-top:1px solid var(--border)}.event.open .event-body{display:block}
+pre{margin:0;font-size:.76rem;line-height:1.4;font-family:var(--mono);white-space:pre-wrap;word-break:break-word;color:var(--ink2)}
 
-    .title {
-      font-size: 1.28rem;
-      margin: 0 0 4px;
-    }
+/* response */
+.response-section{padding:16px}
+.section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px}
+.section-title{font-size:.92rem;font-weight:700}
+.response-body{background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--rs);padding:16px;max-height:50vh;overflow-y:auto;line-height:1.65;font-size:.92rem}
+.response-body h1,.response-body h2,.response-body h3,.response-body h4,.response-body h5,.response-body h6{font-weight:700;margin:16px 0 8px;color:var(--ink)}
+.response-body h1{font-size:1.3rem}.response-body h2{font-size:1.15rem}.response-body h3{font-size:1.02rem}
+.response-body code{font-family:var(--mono);font-size:.84em;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 5px}
+.response-body pre{background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:12px;overflow-x:auto;margin:8px 0}
+.response-body pre code{background:none;border:none;padding:0}
+.response-body ul,.response-body ol{padding-left:20px;margin:8px 0}
+.response-body li{margin:4px 0}
+.response-body table{width:100%;border-collapse:collapse;margin:8px 0;font-size:.88rem}
+.response-body th,.response-body td{border:1px solid var(--border);padding:6px 10px;text-align:left}
+.response-body th{background:var(--surface);font-weight:700;font-size:.82rem}
+.response-body blockquote{border-left:3px solid var(--accent);padding:8px 14px;margin:8px 0;background:var(--accent-soft);border-radius:0 var(--rs) var(--rs) 0;color:var(--ink2)}
+.response-body a{color:var(--accent);text-decoration:underline}
+.response-body img{max-width:100%;height:auto;border:1px solid var(--border);border-radius:var(--rs);margin:8px 0;display:block}
+.response-empty{color:var(--ink3);font-style:italic;font-size:.88rem}
 
-    .subtitle {
-      color: var(--ink-soft);
-      font-size: 0.92rem;
-      margin: 0 0 14px;
-    }
+/* insights */
+.insights-section{padding:16px}
+.insights-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.insight-col{border:1px solid var(--border);border-radius:var(--rs);background:var(--surface-alt);padding:12px}
+.insight-col h4{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--ink2);margin-bottom:8px}
+.insight-list{margin:0;padding-left:16px;font-size:.82rem;line-height:1.5}
+.insight-list li{margin:4px 0}
+.insight-empty{color:var(--ink3);font-size:.8rem;font-style:italic}
 
-    label {
-      display: block;
-      font-size: 0.78rem;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: var(--ink-soft);
-      margin-top: 12px;
-      margin-bottom: 8px;
-    }
+/* rca */
+.rca-section{padding:16px}
+.rca-json{background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--rs);padding:12px;max-height:40vh;overflow:auto}
 
-    textarea,
-    select {
-      width: 100%;
-      border: 1px solid var(--border);
-      background: #fff8ed;
-      color: var(--ink);
-      border-radius: 10px;
-      padding: 10px 12px;
-      font-size: 0.95rem;
-      font-family: var(--sans);
-    }
+/* toast */
+.toast-container{position:fixed;bottom:20px;right:20px;z-index:1000;display:flex;flex-direction:column;gap:8px}
+.toast{padding:10px 16px;border-radius:var(--rs);font-size:.82rem;font-weight:600;color:#fff;box-shadow:var(--shadow-lg);animation:toastIn 300ms ease,toastOut 300ms ease 2700ms forwards;max-width:320px}
+.toast.ok{background:var(--ok)}.toast.warn{background:var(--warn)}.toast.bad{background:var(--bad)}
 
-    textarea {
-      min-height: 180px;
-      resize: vertical;
-      line-height: 1.45;
-    }
+@keyframes slideUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+@keyframes toastOut{from{opacity:1}to{opacity:0;transform:translateY(10px)}}
 
-    textarea:focus,
-    select:focus {
-      outline: 2px solid rgba(13, 122, 106, 0.22);
-      border-color: var(--accent);
-    }
-
-    .btn-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-top: 14px;
-    }
-
-    button {
-      appearance: none;
-      border: 0;
-      background: var(--accent);
-      color: #fff;
-      padding: 11px 12px;
-      border-radius: 10px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: transform 120ms ease, opacity 120ms ease;
-    }
-
-    button:hover {
-      transform: translateY(-1px);
-    }
-
-    button.secondary {
-      background: #8f7350;
-    }
-
-    button:disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
-      transform: none;
-    }
-
-    .nav-link {
-      margin-top: 10px;
-    }
-
-    .nav-link a {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      color: var(--ink-soft);
-      text-decoration: none;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 7px 10px;
-      font-size: 0.82rem;
-      background: rgba(173, 122, 70, 0.12);
-    }
-
-    .nav-link a:hover {
-      color: var(--ink);
-      border-color: rgba(126, 102, 67, 0.35);
-    }
-
-    .meta {
-      margin-top: 12px;
-      font-size: 0.84rem;
-      color: var(--ink-soft);
-      line-height: 1.45;
-    }
-
-    .workspace {
-      display: grid;
-      gap: 12px;
-    }
-
-    .status-bar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: center;
-      padding: 14px 16px;
-    }
-
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      border-radius: 999px;
-      padding: 4px 10px;
-      font-size: 0.74rem;
-      border: 1px solid var(--border);
-      background: var(--panel-strong);
-      color: var(--ink-soft);
-    }
-
-    .chip.ok {
-      color: var(--ok);
-      border-color: rgba(34, 108, 80, 0.35);
-      background: rgba(34, 108, 80, 0.08);
-    }
-
-    .chip.warn {
-      color: var(--warn);
-      border-color: rgba(153, 101, 21, 0.35);
-      background: rgba(153, 101, 21, 0.08);
-    }
-
-    .chip.bad {
-      color: var(--bad);
-      border-color: rgba(154, 42, 42, 0.35);
-      background: rgba(154, 42, 42, 0.08);
-    }
-
-    .event-feed {
-      padding: 10px 14px 16px;
-      max-height: 54vh;
-      overflow: auto;
-    }
-
-    .event {
-      border: 1px solid var(--border);
-      border-left: 5px solid var(--accent);
-      border-radius: 10px;
-      background: #f7efdf;
-      margin-top: 10px;
-      overflow: hidden;
-      animation: reveal 180ms ease;
-    }
-
-    .event.warn {
-      border-left-color: var(--warn);
-    }
-
-    .event.bad {
-      border-left-color: var(--bad);
-    }
-
-    .event-header {
-      padding: 10px 12px;
-      display: flex;
-      justify-content: space-between;
-      gap: 8px;
-      align-items: baseline;
-      background: var(--panel-strong);
-      cursor: pointer;
-    }
-
-    .event-title {
-      font-size: 0.86rem;
-      font-weight: 700;
-      color: var(--ink);
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-    }
-
-    .event-stage {
-      font-size: 0.76rem;
-      color: var(--ink-soft);
-      font-family: var(--mono);
-    }
-
-    .event-body {
-      display: none;
-      padding: 10px 12px 12px;
-    }
-
-    .event.open .event-body {
-      display: block;
-    }
-
-    pre {
-      margin: 0;
-      font-size: 0.78rem;
-      line-height: 1.34;
-      font-family: var(--mono);
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-
-    .response {
-      padding: 16px;
-      line-height: 1.58;
-      font-size: 0.97rem;
-    }
-
-    .response h3 {
-      margin: 0 0 10px;
-      font-size: 1rem;
-    }
-
-    .response-body {
-      background: #fff8ed;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px;
-      max-height: 38vh;
-      overflow: auto;
-      white-space: pre-wrap;
-    }
-
-    .rca {
-      padding: 14px;
-    }
-
-    .rca-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-
-    .rca-header h3 {
-      margin: 0;
-      font-size: 0.94rem;
-    }
-
-    .rca button {
-      font-size: 0.75rem;
-      padding: 8px 9px;
-      background: var(--accent-2);
-      color: #fdf7ec;
-    }
-
-    .insights {
-      padding: 14px;
-    }
-
-    .insights-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 10px;
-    }
-
-    .insights-header h3 {
-      margin: 0;
-      font-size: 0.95rem;
-    }
-
-    .insights-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-
-    .insight-col {
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: #fff8ed;
-      padding: 10px;
-      min-height: 130px;
-    }
-
-    .insight-col h4 {
-      margin: 0 0 8px;
-      font-size: 0.84rem;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      color: var(--ink-soft);
-    }
-
-    .insight-list {
-      margin: 0;
-      padding-left: 18px;
-      font-size: 0.84rem;
-      line-height: 1.4;
-      color: var(--ink);
-    }
-
-    .insight-list li {
-      margin: 0 0 6px;
-    }
-
-    .insight-empty {
-      color: var(--ink-soft);
-      font-size: 0.82rem;
-      margin: 0;
-    }
-
-    @keyframes reveal {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    @media (max-width: 980px) {
-      .layout {
-        grid-template-columns: 1fr;
-      }
-      .controls {
-        position: static;
-      }
-      .event-feed {
-        max-height: 45vh;
-      }
-      .insights-grid {
-        grid-template-columns: 1fr;
-      }
-    }
-  </style>
+/* responsive */
+@media(max-width:960px){.layout{grid-template-columns:1fr}.sidebar{position:static;max-height:none}.event-feed{max-height:40vh}.insights-grid{grid-template-columns:1fr}}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:var(--ink3)}
+</style>
 </head>
 <body>
-  <div class="layout">
-    <section class="panel controls">
-      <h1 class="title">ThinkingWithoutThinking</h1>
-      <p class="subtitle">Browser UI with full trace payloads for RCA.</p>
+<div class="toast-container" id="toast-container"></div>
+<div class="layout">
+  <!-- ─── Sidebar ─── -->
+  <section class="panel sidebar">
+    <div class="logo-row">
+      <div class="logo">Thinking<span>Without</span>Thinking</div>
+      <button class="theme-btn" id="theme-toggle" title="Toggle dark mode"></button>
+    </div>
+    <p class="subtitle">Pipeline runner with streaming trace payloads, RCA, and critique analysis.</p>
 
-      <label for="prompt">Prompt</label>
-      <textarea id="prompt" placeholder="Ask for analysis, code, synthesis, planning, or mixed tasks."></textarea>
+    <div class="form-group">
+      <label class="form-label">Prompt</label>
+      <div class="prompt-wrap">
+        <textarea id="prompt" placeholder="Ask for analysis, code, synthesis, planning, or mixed tasks..."></textarea>
+        <span class="prompt-meta" id="prompt-meta">0 chars · ~0 tokens</span>
+      </div>
+    </div>
 
-      <label for="thinking">Thinking Level</label>
+    <div class="form-group">
+      <label class="form-label">Thinking Level</label>
       <select id="thinking">
-        <option value="low">low</option>
-        <option value="med-synth" selected>med-synth</option>
-        <option value="med-plan">med-plan</option>
-        <option value="high">high</option>
+        <option value="low">Low</option>
+        <option value="med-synth" selected>Med-Synth</option>
+        <option value="med-plan">Med-Plan</option>
+        <option value="high">High</option>
       </select>
+    </div>
 
-      <div class="btn-row">
-        <button id="run-btn">Run Stream</button>
-        <button class="secondary" id="clear-btn">Clear</button>
-      </div>
+    <div class="btn-row">
+      <button class="btn-primary" id="run-btn">▶ Run <span class="kbd">⌘↵</span></button>
+      <button class="btn-secondary" id="clear-btn">Clear</button>
+    </div>
 
-      <div class="nav-link">
-        <a href="/training" target="_blank" rel="noopener noreferrer">Open Training Monitor</a>
-      </div>
+    <div class="loading-bar" id="loading-bar"><div class="loading-bar-inner"></div></div>
+    <p class="meta-text" id="meta">Ready.</p>
 
-      <div class="meta" id="meta">
-        Ready.
+    <div class="nav-link">
+      <a href="/training" target="_blank" rel="noopener noreferrer">📊 Training Monitor</a>
+    </div>
+
+    <div class="history-section" id="history-section" style="display:none">
+      <label class="form-label">Recent Prompts</label>
+      <div class="history-list" id="history-list"></div>
+    </div>
+  </section>
+
+  <!-- ─── Workspace ─── -->
+  <section class="workspace">
+    <section class="panel status-bar" id="status-bar">
+      <span class="chip" id="status-chip">idle</span>
+      <span class="chip" id="event-count-chip">0 events</span>
+      <span class="chip" id="eta-chip">—</span>
+    </section>
+
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="events">Events<span class="tab-badge" id="event-badge" style="display:none">0</span></button>
+      <button class="tab-btn" data-tab="response">Response</button>
+      <button class="tab-btn" data-tab="insights">Insights<span class="tab-badge" id="insight-badge" style="display:none">0</span></button>
+      <button class="tab-btn" data-tab="rca">RCA Bundle</button>
+    </div>
+
+    <section class="panel tab-panel active" id="tab-events">
+      <div class="event-feed" id="event-feed">
+        <input class="event-search" id="event-search" placeholder="Filter events..."/>
+        <div class="event-list" id="event-list"></div>
       </div>
     </section>
 
-    <section class="workspace">
-      <section class="panel status-bar" id="status-bar">
-        <span class="chip" id="status-chip">idle</span>
-        <span class="chip" id="event-count-chip">events: 0</span>
-        <span class="chip" id="eta-chip">eta: --</span>
-      </section>
+    <section class="panel tab-panel" id="tab-response">
+      <div class="response-section">
+        <div class="section-header">
+          <h3 class="section-title">Final Response</h3>
+          <button class="btn-icon" id="copy-response-btn" title="Copy response" disabled>📋 Copy</button>
+        </div>
+        <div class="response-body" id="final-response">
+          <p class="response-empty">No result yet. Run a prompt to see the response here.</p>
+        </div>
+      </div>
+    </section>
 
-      <section class="panel event-feed" id="event-feed"></section>
-
-      <section class="panel response">
-        <h3>Final Response</h3>
-        <div class="response-body" id="final-response">No result yet.</div>
-      </section>
-
-      <section class="panel insights">
-        <div class="insights-header">
-          <h3>Critique & Improvements</h3>
+    <section class="panel tab-panel" id="tab-insights">
+      <div class="insights-section">
+        <div class="section-header">
+          <h3 class="section-title">Critique &amp; Improvements</h3>
           <span class="chip" id="feedback-chip">0 items</span>
         </div>
         <div class="insights-grid">
-          <div class="insight-col">
-            <h4>Critique</h4>
-            <ul class="insight-list" id="critique-list"></ul>
-            <p class="insight-empty" id="critique-empty">No critique signals detected yet.</p>
-          </div>
-          <div class="insight-col">
-            <h4>Improvements</h4>
-            <ul class="insight-list" id="improvement-list"></ul>
-            <p class="insight-empty" id="improvement-empty">No improvement suggestions detected yet.</p>
-          </div>
+          <div class="insight-col"><h4>Critique</h4><ul class="insight-list" id="critique-list"></ul><p class="insight-empty" id="critique-empty">No critique signals detected.</p></div>
+          <div class="insight-col"><h4>Improvements</h4><ul class="insight-list" id="improvement-list"></ul><p class="insight-empty" id="improvement-empty">No improvement suggestions.</p></div>
         </div>
-      </section>
-
-      <section class="panel rca">
-        <div class="rca-header">
-          <h3>RCA Bundle (full payload)</h3>
-          <button id="download-btn" disabled>Download JSON</button>
-        </div>
-        <pre id="rca-json">No result bundle.</pre>
-      </section>
+      </div>
     </section>
-  </div>
 
-  <script>
-    const promptEl = document.getElementById('prompt');
-    const thinkingEl = document.getElementById('thinking');
-    const runBtn = document.getElementById('run-btn');
-    const clearBtn = document.getElementById('clear-btn');
-    const downloadBtn = document.getElementById('download-btn');
+    <section class="panel tab-panel" id="tab-rca">
+      <div class="rca-section">
+        <div class="section-header">
+          <h3 class="section-title">RCA Bundle</h3>
+          <div style="display:flex;gap:6px">
+            <button class="btn-icon" id="copy-rca-btn" title="Copy JSON" disabled>📋 Copy</button>
+            <button class="btn-icon" id="download-btn" disabled>⬇ Download</button>
+          </div>
+        </div>
+        <div class="rca-json"><pre id="rca-json">No result bundle.</pre></div>
+      </div>
+    </section>
+  </section>
+</div>
 
-    const eventFeed = document.getElementById('event-feed');
-    const finalResponse = document.getElementById('final-response');
-    const rcaJson = document.getElementById('rca-json');
-    const critiqueList = document.getElementById('critique-list');
-    const improvementList = document.getElementById('improvement-list');
-    const critiqueEmpty = document.getElementById('critique-empty');
-    const improvementEmpty = document.getElementById('improvement-empty');
-    const feedbackChip = document.getElementById('feedback-chip');
+<script>
+/* ─── Elements ─── */
+const $=id=>document.getElementById(id);
+const promptEl=$('prompt'),thinkingEl=$('thinking'),runBtn=$('run-btn'),clearBtn=$('clear-btn'),
+  downloadBtn=$('download-btn'),copyRspBtn=$('copy-response-btn'),copyRcaBtn=$('copy-rca-btn'),
+  loadingBar=$('loading-bar'),eventList=$('event-list'),eventSearch=$('event-search'),
+  finalResponse=$('final-response'),rcaJson=$('rca-json'),
+  critiqueList=$('critique-list'),improvementList=$('improvement-list'),
+  critiqueEmpty=$('critique-empty'),improvementEmpty=$('improvement-empty'),
+  feedbackChip=$('feedback-chip'),statusChip=$('status-chip'),
+  eventCountChip=$('event-count-chip'),etaChip=$('eta-chip'),
+  metaEl=$('meta'),promptMeta=$('prompt-meta'),eventBadge=$('event-badge'),
+  insightBadge=$('insight-badge'),historySec=$('history-section'),
+  historyList=$('history-list'),toastBox=$('toast-container');
 
-    const statusChip = document.getElementById('status-chip');
-    const eventCountChip = document.getElementById('event-count-chip');
-    const etaChip = document.getElementById('eta-chip');
-    const meta = document.getElementById('meta');
+let latestResult=null,abortCtrl=null,eventCount=0,allEvents=[],activeTab='events';
 
-    let latestResult = null;
-    let abortController = null;
-    let eventCount = 0;
-    let allEvents = [];
+/* ─── Theme ─── */
+function initTheme(){
+  const s=localStorage.getItem('twt-theme');
+  const t=s||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');
+  document.documentElement.setAttribute('data-theme',t);
+}
+$('theme-toggle').addEventListener('click',()=>{
+  const c=document.documentElement.getAttribute('data-theme');
+  const n=c==='dark'?'light':'dark';
+  document.documentElement.setAttribute('data-theme',n);
+  localStorage.setItem('twt-theme',n);
+});
+initTheme();
 
-    function setStatus(text, style = '') {
-      statusChip.textContent = text;
-      statusChip.className = `chip ${style}`.trim();
-    }
+/* ─── Token estimate ─── */
+promptEl.addEventListener('input',()=>{
+  const len=promptEl.value.length;
+  promptMeta.textContent=`${len} chars · ~${Math.max(1,Math.round(len/4))} tokens`;
+});
 
-    function formatJson(value) {
-      try {
-        return JSON.stringify(value, null, 2);
-      } catch (error) {
-        return String(value);
-      }
-    }
+/* ─── Keyboard shortcuts ─── */
+document.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();if(!runBtn.disabled)streamRun();}
+});
 
-    function escapeHtml(value) {
-      return String(value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
+/* ─── Tabs ─── */
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active');
+    $(`tab-${btn.dataset.tab}`).classList.add('active');
+    activeTab=btn.dataset.tab;
+  });
+});
 
-    function renderMarkdown(mdText) {
-      let html = escapeHtml(mdText || '');
+/* ─── Event search ─── */
+eventSearch.addEventListener('input',()=>{
+  const q=eventSearch.value.toLowerCase();
+  eventList.querySelectorAll('.event').forEach(el=>{
+    el.classList.toggle('hidden',q&&!el.textContent.toLowerCase().includes(q));
+  });
+});
 
-      html = html.replace(
-        /!\[([^\]]*)\]\((data:image\/[a-zA-Z0-9.+-]+;base64,[^)]+)\)/g,
-        (_, alt, src) => (
-          `<img alt="${escapeHtml(alt)}" src="${escapeHtml(src)}" ` +
-          `style="max-width:100%;height:auto;border:1px solid var(--border);border-radius:10px;display:block;margin:10px 0;" loading="lazy" />`
-        ),
-      );
+/* ─── Toast ─── */
+function showToast(msg,type='ok'){
+  const t=document.createElement('div');t.className=`toast ${type}`;t.textContent=msg;
+  toastBox.appendChild(t);setTimeout(()=>t.remove(),3200);
+}
 
-      html = html.replace(
-        /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
-        (_, text, href) => (
-          `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`
-        ),
-      );
+/* ─── History ─── */
+const MAX_HIST=10;
+function loadHistory(){try{return JSON.parse(localStorage.getItem('twt-history')||'[]')}catch{return[]}}
+function saveHistory(p){
+  const h=loadHistory().filter(x=>x!==p);h.unshift(p);
+  while(h.length>MAX_HIST)h.pop();
+  localStorage.setItem('twt-history',JSON.stringify(h));renderHistory();
+}
+function renderHistory(){
+  const h=loadHistory();
+  if(!h.length){historySec.style.display='none';return;}
+  historySec.style.display='flex';
+  historyList.innerHTML=h.map(x=>`<div class="history-item" title="${x.replace(/"/g,'&quot;')}">${x.length>60?x.slice(0,57)+'...':x}</div>`).join('');
+  historyList.querySelectorAll('.history-item').forEach((el,i)=>{
+    el.addEventListener('click',()=>{promptEl.value=h[i];promptEl.dispatchEvent(new Event('input'));});
+  });
+}
+renderHistory();
 
-      return html.replace(/\n/g, '<br>');
-    }
+/* ─── Helpers ─── */
+function setStatus(text,cls=''){statusChip.textContent=text;statusChip.className=`chip ${cls}`.trim();}
+function fmtJson(v){try{return JSON.stringify(v,null,2)}catch{return String(v)}}
+function esc(v){return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 
-    function eventClass(event) {
-      if (event.event_type === 'error') return 'bad';
-      if (event.event_type === 'warning') return 'warn';
-      return '';
-    }
+function renderMd(md){
+  let h=esc(md||'');
+  h=h.replace(/!\[([^\]]*)\]\((data:image\/[a-zA-Z0-9.+-]+;base64,[^)]+)\)/g,(_,a,s)=>`<img alt="${a}" src="${s}" loading="lazy"/>`);
+  h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,(_,t,u)=>`<a href="${u}" target="_blank" rel="noopener noreferrer">${t}</a>`);
+  h=h.replace(/```(\w*)\n([\s\S]*?)```/g,(_,l,c)=>`<pre><code class="lang-${l||'text'}">${c.trim()}</code></pre>`);
+  h=h.replace(/`([^`]+)`/g,'<code>$1</code>');
+  h=h.replace(/^#{6}\s+(.+)$/gm,'<h6>$1</h6>');h=h.replace(/^#{5}\s+(.+)$/gm,'<h5>$1</h5>');
+  h=h.replace(/^#{4}\s+(.+)$/gm,'<h4>$1</h4>');h=h.replace(/^###\s+(.+)$/gm,'<h3>$1</h3>');
+  h=h.replace(/^##\s+(.+)$/gm,'<h2>$1</h2>');h=h.replace(/^#\s+(.+)$/gm,'<h1>$1</h1>');
+  h=h.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');h=h.replace(/\*(.+?)\*/g,'<em>$1</em>');
+  h=h.replace(/^&gt;\s+(.+)$/gm,'<blockquote>$1</blockquote>');
+  h=h.replace(/^[-*]\s+(.+)$/gm,'<li>$1</li>');
+  h=h.replace(/^\d+\.\s+(.+)$/gm,'<li>$1</li>');
+  h=h.replace(/((?:<li>.*<\/li>\n?)+)/g,'<ul>$1</ul>');
+  h=h.replace(/^(\|.+\|)\n(\|[-| :]+\|)\n((?:\|.+\|\n?)+)/gm,(_,hdr,sep,body)=>{
+    const ths=hdr.split('|').filter(c=>c.trim()).map(c=>`<th>${c.trim()}</th>`).join('');
+    const rows=body.trim().split('\n').map(r=>{const tds=r.split('|').filter(c=>c.trim()).map(c=>`<td>${c.trim()}</td>`).join('');return`<tr>${tds}</tr>`;}).join('');
+    return`<table><thead><tr>${ths}</tr></thead><tbody>${rows}</tbody></table>`;
+  });
+  h=h.replace(/^---+$/gm,'<hr>');
+  h=h.replace(/\n/g,'<br>');
+  h=h.replace(/<br>\s*(<\/?(?:h[1-6]|ul|ol|li|pre|table|thead|tbody|tr|blockquote|hr))/g,'$1');
+  h=h.replace(/(<\/(?:h[1-6]|ul|ol|li|pre|table|thead|tbody|tr|blockquote|hr)>)\s*<br>/g,'$1');
+  return h;
+}
 
-    function normalizeItems(value) {
-      if (value == null) return [];
-      if (typeof value === 'string') {
-        const trimmed = value.trim();
-        return trimmed ? [trimmed] : [];
-      }
-      if (Array.isArray(value)) {
-        const out = [];
-        for (const item of value) {
-          if (typeof item === 'string' && item.trim()) out.push(item.trim());
-          else if (item && typeof item === 'object') {
-            const msg = item.text || item.message || item.detail || item.reason;
-            if (typeof msg === 'string' && msg.trim()) out.push(msg.trim());
-          }
+function eventCls(ev){if(ev.event_type==='error')return'bad';if(ev.event_type==='warning')return'warn';return'';}
+
+function normalizeItems(v){
+  if(v==null)return[];
+  if(typeof v==='string'){const t=v.trim();return t?[t]:[];}
+  if(Array.isArray(v)){
+    const o=[];for(const i of v){
+      if(typeof i==='string'&&i.trim())o.push(i.trim());
+      else if(i&&typeof i==='object'){const m=i.text||i.message||i.detail||i.reason;if(typeof m==='string'&&m.trim())o.push(m.trim());}
+    }return o;
+  }
+  if(typeof v==='object')return Object.entries(v).filter(([,x])=>typeof x==='string'&&x.trim()).map(([k,x])=>`${k}: ${x.trim()}`);
+  return[];
+}
+function uniqueLines(lines){const seen=new Set();return lines.filter(l=>{const k=String(l).toLowerCase().trim();if(!k||seen.has(k))return false;seen.add(k);return true;});}
+
+function extractFeedback(result,events){
+  const cKeys=['critique','critiques','limitations','weaknesses','caveats','risks','issues'];
+  const iKeys=['improvements','improvement','suggestions','next_steps','action_items','recommendations'];
+  const crits=[],imps=[];
+  const P=result&&typeof result==='object'?result:{};
+  for(const k of cKeys)crits.push(...normalizeItems(P[k]));
+  for(const k of iKeys)imps.push(...normalizeItems(P[k]));
+  for(const ev of events||[]){
+    const et=String(ev?.event_type||''),st=String(ev?.stage||''),ep=ev?.payload;
+    if(et==='warning'||et==='error'){const m=ep?.message||ep?.error;if(typeof m==='string'&&m.trim())crits.push(`${et.toUpperCase()} (${st}): ${m.trim()}`);}
+    if((st==='improvement'||st==='improvements')&&ep&&typeof ep==='object'){for(const k of iKeys)imps.push(...normalizeItems(ep[k]));}
+  }
+  return{critiques:uniqueLines(crits),improvements:uniqueLines(imps)};
+}
+
+function renderFeedback(fb){
+  const c=fb?.critiques||[],i=fb?.improvements||[];
+  critiqueList.innerHTML=c.map(x=>`<li>${esc(x)}</li>`).join('');
+  improvementList.innerHTML=i.map(x=>`<li>${esc(x)}</li>`).join('');
+  critiqueEmpty.style.display=c.length?'none':'block';
+  improvementEmpty.style.display=i.length?'none':'block';
+  const total=c.length+i.length;
+  feedbackChip.textContent=`${total} item${total===1?'':'s'}`;
+  feedbackChip.className=`chip ${total?'ok':''}`.trim();
+  insightBadge.textContent=total;insightBadge.style.display=total?'inline':'none';
+}
+
+function appendEvent(event){
+  eventCount++;
+  eventCountChip.textContent=`${eventCount} events`;
+  eventBadge.textContent=eventCount;eventBadge.style.display='inline';
+  etaChip.textContent=event.eta_seconds==null?'—':`eta ${event.eta_seconds}s`;
+
+  const el=document.createElement('article');
+  el.className=`event ${eventCls(event)}`.trim();
+  const hdr=document.createElement('div');hdr.className='event-header';
+  hdr.innerHTML=`<span class="event-title">${event.event_type}</span><span class="event-meta">${event.stage||''}<span class="event-chevron">▸</span></span>`;
+  const body=document.createElement('div');body.className='event-body';
+  const pre=document.createElement('pre');pre.textContent=fmtJson(event.payload);body.appendChild(pre);
+  hdr.addEventListener('click',()=>el.classList.toggle('open'));
+  el.appendChild(hdr);el.appendChild(body);eventList.appendChild(el);
+  allEvents.push(event);
+  if(eventCount<=2||event.event_type==='error'||event.event_type==='warning')el.classList.add('open');
+  renderFeedback(extractFeedback(latestResult,allEvents));
+  $('event-feed').scrollTop=$('event-feed').scrollHeight;
+}
+
+/* ─── Core actions ─── */
+function clearUI(){
+  eventList.innerHTML='';
+  finalResponse.innerHTML='<p class="response-empty">No result yet. Run a prompt to see the response here.</p>';
+  rcaJson.textContent='No result bundle.';metaEl.textContent='Cleared.';
+  latestResult=null;allEvents=[];downloadBtn.disabled=true;copyRspBtn.disabled=true;copyRcaBtn.disabled=true;
+  eventCount=0;eventCountChip.textContent='0 events';eventBadge.style.display='none';insightBadge.style.display='none';
+  etaChip.textContent='—';loadingBar.classList.remove('active');setStatus('idle');renderFeedback({critiques:[],improvements:[]});
+}
+
+async function streamRun(){
+  const prompt=promptEl.value.trim();
+  if(!prompt){metaEl.textContent='Prompt cannot be empty.';return;}
+  clearUI();saveHistory(prompt);setStatus('running','ok');
+  statusChip.innerHTML='<span class="pulse-dot"></span> running';
+  metaEl.textContent='Streaming pipeline events...';loadingBar.classList.add('active');
+  runBtn.disabled=true;clearBtn.disabled=true;abortCtrl=new AbortController();
+  try{
+    const res=await fetch('/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,thinking_level:thinkingEl.value}),signal:abortCtrl.signal});
+    const reader=res.body.getReader();const dec=new TextDecoder();let buf='';
+    while(true){
+      const{value,done}=await reader.read();if(done)break;
+      buf+=dec.decode(value,{stream:true});const chunks=buf.split('\n\n');buf=chunks.pop()||'';
+      for(const chunk of chunks){
+        const line=chunk.split('\n').map(r=>r.trim()).find(r=>r.startsWith('data:'));
+        if(!line)continue;const pl=line.slice(5).trim();if(!pl)continue;
+        let event;try{event=JSON.parse(pl);}catch{continue;}
+        appendEvent(event);
+        if(event.event_type==='final_result'){
+          latestResult=event.payload;
+          finalResponse.innerHTML=renderMd(event.payload.response||'(empty response)');
+          rcaJson.textContent=fmtJson(event.payload);
+          downloadBtn.disabled=false;copyRspBtn.disabled=false;copyRcaBtn.disabled=false;
+          renderFeedback(extractFeedback(latestResult,allEvents));
+          document.querySelector('[data-tab="response"]').click();
         }
-        return out;
-      }
-      if (typeof value === 'object') {
-        return Object.entries(value)
-          .filter(([, v]) => typeof v === 'string' && v.trim())
-          .map(([k, v]) => `${k}: ${v.trim()}`);
-      }
-      return [];
-    }
-
-    function uniqueLines(lines) {
-      const seen = new Set();
-      const out = [];
-      for (const line of lines) {
-        const key = String(line).toLowerCase().trim();
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        out.push(String(line));
-      }
-      return out;
-    }
-
-    function extractFeedback(result, events) {
-      const critiqueKeys = ['critique', 'critiques', 'limitations', 'weaknesses', 'caveats', 'risks', 'issues'];
-      const improveKeys = ['improvements', 'improvement', 'suggestions', 'next_steps', 'action_items', 'recommendations'];
-
-      const critiques = [];
-      const improvements = [];
-
-      const payload = result && typeof result === 'object' ? result : {};
-      for (const key of critiqueKeys) critiques.push(...normalizeItems(payload[key]));
-      for (const key of improveKeys) improvements.push(...normalizeItems(payload[key]));
-
-      for (const event of events || []) {
-        const eventType = String(event?.event_type || '');
-        const stage = String(event?.stage || '');
-        const eventPayload = event?.payload;
-
-        if (eventType === 'warning' || eventType === 'error') {
-          const message = eventPayload?.message || eventPayload?.error;
-          if (typeof message === 'string' && message.trim()) {
-            critiques.push(`${eventType.toUpperCase()} (${stage}): ${message.trim()}`);
-          }
-        }
-
-        if ((stage === 'improvement' || stage === 'improvements') && eventPayload && typeof eventPayload === 'object') {
-          for (const key of improveKeys) improvements.push(...normalizeItems(eventPayload[key]));
-        }
-      }
-
-      return {
-        critiques: uniqueLines(critiques),
-        improvements: uniqueLines(improvements),
-      };
-    }
-
-    function renderFeedback(feedback) {
-      const critiques = feedback?.critiques || [];
-      const improvements = feedback?.improvements || [];
-
-      critiqueList.innerHTML = critiques.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
-      improvementList.innerHTML = improvements.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
-
-      critiqueEmpty.style.display = critiques.length ? 'none' : 'block';
-      improvementEmpty.style.display = improvements.length ? 'none' : 'block';
-
-      const total = critiques.length + improvements.length;
-      feedbackChip.textContent = `${total} item${total === 1 ? '' : 's'}`;
-      feedbackChip.className = `chip ${total ? 'ok' : ''}`.trim();
-    }
-
-    function appendEvent(event) {
-      eventCount += 1;
-      eventCountChip.textContent = `events: ${eventCount}`;
-      etaChip.textContent = `eta: ${event.eta_seconds == null ? '--' : event.eta_seconds + 's'}`;
-
-      const wrapper = document.createElement('article');
-      wrapper.className = `event ${eventClass(event)}`.trim();
-
-      const header = document.createElement('div');
-      header.className = 'event-header';
-      header.innerHTML = `
-        <span class="event-title">${event.event_type}</span>
-        <span class="event-stage">${event.stage}</span>
-      `;
-
-      const body = document.createElement('div');
-      body.className = 'event-body';
-      const pre = document.createElement('pre');
-      pre.textContent = formatJson(event.payload);
-      body.appendChild(pre);
-
-      header.addEventListener('click', () => {
-        wrapper.classList.toggle('open');
-      });
-
-      wrapper.appendChild(header);
-      wrapper.appendChild(body);
-      eventFeed.appendChild(wrapper);
-      allEvents.push(event);
-
-      if (eventCount <= 2 || event.event_type === 'error' || event.event_type === 'warning') {
-        wrapper.classList.add('open');
-      }
-
-      renderFeedback(extractFeedback(latestResult, allEvents));
-
-      eventFeed.scrollTop = eventFeed.scrollHeight;
-    }
-
-    function clearUI() {
-      eventFeed.innerHTML = '';
-      finalResponse.innerHTML = 'No result yet.';
-      rcaJson.textContent = 'No result bundle.';
-      meta.textContent = 'Cleared.';
-      latestResult = null;
-      allEvents = [];
-      downloadBtn.disabled = true;
-      eventCount = 0;
-      eventCountChip.textContent = 'events: 0';
-      etaChip.textContent = 'eta: --';
-      setStatus('idle');
-      renderFeedback({ critiques: [], improvements: [] });
-    }
-
-    async function streamRun() {
-      const prompt = promptEl.value.trim();
-      if (!prompt) {
-        meta.textContent = 'Prompt cannot be empty.';
-        return;
-      }
-
-      clearUI();
-      setStatus('running', 'ok');
-      meta.textContent = 'Streaming pipeline events...';
-
-      runBtn.disabled = true;
-      clearBtn.disabled = true;
-
-      abortController = new AbortController();
-
-      try {
-        const response = await fetch('/stream', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ prompt, thinking_level: thinkingEl.value }),
-          signal: abortController.signal,
-        });
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buffer = '';
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const chunks = buffer.split('\n\n');
-          buffer = chunks.pop() || '';
-
-          for (const chunk of chunks) {
-            const line = chunk
-              .split('\n')
-              .map((row) => row.trim())
-              .find((row) => row.startsWith('data:'));
-
-            if (!line) continue;
-
-            const payloadText = line.slice(5).trim();
-            if (!payloadText) continue;
-
-            let event;
-            try {
-              event = JSON.parse(payloadText);
-            } catch {
-              continue;
-            }
-
-            appendEvent(event);
-
-            if (event.event_type === 'final_result') {
-              latestResult = event.payload;
-              finalResponse.innerHTML = renderMarkdown(event.payload.response || '(empty response)');
-              rcaJson.textContent = formatJson(event.payload);
-              downloadBtn.disabled = false;
-              renderFeedback(extractFeedback(latestResult, allEvents));
-            }
-
-            if (event.event_type === 'error') {
-              setStatus('error', 'bad');
-              meta.textContent = event?.payload?.message || 'Unknown error.';
-            }
-
-            if (event.event_type === 'complete') {
-              setStatus('complete', 'ok');
-              meta.textContent = `Complete in ${event?.payload?.duration_seconds ?? '--'}s`;
-            }
-          }
-        }
-      } catch (error) {
-        setStatus('error', 'bad');
-        meta.textContent = `Streaming error: ${error}`;
-      } finally {
-        runBtn.disabled = false;
-        clearBtn.disabled = false;
+        if(event.event_type==='error'){setStatus('error','bad');metaEl.textContent=event?.payload?.message||'Unknown error.';showToast(event?.payload?.message||'Pipeline error','bad');}
+        if(event.event_type==='complete'){setStatus('complete','ok');const dur=event?.payload?.duration_seconds??'--';metaEl.textContent=`Complete in ${dur}s`;showToast(`Done in ${dur}s`,'ok');}
       }
     }
+  }catch(err){setStatus('error','bad');metaEl.textContent=`Streaming error: ${err}`;showToast('Connection error','bad');}
+  finally{runBtn.disabled=false;clearBtn.disabled=false;loadingBar.classList.remove('active');}
+}
 
-    runBtn.addEventListener('click', streamRun);
-    clearBtn.addEventListener('click', clearUI);
+/* ─── Clipboard ─── */
+async function copyTxt(text,label){try{await navigator.clipboard.writeText(text);showToast(`${label} copied`,'ok');}catch{showToast('Copy failed','bad');}}
+copyRspBtn.addEventListener('click',()=>copyTxt(latestResult?.response||finalResponse.textContent,'Response'));
+copyRcaBtn.addEventListener('click',()=>copyTxt(rcaJson.textContent,'JSON'));
 
-    downloadBtn.addEventListener('click', () => {
-      if (!latestResult) return;
-      const blob = new Blob([JSON.stringify(latestResult, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'rca_bundle.json';
-      a.click();
-      URL.revokeObjectURL(url);
-    });
-
-    renderFeedback({ critiques: [], improvements: [] });
-  </script>
+/* ─── Bindings ─── */
+runBtn.addEventListener('click',streamRun);
+clearBtn.addEventListener('click',clearUI);
+downloadBtn.addEventListener('click',()=>{
+  if(!latestResult)return;
+  const blob=new Blob([JSON.stringify(latestResult,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');
+  a.href=url;a.download=`rca_bundle_${Date.now()}.json`;a.click();URL.revokeObjectURL(url);
+});
+renderFeedback({critiques:[],improvements:[]});
+</script>
 </body>
 </html>

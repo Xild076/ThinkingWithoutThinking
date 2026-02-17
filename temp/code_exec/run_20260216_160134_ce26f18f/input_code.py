@@ -1,0 +1,1 @@
+import sympy as sp; initial=95; final=80; steps=4; decrease=initial-final; result=sp.Rational(decrease,steps); print(result)

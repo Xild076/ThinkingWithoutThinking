@@ -1,0 +1,1 @@
+import random, time; failures=[random.uniform(0,100) for _ in range(10)]; latencies=[random.uniform(0.1,5) for _ in failures]; result=sum(latencies)/len(latencies); print(result)

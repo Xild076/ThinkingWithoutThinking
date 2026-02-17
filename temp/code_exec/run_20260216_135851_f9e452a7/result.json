@@ -1,0 +1,1 @@
+{"success": true, "output": "Greedy used 3 coins, DP used 2 coins. Greedy is faster but not always optimal; DP guarantees optimality at higher computational cost. Difference: 1", "result": null, "plots": [], "error": null}

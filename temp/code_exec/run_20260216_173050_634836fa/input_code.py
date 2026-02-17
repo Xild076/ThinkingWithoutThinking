@@ -1,0 +1,1 @@
+D = 1e-9\nk = 0.01\nC = 1.0\nratio = k / D\nif ratio < 1e3:\n    result = "diffusion-limited"\nelse:\n    result = "reaction-limited"\nprint(result)

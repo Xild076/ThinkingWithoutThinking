@@ -1,0 +1,10 @@
+import sympy as sp
+k_d, k_r = sp.symbols('k_d k_r', positive=True)
+t = sp.symbols('t', positive=True)
+X_diff = 1 - sp.exp(-k_d*t)
+X_rxn = 1 - sp.exp(-k_r*t)
+dX_diff = sp.diff(X_diff, t).subs(t, 0)
+dX_rxn = sp.diff(X_rxn, t).subs(t, 0)
+ratio = sp.simplify(dX_rxn / dX_diff)
+result = sp.N(ratio.subs({k_d: 0.5, k_r: 2.0}))
+print(result)

@@ -1,0 +1,1 @@
+services = {\n    "A": ["B", "C"],\n    "B": ["D"],\n    "C": ["D", "E"],\n    "D": [],\n    "E": []\n}\n\ndependencies = {v: [] for v in services.values()}\nfor src, deps in services.items():\n    for dst in deps:\n        dependencies[dst].append(src)\n\ncoupling_points = sum(1 for dst, srcs in dependencies.items() if len(srcs) > 1)\nresult = coupling_points\nprint(result)\n

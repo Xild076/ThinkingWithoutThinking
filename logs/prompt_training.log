@@ -475,3 +475,458 @@ ValueError: Circular reference detected
 2026-02-16 12:20:23,645 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 1/5
 2026-02-16 12:22:21,734 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 1/5 scored
 2026-02-16 12:22:21,735 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 2/5
+2026-02-16 12:24:08,745 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 12:24:08,747 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 3/5
+2026-02-16 12:25:52,998 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 12:25:52,999 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 4/5
+2026-02-16 12:27:49,728 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 12:27:49,730 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 5/5
+2026-02-16 12:33:03,970 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 12:33:03,973 INFO [training:phase_completed] epoch=1/10 phase=phase_a_eval step=evaluate_baseline_done msg=Epoch 1: baseline evaluation completed
+2026-02-16 12:33:03,974 INFO [training:rca_batch_started] epoch=1/10 phase=rca step=identify_failures msg=Epoch 1: running RCA on 3 failed case(s)
+2026-02-16 12:33:03,974 INFO [training:rca_started] epoch=1/10 phase=rca step=case_rca msg=Epoch 1: RCA 1/3
+2026-02-16 12:33:03,976 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 12:33:08,809 INFO RCA generated with model=nemotron
+2026-02-16 12:33:08,811 INFO [training:rca_completed] epoch=1/10 phase=rca step=case_rca_done msg=Epoch 1: RCA 1/3 complete
+2026-02-16 12:33:08,812 INFO [training:rca_started] epoch=1/10 phase=rca step=case_rca msg=Epoch 1: RCA 2/3
+2026-02-16 12:33:08,821 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 12:33:25,030 INFO RCA generated with model=nemotron
+2026-02-16 12:33:25,033 INFO [training:rca_completed] epoch=1/10 phase=rca step=case_rca_done msg=Epoch 1: RCA 2/3 complete
+2026-02-16 12:33:25,037 INFO [training:rca_started] epoch=1/10 phase=rca step=case_rca msg=Epoch 1: RCA 3/3
+2026-02-16 12:33:25,046 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 12:33:33,317 INFO RCA generated with model=nemotron
+2026-02-16 12:33:33,321 INFO [training:rca_completed] epoch=1/10 phase=rca step=case_rca_done msg=Epoch 1: RCA 3/3 complete
+2026-02-16 12:33:33,323 INFO [training:mutation_started] epoch=1/10 phase=prompt_improvement step=generate_mutations msg=Epoch 1: generating prompt mutations
+2026-02-16 12:33:35,741 INFO Prompt mutation for improvement_block generated with model=oss120b
+2026-02-16 12:33:39,599 INFO Prompt mutation for self_critique_block generated with model=oss120b
+2026-02-16 12:33:39,601 WARNING Prompt mutation for self_critique_block violated prompt contract ['self_critique_issue_item_type_unspecified']; keeping baseline
+2026-02-16 12:33:41,570 INFO Prompt mutation for initial_plan_creation_block generated with model=oss120b
+2026-02-16 12:33:46,490 INFO Prompt mutation for long_response_synthesis_block generated with model=oss120b
+2026-02-16 12:34:02,458 INFO Prompt mutation for primary_tool_router_block generated with model=oss120b
+2026-02-16 12:34:23,861 INFO Prompt mutation for secondary_tool_router_block generated with model=oss120b
+2026-02-16 12:34:45,675 INFO Prompt mutation for sub_plan_creation_block generated with model=oss120b
+2026-02-16 12:35:03,417 INFO Prompt mutation for large_response_router_block generated with model=oss120b
+2026-02-16 12:35:21,085 INFO Prompt mutation for synthesis_block generated with model=oss120b
+2026-02-16 12:35:34,726 INFO [training:prompt_scoring_snapshot] epoch=1/10 phase=prompt_improvement step=score_candidates msg=Epoch 1: prompt scoring diagnostics ready
+2026-02-16 12:35:34,728 INFO [training:mutation_completed] epoch=1/10 phase=prompt_improvement step=mutations_ready msg=Epoch 1: mutation pass complete
+2026-02-16 12:35:34,728 INFO Epoch 1/10 - Phase B candidate
+2026-02-16 12:35:34,728 INFO [training:phase_started] epoch=1/10 phase=phase_b_eval step=evaluate_candidate msg=Epoch 1: evaluating candidate prompts
+2026-02-16 12:35:34,729 INFO [training:case_started] epoch=1/10 phase=phase_b_eval step=case_run msg=Running case 1/5
+2026-02-16 12:36:24,902 INFO [training:case_completed] epoch=1/10 phase=phase_b_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 12:36:24,904 INFO [training:case_started] epoch=1/10 phase=phase_b_eval step=case_run msg=Running case 2/5
+2026-02-16 12:37:29,826 INFO [training:case_completed] epoch=1/10 phase=phase_b_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 12:37:29,829 INFO [training:case_started] epoch=1/10 phase=phase_b_eval step=case_run msg=Running case 3/5
+2026-02-16 12:39:38,647 INFO [training:case_completed] epoch=1/10 phase=phase_b_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 12:39:38,650 INFO [training:case_started] epoch=1/10 phase=phase_b_eval step=case_run msg=Running case 4/5
+2026-02-16 12:40:51,818 INFO [training:case_completed] epoch=1/10 phase=phase_b_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 12:40:51,821 INFO [training:case_started] epoch=1/10 phase=phase_b_eval step=case_run msg=Running case 5/5
+2026-02-16 12:45:37,564 INFO [training:case_completed] epoch=1/10 phase=phase_b_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 12:45:37,566 INFO [training:phase_completed] epoch=1/10 phase=phase_b_eval step=evaluate_candidate_done msg=Epoch 1: candidate evaluation completed
+2026-02-16 12:45:37,574 INFO [training:epoch_completed] epoch=1/10 phase=epoch step=end msg=Epoch 1/10 completed
+2026-02-16 12:45:37,574 INFO [training:epoch_started] epoch=2/10 phase=epoch step=start msg=Epoch 2/10 started
+2026-02-16 12:45:37,575 INFO [training:sample_selected] epoch=2/10 phase=sampling step=select_cases msg=Selected 5 case(s) for epoch 2
+2026-02-16 12:45:37,575 INFO Epoch 2/10 - Phase A baseline
+2026-02-16 12:45:37,576 INFO [training:phase_started] epoch=2/10 phase=phase_a_eval step=evaluate_baseline msg=Epoch 2: evaluating baseline prompts
+2026-02-16 12:45:37,576 INFO [training:case_started] epoch=2/10 phase=phase_a_eval step=case_run msg=Running case 1/5
+2026-02-16 12:47:39,521 INFO [training:case_completed] epoch=2/10 phase=phase_a_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 12:47:39,521 INFO [training:case_started] epoch=2/10 phase=phase_a_eval step=case_run msg=Running case 2/5
+2026-02-16 12:49:53,773 INFO [training:case_completed] epoch=2/10 phase=phase_a_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 12:49:53,775 INFO [training:case_started] epoch=2/10 phase=phase_a_eval step=case_run msg=Running case 3/5
+2026-02-16 12:53:38,236 INFO [training:case_completed] epoch=2/10 phase=phase_a_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 12:53:38,238 INFO [training:case_started] epoch=2/10 phase=phase_a_eval step=case_run msg=Running case 4/5
+2026-02-16 12:54:43,771 INFO [training:case_completed] epoch=2/10 phase=phase_a_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 12:54:43,773 INFO [training:case_started] epoch=2/10 phase=phase_a_eval step=case_run msg=Running case 5/5
+2026-02-16 12:55:06,704 INFO [training:case_completed] epoch=2/10 phase=phase_a_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 12:55:06,708 INFO [training:phase_completed] epoch=2/10 phase=phase_a_eval step=evaluate_baseline_done msg=Epoch 2: baseline evaluation completed
+2026-02-16 12:55:06,710 INFO [training:rca_batch_started] epoch=2/10 phase=rca step=identify_failures msg=Epoch 2: running RCA on 4 failed case(s)
+2026-02-16 12:55:06,712 INFO [training:rca_started] epoch=2/10 phase=rca step=case_rca msg=Epoch 2: RCA 1/4
+2026-02-16 12:55:06,720 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 12:55:13,711 INFO RCA generated with model=nemotron
+2026-02-16 12:55:13,714 INFO [training:rca_completed] epoch=2/10 phase=rca step=case_rca_done msg=Epoch 2: RCA 1/4 complete
+2026-02-16 12:55:13,716 INFO [training:rca_started] epoch=2/10 phase=rca step=case_rca msg=Epoch 2: RCA 2/4
+2026-02-16 12:55:13,722 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 12:55:19,902 INFO RCA generated with model=nemotron
+2026-02-16 12:55:19,903 INFO [training:rca_completed] epoch=2/10 phase=rca step=case_rca_done msg=Epoch 2: RCA 2/4 complete
+2026-02-16 12:55:19,904 INFO [training:rca_started] epoch=2/10 phase=rca step=case_rca msg=Epoch 2: RCA 3/4
+2026-02-16 12:55:19,905 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 12:55:28,174 INFO RCA generated with model=nemotron
+2026-02-16 12:55:28,177 INFO [training:rca_completed] epoch=2/10 phase=rca step=case_rca_done msg=Epoch 2: RCA 3/4 complete
+2026-02-16 12:55:28,179 INFO [training:rca_started] epoch=2/10 phase=rca step=case_rca msg=Epoch 2: RCA 4/4
+2026-02-16 12:55:28,180 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 12:55:31,974 INFO RCA generated with model=nemotron
+2026-02-16 12:55:31,978 INFO [training:rca_completed] epoch=2/10 phase=rca step=case_rca_done msg=Epoch 2: RCA 4/4 complete
+2026-02-16 12:55:31,979 INFO [training:mutation_started] epoch=2/10 phase=prompt_improvement step=generate_mutations msg=Epoch 2: generating prompt mutations
+2026-02-16 12:55:33,903 INFO Prompt mutation for improvement_block generated with model=oss120b
+2026-02-16 12:55:38,247 INFO Prompt mutation for initial_plan_creation_block generated with model=oss120b
+2026-02-16 12:55:42,850 INFO Prompt mutation for long_response_synthesis_block generated with model=oss120b
+2026-02-16 12:55:48,201 INFO Prompt mutation for primary_tool_router_block generated with model=oss120b
+2026-02-16 12:56:05,127 INFO Prompt mutation for secondary_tool_router_block generated with model=oss120b
+2026-02-16 12:56:25,509 INFO Prompt mutation for sub_plan_creation_block generated with model=oss120b
+2026-02-16 12:56:44,595 INFO Prompt mutation for synthesis_block generated with model=oss120b
+2026-02-16 12:56:44,597 WARNING Prompt mutation for synthesis_block violated prompt contract ['missing_json_output_instruction']; keeping baseline
+2026-02-16 12:56:51,254 INFO Prompt mutation for self_critique_block generated with model=oss120b
+2026-02-16 12:56:51,255 WARNING Prompt mutation for self_critique_block violated prompt contract ['self_critique_issue_item_type_unspecified']; keeping baseline
+2026-02-16 12:56:51,257 INFO [training:prompt_scoring_snapshot] epoch=2/10 phase=prompt_improvement step=score_candidates msg=Epoch 2: prompt scoring diagnostics ready
+2026-02-16 12:56:51,259 INFO [training:mutation_completed] epoch=2/10 phase=prompt_improvement step=mutations_ready msg=Epoch 2: mutation pass complete
+2026-02-16 12:56:51,259 INFO Epoch 2/10 - Phase B candidate
+2026-02-16 12:56:51,261 INFO [training:phase_started] epoch=2/10 phase=phase_b_eval step=evaluate_candidate msg=Epoch 2: evaluating candidate prompts
+2026-02-16 12:56:51,263 INFO [training:case_started] epoch=2/10 phase=phase_b_eval step=case_run msg=Running case 1/5
+2026-02-16 12:57:58,848 INFO [training:case_completed] epoch=2/10 phase=phase_b_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 12:57:58,849 INFO [training:case_started] epoch=2/10 phase=phase_b_eval step=case_run msg=Running case 2/5
+2026-02-16 13:08:27,892 INFO [training:case_completed] epoch=2/10 phase=phase_b_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 13:08:27,897 INFO [training:case_started] epoch=2/10 phase=phase_b_eval step=case_run msg=Running case 3/5
+2026-02-16 13:10:15,816 INFO [training:case_completed] epoch=2/10 phase=phase_b_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 13:10:15,817 INFO [training:case_started] epoch=2/10 phase=phase_b_eval step=case_run msg=Running case 4/5
+2026-02-16 13:11:44,216 INFO [training:case_completed] epoch=2/10 phase=phase_b_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 13:11:44,217 INFO [training:case_started] epoch=2/10 phase=phase_b_eval step=case_run msg=Running case 5/5
+2026-02-16 13:12:34,615 INFO [training:case_completed] epoch=2/10 phase=phase_b_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 13:12:34,618 INFO [training:phase_completed] epoch=2/10 phase=phase_b_eval step=evaluate_candidate_done msg=Epoch 2: candidate evaluation completed
+2026-02-16 13:12:34,623 INFO [training:epoch_completed] epoch=2/10 phase=epoch step=end msg=Epoch 2/10 completed
+2026-02-16 13:12:34,623 INFO [training:epoch_started] epoch=3/10 phase=epoch step=start msg=Epoch 3/10 started
+2026-02-16 13:12:34,624 INFO [training:sample_selected] epoch=3/10 phase=sampling step=select_cases msg=Selected 5 case(s) for epoch 3
+2026-02-16 13:12:34,624 INFO Epoch 3/10 - Phase A baseline
+2026-02-16 13:12:34,625 INFO [training:phase_started] epoch=3/10 phase=phase_a_eval step=evaluate_baseline msg=Epoch 3: evaluating baseline prompts
+2026-02-16 13:12:34,625 INFO [training:case_started] epoch=3/10 phase=phase_a_eval step=case_run msg=Running case 1/5
+2026-02-16 13:15:37,462 INFO [training:case_completed] epoch=3/10 phase=phase_a_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 13:15:37,467 INFO [training:case_started] epoch=3/10 phase=phase_a_eval step=case_run msg=Running case 2/5
+2026-02-16 13:18:09,934 INFO [training:case_completed] epoch=3/10 phase=phase_a_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 13:18:09,935 INFO [training:case_started] epoch=3/10 phase=phase_a_eval step=case_run msg=Running case 3/5
+2026-02-16 13:19:15,162 INFO [training:case_completed] epoch=3/10 phase=phase_a_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 13:19:15,163 INFO [training:case_started] epoch=3/10 phase=phase_a_eval step=case_run msg=Running case 4/5
+2026-02-16 13:22:26,754 INFO [training:case_completed] epoch=3/10 phase=phase_a_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 13:22:26,756 INFO [training:case_started] epoch=3/10 phase=phase_a_eval step=case_run msg=Running case 5/5
+2026-02-16 13:25:13,450 INFO [training:case_completed] epoch=3/10 phase=phase_a_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 13:25:13,451 INFO [training:phase_completed] epoch=3/10 phase=phase_a_eval step=evaluate_baseline_done msg=Epoch 3: baseline evaluation completed
+2026-02-16 13:25:13,453 INFO [training:rca_batch_started] epoch=3/10 phase=rca step=identify_failures msg=Epoch 3: running RCA on 2 failed case(s)
+2026-02-16 13:25:13,453 INFO [training:rca_started] epoch=3/10 phase=rca step=case_rca msg=Epoch 3: RCA 1/2
+2026-02-16 13:25:13,455 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 13:25:20,729 INFO RCA generated with model=nemotron
+2026-02-16 13:25:20,730 INFO [training:rca_completed] epoch=3/10 phase=rca step=case_rca_done msg=Epoch 3: RCA 1/2 complete
+2026-02-16 13:25:20,731 INFO [training:rca_started] epoch=3/10 phase=rca step=case_rca msg=Epoch 3: RCA 2/2
+2026-02-16 13:25:20,741 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 13:25:25,870 INFO RCA generated with model=nemotron
+2026-02-16 13:25:25,871 INFO [training:rca_completed] epoch=3/10 phase=rca step=case_rca_done msg=Epoch 3: RCA 2/2 complete
+2026-02-16 13:25:25,872 INFO [training:mutation_started] epoch=3/10 phase=prompt_improvement step=generate_mutations msg=Epoch 3: generating prompt mutations
+2026-02-16 13:25:28,003 INFO Prompt mutation for improvement_block generated with model=oss120b
+2026-02-16 13:25:32,745 INFO Prompt mutation for initial_plan_creation_block generated with model=oss120b
+2026-02-16 13:25:37,932 INFO Prompt mutation for long_response_synthesis_block generated with model=oss120b
+2026-02-16 13:25:37,933 WARNING Prompt mutation for long_response_synthesis_block violated prompt contract ['explicit_json_keys_do_not_match_schema']; keeping baseline
+2026-02-16 13:25:39,468 INFO Prompt mutation for self_critique_block generated with model=oss120b
+2026-02-16 13:25:39,468 WARNING Prompt mutation for self_critique_block violated prompt contract ['self_critique_issue_item_type_unspecified']; keeping baseline
+2026-02-16 13:25:40,953 INFO Prompt mutation for sub_plan_creation_block generated with model=oss120b
+2026-02-16 13:26:00,143 INFO Prompt mutation for synthesis_block generated with model=oss120b
+2026-02-16 13:26:13,416 INFO [training:prompt_scoring_snapshot] epoch=3/10 phase=prompt_improvement step=score_candidates msg=Epoch 3: prompt scoring diagnostics ready
+2026-02-16 13:26:13,417 INFO [training:mutation_completed] epoch=3/10 phase=prompt_improvement step=mutations_ready msg=Epoch 3: mutation pass complete
+2026-02-16 13:26:13,417 INFO Epoch 3/10 - Phase B candidate
+2026-02-16 13:26:13,418 INFO [training:phase_started] epoch=3/10 phase=phase_b_eval step=evaluate_candidate msg=Epoch 3: evaluating candidate prompts
+2026-02-16 13:26:13,419 INFO [training:case_started] epoch=3/10 phase=phase_b_eval step=case_run msg=Running case 1/5
+2026-02-16 13:29:29,226 INFO [training:case_completed] epoch=3/10 phase=phase_b_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 13:29:29,228 INFO [training:case_started] epoch=3/10 phase=phase_b_eval step=case_run msg=Running case 2/5
+2026-02-16 13:35:09,405 INFO [training:case_completed] epoch=3/10 phase=phase_b_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 13:35:09,407 INFO [training:case_started] epoch=3/10 phase=phase_b_eval step=case_run msg=Running case 3/5
+2026-02-16 13:36:34,927 INFO [training:case_completed] epoch=3/10 phase=phase_b_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 13:36:34,928 INFO [training:case_started] epoch=3/10 phase=phase_b_eval step=case_run msg=Running case 4/5
+2026-02-16 13:40:28,579 INFO [training:case_completed] epoch=3/10 phase=phase_b_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 13:40:28,580 INFO [training:case_started] epoch=3/10 phase=phase_b_eval step=case_run msg=Running case 5/5
+2026-02-16 13:46:11,365 INFO [training:case_completed] epoch=3/10 phase=phase_b_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 13:46:11,368 INFO [training:phase_completed] epoch=3/10 phase=phase_b_eval step=evaluate_candidate_done msg=Epoch 3: candidate evaluation completed
+2026-02-16 13:46:11,374 INFO [training:epoch_completed] epoch=3/10 phase=epoch step=end msg=Epoch 3/10 completed
+2026-02-16 13:46:11,375 INFO [training:epoch_started] epoch=4/10 phase=epoch step=start msg=Epoch 4/10 started
+2026-02-16 13:46:11,375 INFO [training:sample_selected] epoch=4/10 phase=sampling step=select_cases msg=Selected 5 case(s) for epoch 4
+2026-02-16 13:46:11,375 INFO Epoch 4/10 - Phase A baseline
+2026-02-16 13:46:11,376 INFO [training:phase_started] epoch=4/10 phase=phase_a_eval step=evaluate_baseline msg=Epoch 4: evaluating baseline prompts
+2026-02-16 13:46:11,377 INFO [training:case_started] epoch=4/10 phase=phase_a_eval step=case_run msg=Running case 1/5
+2026-02-16 13:48:49,563 INFO [training:case_completed] epoch=4/10 phase=phase_a_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 13:48:49,564 INFO [training:case_started] epoch=4/10 phase=phase_a_eval step=case_run msg=Running case 2/5
+2026-02-16 13:50:35,133 INFO [training:case_completed] epoch=4/10 phase=phase_a_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 13:50:35,134 INFO [training:case_started] epoch=4/10 phase=phase_a_eval step=case_run msg=Running case 3/5
+2026-02-16 13:54:38,300 INFO [training:case_completed] epoch=4/10 phase=phase_a_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 13:54:38,301 INFO [training:case_started] epoch=4/10 phase=phase_a_eval step=case_run msg=Running case 4/5
+2026-02-16 13:57:20,949 INFO [training:case_completed] epoch=4/10 phase=phase_a_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 13:57:20,950 INFO [training:case_started] epoch=4/10 phase=phase_a_eval step=case_run msg=Running case 5/5
+2026-02-16 13:59:19,565 INFO [training:case_completed] epoch=4/10 phase=phase_a_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 13:59:19,568 INFO [training:phase_completed] epoch=4/10 phase=phase_a_eval step=evaluate_baseline_done msg=Epoch 4: baseline evaluation completed
+2026-02-16 13:59:19,570 INFO [training:rca_batch_started] epoch=4/10 phase=rca step=identify_failures msg=Epoch 4: running RCA on 2 failed case(s)
+2026-02-16 13:59:19,572 INFO [training:rca_started] epoch=4/10 phase=rca step=case_rca msg=Epoch 4: RCA 1/2
+2026-02-16 13:59:19,576 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 13:59:24,758 INFO RCA generated with model=nemotron
+2026-02-16 13:59:24,761 INFO [training:rca_completed] epoch=4/10 phase=rca step=case_rca_done msg=Epoch 4: RCA 1/2 complete
+2026-02-16 13:59:24,763 INFO [training:rca_started] epoch=4/10 phase=rca step=case_rca msg=Epoch 4: RCA 2/2
+2026-02-16 13:59:24,768 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 13:59:34,730 INFO RCA generated with model=nemotron
+2026-02-16 13:59:34,732 INFO [training:rca_completed] epoch=4/10 phase=rca step=case_rca_done msg=Epoch 4: RCA 2/2 complete
+2026-02-16 13:59:34,734 INFO [training:mutation_started] epoch=4/10 phase=prompt_improvement step=generate_mutations msg=Epoch 4: generating prompt mutations
+2026-02-16 13:59:37,014 INFO Prompt mutation for improvement_block generated with model=oss120b
+2026-02-16 13:59:42,158 INFO Prompt mutation for initial_plan_creation_block generated with model=oss120b
+2026-02-16 13:59:46,766 INFO Prompt mutation for large_response_router_block generated with model=oss120b
+2026-02-16 13:59:55,674 INFO Prompt mutation for long_response_synthesis_block generated with model=oss120b
+2026-02-16 14:00:14,823 INFO Prompt mutation for sub_plan_creation_block generated with model=oss120b
+2026-02-16 14:00:34,773 INFO Prompt mutation for synthesis_block generated with model=oss120b
+2026-02-16 14:00:34,774 WARNING Prompt mutation for synthesis_block violated prompt contract ['missing_json_output_instruction', 'conflicting_plain_text_instruction']; keeping baseline
+2026-02-16 14:00:41,141 INFO Prompt mutation for primary_tool_router_block generated with model=oss120b
+2026-02-16 14:00:59,471 INFO Prompt mutation for secondary_tool_router_block generated with model=oss120b
+2026-02-16 14:01:18,822 INFO Prompt mutation for self_critique_block generated with model=oss120b
+2026-02-16 14:01:18,824 WARNING Prompt mutation for self_critique_block violated prompt contract ['self_critique_issue_item_type_unspecified']; keeping baseline
+2026-02-16 14:01:18,826 INFO [training:prompt_scoring_snapshot] epoch=4/10 phase=prompt_improvement step=score_candidates msg=Epoch 4: prompt scoring diagnostics ready
+2026-02-16 14:01:18,828 INFO [training:mutation_completed] epoch=4/10 phase=prompt_improvement step=mutations_ready msg=Epoch 4: mutation pass complete
+2026-02-16 14:01:18,828 INFO Epoch 4/10 - Phase B candidate
+2026-02-16 14:01:18,830 INFO [training:phase_started] epoch=4/10 phase=phase_b_eval step=evaluate_candidate msg=Epoch 4: evaluating candidate prompts
+2026-02-16 14:01:18,832 INFO [training:case_started] epoch=4/10 phase=phase_b_eval step=case_run msg=Running case 1/5
+2026-02-16 14:09:50,125 INFO [training:case_completed] epoch=4/10 phase=phase_b_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 14:09:50,127 INFO [training:case_started] epoch=4/10 phase=phase_b_eval step=case_run msg=Running case 2/5
+2026-02-16 14:12:08,053 INFO [training:case_completed] epoch=4/10 phase=phase_b_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 14:12:08,054 INFO [training:case_started] epoch=4/10 phase=phase_b_eval step=case_run msg=Running case 3/5
+2026-02-16 14:14:47,880 INFO [training:case_completed] epoch=4/10 phase=phase_b_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 14:14:47,881 INFO [training:case_started] epoch=4/10 phase=phase_b_eval step=case_run msg=Running case 4/5
+2026-02-16 14:18:36,268 INFO [training:case_completed] epoch=4/10 phase=phase_b_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 14:18:36,270 INFO [training:case_started] epoch=4/10 phase=phase_b_eval step=case_run msg=Running case 5/5
+2026-02-16 14:19:50,998 INFO [training:case_completed] epoch=4/10 phase=phase_b_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 14:19:51,001 INFO [training:phase_completed] epoch=4/10 phase=phase_b_eval step=evaluate_candidate_done msg=Epoch 4: candidate evaluation completed
+2026-02-16 14:19:51,008 INFO [training:epoch_completed] epoch=4/10 phase=epoch step=end msg=Epoch 4/10 completed
+2026-02-16 14:19:51,008 INFO [training:epoch_started] epoch=5/10 phase=epoch step=start msg=Epoch 5/10 started
+2026-02-16 14:19:51,009 INFO [training:sample_selected] epoch=5/10 phase=sampling step=select_cases msg=Selected 5 case(s) for epoch 5
+2026-02-16 14:19:51,009 INFO Epoch 5/10 - Phase A baseline
+2026-02-16 14:19:51,010 INFO [training:phase_started] epoch=5/10 phase=phase_a_eval step=evaluate_baseline msg=Epoch 5: evaluating baseline prompts
+2026-02-16 14:19:51,010 INFO [training:case_started] epoch=5/10 phase=phase_a_eval step=case_run msg=Running case 1/5
+2026-02-16 14:21:09,848 INFO [training:case_completed] epoch=5/10 phase=phase_a_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 14:21:09,849 INFO [training:case_started] epoch=5/10 phase=phase_a_eval step=case_run msg=Running case 2/5
+2026-02-16 14:25:03,734 INFO [training:case_completed] epoch=5/10 phase=phase_a_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 14:25:03,735 INFO [training:case_started] epoch=5/10 phase=phase_a_eval step=case_run msg=Running case 3/5
+2026-02-16 14:28:01,909 INFO [training:case_completed] epoch=5/10 phase=phase_a_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 14:28:01,910 INFO [training:case_started] epoch=5/10 phase=phase_a_eval step=case_run msg=Running case 4/5
+2026-02-16 14:32:11,768 INFO [training:case_completed] epoch=5/10 phase=phase_a_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 14:32:11,771 INFO [training:case_started] epoch=5/10 phase=phase_a_eval step=case_run msg=Running case 5/5
+2026-02-16 14:37:14,272 INFO [training:case_completed] epoch=5/10 phase=phase_a_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 14:37:14,278 INFO [training:phase_completed] epoch=5/10 phase=phase_a_eval step=evaluate_baseline_done msg=Epoch 5: baseline evaluation completed
+2026-02-16 14:37:14,282 INFO [training:rca_batch_started] epoch=5/10 phase=rca step=identify_failures msg=Epoch 5: running RCA on 4 failed case(s)
+2026-02-16 14:37:14,284 INFO [training:rca_started] epoch=5/10 phase=rca step=case_rca msg=Epoch 5: RCA 1/4
+2026-02-16 14:37:14,285 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 14:37:23,527 INFO RCA generated with model=nemotron
+2026-02-16 14:37:23,530 INFO [training:rca_completed] epoch=5/10 phase=rca step=case_rca_done msg=Epoch 5: RCA 1/4 complete
+2026-02-16 14:37:23,531 INFO [training:rca_started] epoch=5/10 phase=rca step=case_rca msg=Epoch 5: RCA 2/4
+2026-02-16 14:37:23,544 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 14:37:32,883 INFO RCA generated with model=nemotron
+2026-02-16 14:37:32,884 INFO [training:rca_completed] epoch=5/10 phase=rca step=case_rca_done msg=Epoch 5: RCA 2/4 complete
+2026-02-16 14:37:32,884 INFO [training:rca_started] epoch=5/10 phase=rca step=case_rca msg=Epoch 5: RCA 3/4
+2026-02-16 14:37:32,886 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 14:37:43,920 INFO RCA generated with model=nemotron
+2026-02-16 14:37:43,922 INFO [training:rca_completed] epoch=5/10 phase=rca step=case_rca_done msg=Epoch 5: RCA 3/4 complete
+2026-02-16 14:37:43,924 INFO [training:rca_started] epoch=5/10 phase=rca step=case_rca msg=Epoch 5: RCA 4/4
+2026-02-16 14:37:43,925 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 14:37:50,885 INFO RCA generated with model=nemotron
+2026-02-16 14:37:50,888 INFO [training:rca_completed] epoch=5/10 phase=rca step=case_rca_done msg=Epoch 5: RCA 4/4 complete
+2026-02-16 14:37:50,889 INFO [training:mutation_started] epoch=5/10 phase=prompt_improvement step=generate_mutations msg=Epoch 5: generating prompt mutations
+2026-02-16 14:37:53,167 INFO Prompt mutation for improvement_block generated with model=oss120b
+2026-02-16 14:37:57,466 INFO Prompt mutation for initial_plan_creation_block generated with model=oss120b
+2026-02-16 14:37:57,466 WARNING Prompt mutation for initial_plan_creation_block missing placeholders ['prompt']; keeping baseline
+2026-02-16 14:37:59,510 INFO Prompt mutation for long_response_synthesis_block generated with model=oss120b
+2026-02-16 14:37:59,511 WARNING Prompt mutation for long_response_synthesis_block violated prompt contract ['explicit_json_keys_do_not_match_schema']; keeping baseline
+2026-02-16 14:38:01,539 INFO Prompt mutation for primary_tool_router_block generated with model=oss120b
+2026-02-16 14:38:10,478 INFO Prompt mutation for self_critique_block generated with model=oss120b
+2026-02-16 14:38:30,952 INFO Prompt mutation for synthesis_block generated with model=oss120b
+2026-02-16 14:38:50,714 INFO Prompt mutation for secondary_tool_router_block generated with model=oss120b
+2026-02-16 14:39:09,740 INFO Prompt mutation for sub_plan_creation_block generated with model=oss120b
+2026-02-16 14:39:21,645 INFO [training:prompt_scoring_snapshot] epoch=5/10 phase=prompt_improvement step=score_candidates msg=Epoch 5: prompt scoring diagnostics ready
+2026-02-16 14:39:21,647 INFO [training:mutation_completed] epoch=5/10 phase=prompt_improvement step=mutations_ready msg=Epoch 5: mutation pass complete
+2026-02-16 14:39:21,649 INFO [training:generalizer_started] epoch=5/10 phase=generalizer_check step=run_generalizer msg=Epoch 5: running generalizer check
+2026-02-16 14:39:40,586 INFO Generalizer check generated with model=oss120b
+2026-02-16 14:39:40,589 INFO [training:generalizer_completed] epoch=5/10 phase=generalizer_check step=run_generalizer_done msg=Epoch 5: generalizer check complete
+2026-02-16 14:39:40,589 INFO Epoch 5/10 - Phase B candidate
+2026-02-16 14:39:40,592 INFO [training:phase_started] epoch=5/10 phase=phase_b_eval step=evaluate_candidate msg=Epoch 5: evaluating candidate prompts
+2026-02-16 14:39:40,596 INFO [training:case_started] epoch=5/10 phase=phase_b_eval step=case_run msg=Running case 1/5
+2026-02-16 14:41:53,769 INFO [training:case_completed] epoch=5/10 phase=phase_b_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 14:41:53,771 INFO [training:case_started] epoch=5/10 phase=phase_b_eval step=case_run msg=Running case 2/5
+2026-02-16 14:47:04,568 INFO [training:case_completed] epoch=5/10 phase=phase_b_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 14:47:04,569 INFO [training:case_started] epoch=5/10 phase=phase_b_eval step=case_run msg=Running case 3/5
+2026-02-16 15:00:24,964 INFO [training:case_completed] epoch=5/10 phase=phase_b_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 15:00:24,966 INFO [training:case_started] epoch=5/10 phase=phase_b_eval step=case_run msg=Running case 4/5
+2026-02-16 15:05:29,607 INFO [training:case_completed] epoch=5/10 phase=phase_b_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 15:05:29,608 INFO [training:case_started] epoch=5/10 phase=phase_b_eval step=case_run msg=Running case 5/5
+2026-02-16 15:11:20,740 INFO [training:case_completed] epoch=5/10 phase=phase_b_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 15:11:20,746 INFO [training:phase_completed] epoch=5/10 phase=phase_b_eval step=evaluate_candidate_done msg=Epoch 5: candidate evaluation completed
+2026-02-16 15:11:20,753 INFO [training:epoch_completed] epoch=5/10 phase=epoch step=end msg=Epoch 5/10 completed
+2026-02-16 15:11:20,754 INFO [training:epoch_started] epoch=6/10 phase=epoch step=start msg=Epoch 6/10 started
+2026-02-16 15:11:20,754 INFO [training:sample_selected] epoch=6/10 phase=sampling step=select_cases msg=Selected 5 case(s) for epoch 6
+2026-02-16 15:11:20,754 INFO Epoch 6/10 - Phase A baseline
+2026-02-16 15:11:20,755 INFO [training:phase_started] epoch=6/10 phase=phase_a_eval step=evaluate_baseline msg=Epoch 6: evaluating baseline prompts
+2026-02-16 15:11:20,755 INFO [training:case_started] epoch=6/10 phase=phase_a_eval step=case_run msg=Running case 1/5
+2026-02-16 15:12:45,197 INFO [training:case_completed] epoch=6/10 phase=phase_a_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 15:12:45,198 INFO [training:case_started] epoch=6/10 phase=phase_a_eval step=case_run msg=Running case 2/5
+2026-02-16 15:29:25,710 INFO Starting prompt A/B training: epochs=10, sampled_cases=5, thinking=med-synth
+2026-02-16 15:29:25,711 INFO [training:run_started] epoch=0/10 phase=init step=startup msg=Training run initialized
+2026-02-16 15:29:25,711 INFO [training:epoch_started] epoch=1/10 phase=epoch step=start msg=Epoch 1/10 started
+2026-02-16 15:29:25,711 INFO [training:sample_selected] epoch=1/10 phase=sampling step=select_cases msg=Selected 5 case(s) for epoch 1
+2026-02-16 15:29:25,711 INFO Epoch 1/10 - Phase A baseline
+2026-02-16 15:29:25,712 INFO [training:phase_started] epoch=1/10 phase=phase_a_eval step=evaluate_baseline msg=Epoch 1: evaluating baseline prompts
+2026-02-16 15:29:25,712 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 1/5
+2026-02-16 15:48:23,965 INFO Starting prompt A/B training: epochs=10, sampled_cases=5, thinking=med-synth
+2026-02-16 15:48:23,966 INFO [training:run_started] epoch=0/10 phase=init step=startup msg=Training run initialized
+2026-02-16 15:48:23,966 INFO [training:epoch_started] epoch=1/10 phase=epoch step=start msg=Epoch 1/10 started
+2026-02-16 15:48:23,966 INFO [training:sample_selected] epoch=1/10 phase=sampling step=select_cases msg=Selected 5 case(s) for epoch 1
+2026-02-16 15:48:23,966 INFO Epoch 1/10 - Phase A baseline
+2026-02-16 15:48:23,967 INFO [training:phase_started] epoch=1/10 phase=phase_a_eval step=evaluate_baseline msg=Epoch 1: evaluating baseline prompts
+2026-02-16 15:48:23,967 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 1/5
+2026-02-16 15:49:15,545 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 15:49:15,548 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 2/5
+2026-02-16 15:50:01,799 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 15:50:01,800 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 3/5
+2026-02-16 15:51:19,032 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 15:51:19,033 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 4/5
+2026-02-16 15:55:41,940 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 15:55:41,941 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 5/5
+2026-02-16 15:57:59,365 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 15:57:59,367 INFO [training:phase_completed] epoch=1/10 phase=phase_a_eval step=evaluate_baseline_done msg=Epoch 1: baseline evaluation completed
+2026-02-16 15:57:59,369 INFO [training:rca_batch_started] epoch=1/10 phase=rca step=identify_failures msg=Epoch 1: running RCA on 3 failed case(s)
+2026-02-16 15:57:59,369 INFO [training:rca_started] epoch=1/10 phase=rca step=case_rca msg=Epoch 1: RCA 1/3
+2026-02-16 15:57:59,371 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 15:58:08,298 INFO RCA generated with model=nemotron
+2026-02-16 15:58:08,300 INFO [training:rca_completed] epoch=1/10 phase=rca step=case_rca_done msg=Epoch 1: RCA 1/3 complete
+2026-02-16 15:58:08,301 INFO [training:rca_started] epoch=1/10 phase=rca step=case_rca msg=Epoch 1: RCA 2/3
+2026-02-16 15:58:08,303 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 15:58:15,234 INFO RCA generated with model=nemotron
+2026-02-16 15:58:15,235 INFO [training:rca_completed] epoch=1/10 phase=rca step=case_rca_done msg=Epoch 1: RCA 2/3 complete
+2026-02-16 15:58:15,236 INFO [training:rca_started] epoch=1/10 phase=rca step=case_rca msg=Epoch 1: RCA 3/3
+2026-02-16 15:58:15,237 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 15:58:20,933 INFO RCA generated with model=nemotron
+2026-02-16 15:58:20,936 INFO [training:rca_completed] epoch=1/10 phase=rca step=case_rca_done msg=Epoch 1: RCA 3/3 complete
+2026-02-16 15:58:20,937 INFO [training:mutation_started] epoch=1/10 phase=prompt_improvement step=generate_mutations msg=Epoch 1: generating prompt mutations
+2026-02-16 15:58:23,104 INFO Prompt mutation for improvement_block generated with model=oss120b
+2026-02-16 15:58:27,401 INFO Prompt mutation for initial_plan_creation_block generated with model=oss120b
+2026-02-16 15:58:30,678 INFO Prompt mutation for large_response_router_block generated with model=oss120b
+2026-02-16 15:58:41,123 INFO Prompt mutation for long_response_synthesis_block generated with model=oss120b
+2026-02-16 15:59:00,275 INFO Prompt mutation for primary_tool_router_block generated with model=oss120b
+2026-02-16 15:59:18,191 INFO Prompt mutation for secondary_tool_router_block generated with model=oss120b
+2026-02-16 15:59:38,668 INFO Prompt mutation for self_critique_block generated with model=oss120b
+2026-02-16 15:59:38,668 WARNING Prompt mutation for self_critique_block violated prompt contract ['self_critique_issue_item_type_unspecified']; keeping baseline
+2026-02-16 15:59:46,352 INFO Prompt mutation for sub_plan_creation_block generated with model=oss120b
+2026-02-16 16:00:07,015 INFO Prompt mutation for synthesis_block generated with model=oss120b
+2026-02-16 16:00:07,016 WARNING Prompt mutation for synthesis_block violated prompt contract ['conflicting_plain_text_instruction']; keeping baseline
+2026-02-16 16:00:07,020 INFO [training:prompt_scoring_snapshot] epoch=1/10 phase=prompt_improvement step=score_candidates msg=Epoch 1: prompt scoring diagnostics ready
+2026-02-16 16:00:07,020 INFO [training:mutation_completed] epoch=1/10 phase=prompt_improvement step=mutations_ready msg=Epoch 1: mutation pass complete
+2026-02-16 16:00:07,021 INFO Epoch 1/10 - Phase B candidate
+2026-02-16 16:00:07,021 INFO [training:phase_started] epoch=1/10 phase=phase_b_eval step=evaluate_candidate msg=Epoch 1: evaluating candidate prompts
+2026-02-16 16:00:07,023 INFO [training:case_started] epoch=1/10 phase=phase_b_eval step=case_run msg=Running case 1/5
+2026-02-16 16:02:22,205 INFO [training:case_completed] epoch=1/10 phase=phase_b_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 16:02:22,206 INFO [training:case_started] epoch=1/10 phase=phase_b_eval step=case_run msg=Running case 2/5
+2026-02-16 16:06:21,409 INFO [training:case_completed] epoch=1/10 phase=phase_b_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 16:06:21,411 INFO [training:case_started] epoch=1/10 phase=phase_b_eval step=case_run msg=Running case 3/5
+2026-02-16 16:19:50,122 INFO [training:case_completed] epoch=1/10 phase=phase_b_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 16:19:50,123 INFO [training:case_started] epoch=1/10 phase=phase_b_eval step=case_run msg=Running case 4/5
+2026-02-16 16:25:20,691 INFO [training:case_completed] epoch=1/10 phase=phase_b_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 16:25:20,693 INFO [training:case_started] epoch=1/10 phase=phase_b_eval step=case_run msg=Running case 5/5
+2026-02-16 16:28:33,881 INFO [training:case_completed] epoch=1/10 phase=phase_b_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 16:28:33,882 INFO [training:phase_completed] epoch=1/10 phase=phase_b_eval step=evaluate_candidate_done msg=Epoch 1: candidate evaluation completed
+2026-02-16 16:28:33,888 INFO [training:epoch_completed] epoch=1/10 phase=epoch step=end msg=Epoch 1/10 completed
+2026-02-16 16:28:33,888 INFO [training:epoch_started] epoch=2/10 phase=epoch step=start msg=Epoch 2/10 started
+2026-02-16 16:28:33,889 INFO [training:sample_selected] epoch=2/10 phase=sampling step=select_cases msg=Selected 5 case(s) for epoch 2
+2026-02-16 16:28:33,889 INFO Epoch 2/10 - Phase A baseline
+2026-02-16 16:28:33,889 INFO [training:phase_started] epoch=2/10 phase=phase_a_eval step=evaluate_baseline msg=Epoch 2: evaluating baseline prompts
+2026-02-16 16:28:33,890 INFO [training:case_started] epoch=2/10 phase=phase_a_eval step=case_run msg=Running case 1/5
+2026-02-16 16:29:08,774 INFO [training:case_completed] epoch=2/10 phase=phase_a_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 16:29:08,776 INFO [training:case_started] epoch=2/10 phase=phase_a_eval step=case_run msg=Running case 2/5
+2026-02-16 16:35:27,236 INFO [training:case_completed] epoch=2/10 phase=phase_a_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 16:35:27,240 INFO [training:case_started] epoch=2/10 phase=phase_a_eval step=case_run msg=Running case 3/5
+2026-02-16 16:36:15,215 INFO [training:case_completed] epoch=2/10 phase=phase_a_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 16:36:15,218 INFO [training:case_started] epoch=2/10 phase=phase_a_eval step=case_run msg=Running case 4/5
+2026-02-16 16:36:52,934 INFO [training:case_completed] epoch=2/10 phase=phase_a_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 16:36:52,935 INFO [training:case_started] epoch=2/10 phase=phase_a_eval step=case_run msg=Running case 5/5
+2026-02-16 16:37:34,441 INFO [training:case_completed] epoch=2/10 phase=phase_a_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 16:37:34,445 INFO [training:phase_completed] epoch=2/10 phase=phase_a_eval step=evaluate_baseline_done msg=Epoch 2: baseline evaluation completed
+2026-02-16 16:37:34,448 INFO [training:rca_batch_started] epoch=2/10 phase=rca step=identify_failures msg=Epoch 2: running RCA on 3 failed case(s)
+2026-02-16 16:37:34,450 INFO [training:rca_started] epoch=2/10 phase=rca step=case_rca msg=Epoch 2: RCA 1/3
+2026-02-16 16:37:34,451 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 16:37:42,051 INFO RCA generated with model=nemotron
+2026-02-16 16:37:42,055 INFO [training:rca_completed] epoch=2/10 phase=rca step=case_rca_done msg=Epoch 2: RCA 1/3 complete
+2026-02-16 16:37:42,057 INFO [training:rca_started] epoch=2/10 phase=rca step=case_rca msg=Epoch 2: RCA 2/3
+2026-02-16 16:37:42,069 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 16:37:46,051 INFO RCA generated with model=nemotron
+2026-02-16 16:37:46,053 INFO [training:rca_completed] epoch=2/10 phase=rca step=case_rca_done msg=Epoch 2: RCA 2/3 complete
+2026-02-16 16:37:46,054 INFO [training:rca_started] epoch=2/10 phase=rca step=case_rca msg=Epoch 2: RCA 3/3
+2026-02-16 16:37:46,055 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 16:37:53,418 INFO RCA generated with model=nemotron
+2026-02-16 16:37:53,421 INFO [training:rca_completed] epoch=2/10 phase=rca step=case_rca_done msg=Epoch 2: RCA 3/3 complete
+2026-02-16 16:37:53,422 INFO [training:mutation_started] epoch=2/10 phase=prompt_improvement step=generate_mutations msg=Epoch 2: generating prompt mutations
+2026-02-16 16:37:55,313 INFO Prompt mutation for improvement_block generated with model=oss120b
+2026-02-16 16:37:59,685 INFO Prompt mutation for initial_plan_creation_block generated with model=oss120b
+2026-02-16 16:38:02,692 INFO Prompt mutation for large_response_router_block generated with model=oss120b
+2026-02-16 16:38:09,496 INFO Prompt mutation for long_response_synthesis_block generated with model=oss120b
+2026-02-16 16:38:28,468 INFO Prompt mutation for primary_tool_router_block generated with model=oss120b
+2026-02-16 16:38:47,861 INFO Prompt mutation for secondary_tool_router_block generated with model=oss120b
+2026-02-16 16:39:06,788 INFO Prompt mutation for self_critique_block generated with model=oss120b
+2026-02-16 16:39:06,789 WARNING Prompt mutation for self_critique_block violated prompt contract ['self_critique_issue_item_type_unspecified']; keeping baseline
+2026-02-16 16:39:13,648 INFO Prompt mutation for sub_plan_creation_block generated with model=oss120b
+2026-02-16 16:39:34,249 INFO Prompt mutation for synthesis_block generated with model=oss120b
+2026-02-16 16:39:34,250 WARNING Prompt mutation for synthesis_block violated prompt contract ['missing_json_output_instruction', 'conflicting_plain_text_instruction']; keeping baseline
+2026-02-16 16:39:34,254 INFO [training:prompt_scoring_snapshot] epoch=2/10 phase=prompt_improvement step=score_candidates msg=Epoch 2: prompt scoring diagnostics ready
+2026-02-16 16:39:34,255 INFO [training:mutation_completed] epoch=2/10 phase=prompt_improvement step=mutations_ready msg=Epoch 2: mutation pass complete
+2026-02-16 16:39:34,255 INFO Epoch 2/10 - Phase B candidate
+2026-02-16 16:39:34,256 INFO [training:phase_started] epoch=2/10 phase=phase_b_eval step=evaluate_candidate msg=Epoch 2: evaluating candidate prompts
+2026-02-16 16:39:34,258 INFO [training:case_started] epoch=2/10 phase=phase_b_eval step=case_run msg=Running case 1/5
+2026-02-16 16:41:43,269 INFO [training:case_completed] epoch=2/10 phase=phase_b_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 16:41:43,270 INFO [training:case_started] epoch=2/10 phase=phase_b_eval step=case_run msg=Running case 2/5
+2026-02-16 16:45:09,058 INFO [training:case_completed] epoch=2/10 phase=phase_b_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 16:45:09,059 INFO [training:case_started] epoch=2/10 phase=phase_b_eval step=case_run msg=Running case 3/5
+2026-02-16 16:46:44,988 INFO [training:case_completed] epoch=2/10 phase=phase_b_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 16:46:44,989 INFO [training:case_started] epoch=2/10 phase=phase_b_eval step=case_run msg=Running case 4/5
+2026-02-16 16:48:40,369 INFO [training:case_completed] epoch=2/10 phase=phase_b_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 16:48:40,373 INFO [training:case_started] epoch=2/10 phase=phase_b_eval step=case_run msg=Running case 5/5
+2026-02-16 17:30:08,186 INFO Starting prompt A/B training: epochs=10, sampled_cases=5, thinking=med-synth
+2026-02-16 17:30:08,186 INFO [training:run_started] epoch=0/10 phase=init step=startup msg=Training run initialized
+2026-02-16 17:30:08,186 INFO [training:epoch_started] epoch=1/10 phase=epoch step=start msg=Epoch 1/10 started
+2026-02-16 17:30:08,187 INFO [training:sample_selected] epoch=1/10 phase=sampling step=select_cases msg=Selected 5 case(s) for epoch 1
+2026-02-16 17:30:08,187 INFO Epoch 1/10 - Phase A baseline
+2026-02-16 17:30:08,187 INFO [training:phase_started] epoch=1/10 phase=phase_a_eval step=evaluate_baseline msg=Epoch 1: evaluating baseline prompts
+2026-02-16 17:30:08,187 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 1/5
+2026-02-16 17:31:57,650 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 17:31:57,651 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 2/5
+2026-02-16 17:33:03,167 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 2/5 scored
+2026-02-16 17:33:03,169 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 3/5
+2026-02-16 17:38:11,874 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 3/5 scored
+2026-02-16 17:38:11,875 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 4/5
+2026-02-16 17:41:19,713 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 4/5 scored
+2026-02-16 17:41:19,715 INFO [training:case_started] epoch=1/10 phase=phase_a_eval step=case_run msg=Running case 5/5
+2026-02-16 17:43:39,902 INFO [training:case_completed] epoch=1/10 phase=phase_a_eval step=case_scored msg=Case 5/5 scored
+2026-02-16 17:43:39,907 INFO [training:phase_completed] epoch=1/10 phase=phase_a_eval step=evaluate_baseline_done msg=Epoch 1: baseline evaluation completed
+2026-02-16 17:43:39,911 INFO [training:rca_batch_started] epoch=1/10 phase=rca step=identify_failures msg=Epoch 1: running RCA on 4 failed case(s)
+2026-02-16 17:43:39,914 INFO [training:rca_started] epoch=1/10 phase=rca step=case_rca msg=Epoch 1: RCA 1/4
+2026-02-16 17:43:39,927 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 17:43:46,906 INFO RCA generated with model=nemotron
+2026-02-16 17:43:46,908 INFO [training:rca_completed] epoch=1/10 phase=rca step=case_rca_done msg=Epoch 1: RCA 1/4 complete
+2026-02-16 17:43:46,909 INFO [training:rca_started] epoch=1/10 phase=rca step=case_rca msg=Epoch 1: RCA 2/4
+2026-02-16 17:43:46,911 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 17:43:53,243 INFO RCA generated with model=nemotron
+2026-02-16 17:43:53,245 INFO [training:rca_completed] epoch=1/10 phase=rca step=case_rca_done msg=Epoch 1: RCA 2/4 complete
+2026-02-16 17:43:53,245 INFO [training:rca_started] epoch=1/10 phase=rca step=case_rca msg=Epoch 1: RCA 3/4
+2026-02-16 17:43:53,258 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 17:44:02,244 INFO RCA generated with model=nemotron
+2026-02-16 17:44:02,249 INFO [training:rca_completed] epoch=1/10 phase=rca step=case_rca_done msg=Epoch 1: RCA 3/4 complete
+2026-02-16 17:44:02,249 INFO [training:rca_started] epoch=1/10 phase=rca step=case_rca msg=Epoch 1: RCA 4/4
+2026-02-16 17:44:02,252 INFO Skipping oss120b for oversized prompt; using nemotron directly
+2026-02-16 17:44:08,278 INFO RCA generated with model=nemotron
+2026-02-16 17:44:08,282 INFO [training:rca_completed] epoch=1/10 phase=rca step=case_rca_done msg=Epoch 1: RCA 4/4 complete
+2026-02-16 17:44:08,283 INFO [training:mutation_started] epoch=1/10 phase=prompt_improvement step=generate_mutations msg=Epoch 1: generating prompt mutations
+2026-02-16 17:44:10,575 INFO Prompt mutation for initial_plan_creation_block generated with model=oss120b
+2026-02-16 17:44:15,009 INFO Prompt mutation for synthesis_block generated with model=oss120b
+2026-02-16 17:44:18,362 INFO Prompt mutation for self_critique_block generated with model=oss120b
+2026-02-16 17:44:18,362 WARNING Prompt mutation for self_critique_block violated prompt contract ['self_critique_issue_item_type_unspecified']; keeping baseline
+2026-02-16 17:44:20,174 INFO Prompt mutation for web_search_tool_block generated with model=oss120b
+2026-02-16 17:44:20,175 WARNING Prompt mutation for web_search_tool_block violated prompt contract ['web_search_prompt_missing_evidence_constraints']; keeping baseline
+2026-02-16 17:44:28,071 INFO Prompt mutation for deductive_reasoning_premise_tool_block generated with model=oss120b
+2026-02-16 17:44:47,059 INFO Prompt mutation for wikipedia_search_tool_block generated with model=oss120b
+2026-02-16 17:44:47,060 WARNING Prompt mutation for wikipedia_search_tool_block violated prompt contract ['tool_prompt_missing_contract_sections']; keeping baseline
+2026-02-16 17:44:55,215 INFO Prompt mutation for python_code_execution_tool_block generated with model=oss120b
+2026-02-16 17:44:55,215 WARNING Prompt mutation for python_code_execution_tool_block violated prompt contract ['tool_prompt_missing_contract_sections', 'python_tool_prompt_missing_repair_or_schema_markers']; keeping baseline
+2026-02-16 17:45:00,781 INFO Prompt mutation for creative_idea_generator_tool_block generated with model=oss120b
+2026-02-16 17:45:18,189 INFO Prompt mutation for deductive_reasoning_conclusion_confirmation_tool_block generated with model=oss120b
+2026-02-16 17:45:29,968 INFO [training:prompt_scoring_snapshot] epoch=1/10 phase=prompt_improvement step=score_candidates msg=Epoch 1: prompt scoring diagnostics ready
+2026-02-16 17:45:29,970 INFO [training:mutation_completed] epoch=1/10 phase=prompt_improvement step=mutations_ready msg=Epoch 1: mutation pass complete
+2026-02-16 17:45:29,971 INFO [training:phase_skipped] epoch=1/10 phase=phase_b_eval step=evaluate_candidate_skipped msg=Epoch 1: candidate evaluation skipped (no changes)
+2026-02-16 17:45:29,973 INFO [training:candidate_gate_decision] epoch=1/10 phase=selection step=apply_candidate_gates msg=Epoch 1: candidate gate decision = baseline
+2026-02-16 17:45:29,983 INFO [training:epoch_completed] epoch=1/10 phase=epoch step=end msg=Epoch 1/10 completed
+2026-02-16 17:45:29,983 INFO [training:epoch_started] epoch=2/10 phase=epoch step=start msg=Epoch 2/10 started
+2026-02-16 17:45:29,984 INFO [training:sample_selected] epoch=2/10 phase=sampling step=select_cases msg=Selected 5 case(s) for epoch 2
+2026-02-16 17:45:29,984 INFO Epoch 2/10 - Phase A baseline
+2026-02-16 17:45:29,985 INFO [training:phase_started] epoch=2/10 phase=phase_a_eval step=evaluate_baseline msg=Epoch 2: evaluating baseline prompts
+2026-02-16 17:45:29,985 INFO [training:case_started] epoch=2/10 phase=phase_a_eval step=case_run msg=Running case 1/5
+2026-02-16 17:47:44,650 INFO [training:case_completed] epoch=2/10 phase=phase_a_eval step=case_scored msg=Case 1/5 scored
+2026-02-16 17:47:44,652 INFO [training:case_started] epoch=2/10 phase=phase_a_eval step=case_run msg=Running case 2/5

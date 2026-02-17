@@ -1,0 +1,1 @@
+{"success": true, "output": "entity column  mean  variance\n0      A  value   1.5      0.25\n1      B  value   3.5      0.25", "result": null, "plots": [], "error": null}

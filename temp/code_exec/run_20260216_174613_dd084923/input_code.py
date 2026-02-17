@@ -1,0 +1,1 @@
+import math\nfrom scipy import integrate\n\ndef integrand(x):\n    return math.log(math.sin(x))\n\napprox, _ = integrate.quad(integrand, 0, math.pi/2)\nanalytical = -math.pi/2 * math.log(2)\ndiff = abs(approx - analytical)\nresult = f"approx={approx}, analytical={analytical}, diff={diff}"\nprint(result)

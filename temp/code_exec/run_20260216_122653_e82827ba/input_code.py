@@ -1,0 +1,1 @@
+import sympy as sp\nx = sp.symbols('x')\nbinomial_coeff = sp.binomial(10, 10)\nexpr = 1/(1 - x)**2\npartial_frac_coeff = sp.series(expr, x, 0, 11).removeO().coeff(x, 10)\nmatch = binomial_coeff == partial_frac_coeff\nresult = {"binomial_coeff": binomial_coeff, "partial_frac_coeff": partial_frac_coeff, "match": match}\nprint(result)

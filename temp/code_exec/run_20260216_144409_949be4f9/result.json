@@ -1,0 +1,1 @@
+{"success": true, "output": "{'A': {'mean': {'col1': np.float64(2.0), 'col2': np.float64(20.0)}, 'variance': {'col1': np.float64(1.0), 'col2': np.float64(100.0)}}, 'B': {'mean': {'col1': np.float64(5.0), 'col2': np.float64(50.0)}, 'variance': {'col1': np.float64(1.0), 'col2': np.float64(100.0)}}}", "result": null, "plots": [], "error": null}

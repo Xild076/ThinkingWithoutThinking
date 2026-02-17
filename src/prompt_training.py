@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import random
 import re
 import time
@@ -19,11 +20,13 @@ try:
     import utility as utility_module
     from pipeline import Pipeline
     from pipeline_blocks import _get_all_prompted_blocks
+    from pipeline_blocks import get_tool_prompt_descriptors
     from utility import generate_text
 except Exception:  # pragma: no cover
     from src import utility as utility_module
     from src.pipeline import Pipeline
     from src.pipeline_blocks import _get_all_prompted_blocks
+    from src.pipeline_blocks import get_tool_prompt_descriptors
     from src.utility import generate_text
 
 
@@ -42,6 +45,23 @@ if not logger.handlers:
     except Exception:
         # Keep training functional even if file logging cannot be initialized.
         pass
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+ENABLE_CANDIDATE_GATES = _env_flag("ENABLE_CANDIDATE_GATES", default=True)
+ENABLE_TOOL_PROMPT_TEMPLATES = _env_flag("ENABLE_TOOL_PROMPT_TEMPLATES", default=True)
+
+RUNTIME_GATE_MEAN_MAX_RATIO = 1.25
+RUNTIME_GATE_P90_MAX_RATIO = 1.35
+STABILITY_GATE_MAX_DELTA = 0.3
+DEGRADATION_GATE_MAX_DELTA = 0.05
+PROMPT_SCORE_ACCEPTANCE_RATIO = 1.05
 
 
 def _iso_now() -> str:
@@ -255,6 +275,62 @@ def _validate_prompt_contract(
         if explicit_keys and "id" in explicit_keys and "routes" not in explicit_keys:
             issues.append("router_single_route_schema_drift")
 
+    tool_prompt_ids = {
+        "web_search_tool_block",
+        "wikipedia_search_tool_block",
+        "python_code_execution_tool_block",
+        "creative_idea_generator_tool_block",
+        "deductive_reasoning_premise_tool_block",
+        "deductive_reasoning_confirm_premise_tool_block",
+        "deductive_reasoning_conclusion_tool_block",
+        "deductive_reasoning_conclusion_confirmation_tool_block",
+    }
+    if block_id in tool_prompt_ids:
+        contract_markers = (
+            "objective",
+            "hard constraints",
+            "output contract",
+            "uncertainty",
+        )
+        missing_markers = [marker for marker in contract_markers if marker not in prompt_lower]
+        if missing_markers:
+            issues.append("tool_prompt_missing_contract_sections")
+
+    if block_id == "python_code_execution_tool_block":
+        required_markers = (
+            "code_to_run",
+            "packages_needed",
+            "disallow",
+            "previous error",
+        )
+        if not all(marker in prompt_lower for marker in required_markers):
+            issues.append("python_tool_prompt_missing_repair_or_schema_markers")
+
+    if block_id == "web_search_tool_block":
+        required_markers = (
+            "reference id",
+            "do not invent",
+        )
+        if not all(marker in prompt_lower for marker in required_markers):
+            issues.append("web_search_prompt_missing_evidence_constraints")
+
+    if block_id == "wikipedia_search_tool_block":
+        if "insufficient relevance" not in prompt_lower:
+            issues.append("wikipedia_prompt_missing_insufficient_relevance_fallback")
+
+    if block_id == "creative_idea_generator_tool_block":
+        if "feasibility" not in prompt_lower:
+            issues.append("creative_prompt_missing_feasibility_tagging")
+
+    deductive_prompt_ids = {
+        "deductive_reasoning_premise_tool_block",
+        "deductive_reasoning_confirm_premise_tool_block",
+        "deductive_reasoning_conclusion_tool_block",
+        "deductive_reasoning_conclusion_confirmation_tool_block",
+    }
+    if block_id in deductive_prompt_ids and "validated premises" not in prompt_lower:
+        issues.append("deductive_prompt_missing_validation_dependency")
+
     return issues
 
 
@@ -407,6 +483,269 @@ def _score_stats(scores: list[float]) -> dict[str, Any]:
     }
 
 
+def _mean(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return float(sum(values) / len(values))
+
+
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    sorted_values = sorted(float(item) for item in values)
+    index = max(0, min(len(sorted_values) - 1, int(round((percentile / 100.0) * (len(sorted_values) - 1)))))
+    return float(sorted_values[index])
+
+
+def _safe_ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or denominator <= 0:
+        return None
+    return float(numerator / denominator)
+
+
+def _iter_tool_execution_results(tool_context: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(tool_context, dict):
+        return []
+
+    entries: list[dict[str, Any]] = []
+
+    def _append_bundle(bundle: Any) -> None:
+        if not isinstance(bundle, dict):
+            return
+        for item in bundle.get("results", []):
+            if isinstance(item, dict):
+                entries.append(item)
+
+    _append_bundle(tool_context.get("primary_execution"))
+    _append_bundle(tool_context.get("primary_continuity_execution"))
+
+    for subplan in tool_context.get("subplans", []):
+        if not isinstance(subplan, dict):
+            continue
+        _append_bundle(subplan.get("tool_execution"))
+        _append_bundle(subplan.get("continuity_execution"))
+
+    return entries
+
+
+def _extract_case_tool_metrics(run_output: dict[str, Any]) -> dict[str, Any]:
+    tool_context = run_output.get("tool_context") if isinstance(run_output, dict) else {}
+    entries = _iter_tool_execution_results(tool_context if isinstance(tool_context, dict) else {})
+
+    tool_invocations: dict[str, int] = {}
+    tool_errors: dict[str, int] = {}
+    python_attempts = 0
+    python_failures = 0
+
+    for entry in entries:
+        resolved_id = str(entry.get("resolved_id") or entry.get("requested_id") or "unknown")
+        tool_invocations[resolved_id] = tool_invocations.get(resolved_id, 0) + 1
+        if entry.get("error"):
+            tool_errors[resolved_id] = tool_errors.get(resolved_id, 0) + 1
+
+        if resolved_id != "python_code_execution_tool_block":
+            continue
+
+        output = entry.get("output")
+        if not isinstance(output, dict):
+            continue
+        diagnostics = output.get("diagnostics")
+        if not isinstance(diagnostics, dict):
+            continue
+
+        attempts_run = diagnostics.get("attempts_run")
+        attempts_allowed = diagnostics.get("attempts_allowed")
+        final_success = bool(diagnostics.get("final_success"))
+        final_error = diagnostics.get("final_error")
+
+        if isinstance(attempts_run, int):
+            python_attempts += max(0, attempts_run)
+        elif isinstance(attempts_allowed, int):
+            python_attempts += max(0, attempts_allowed)
+
+        if not final_success:
+            if isinstance(attempts_run, int) and attempts_run > 0:
+                python_failures += attempts_run
+            elif final_error:
+                python_failures += 1
+
+    signals = run_output.get("tool_failure_signals") if isinstance(run_output, dict) else []
+    tool_failure_signals_count = len(signals) if isinstance(signals, list) else 0
+
+    return {
+        "tool_invocations": tool_invocations,
+        "tool_errors": tool_errors,
+        "python_exec_attempts": python_attempts,
+        "python_exec_failures": python_failures,
+        "tool_failure_signals_count": tool_failure_signals_count,
+        "degraded_mode_active": bool(run_output.get("degraded_mode_active")) if isinstance(run_output, dict) else False,
+    }
+
+
+def _summarize_eval_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    case_times_s: list[float] = []
+    tool_failure_counts: list[float] = []
+    degraded_flags: list[bool] = []
+    python_attempts: list[float] = []
+    python_failures: list[float] = []
+    tool_invocation_totals: dict[str, int] = {}
+    tool_error_totals: dict[str, int] = {}
+
+    for result in results:
+        case_stats = result.get("case_stats", {})
+        if not isinstance(case_stats, dict):
+            continue
+
+        case_total_seconds = case_stats.get("case_total_seconds")
+        if isinstance(case_total_seconds, (int, float)):
+            case_times_s.append(float(case_total_seconds))
+
+        failure_count = case_stats.get("tool_failure_signals_count")
+        if isinstance(failure_count, (int, float)):
+            tool_failure_counts.append(float(failure_count))
+
+        degraded_flags.append(bool(case_stats.get("degraded_mode_active")))
+
+        attempts = case_stats.get("python_exec_attempts")
+        if isinstance(attempts, (int, float)):
+            python_attempts.append(float(attempts))
+
+        failures = case_stats.get("python_exec_failures")
+        if isinstance(failures, (int, float)):
+            python_failures.append(float(failures))
+
+        invocations = case_stats.get("tool_invocations")
+        if isinstance(invocations, dict):
+            for tool_id, count in invocations.items():
+                if not isinstance(count, (int, float)):
+                    continue
+                tool_invocation_totals[str(tool_id)] = tool_invocation_totals.get(str(tool_id), 0) + int(count)
+
+        errors = case_stats.get("tool_errors")
+        if isinstance(errors, dict):
+            for tool_id, count in errors.items():
+                if not isinstance(count, (int, float)):
+                    continue
+                tool_error_totals[str(tool_id)] = tool_error_totals.get(str(tool_id), 0) + int(count)
+
+    case_count = len(results)
+    degraded_count = sum(1 for item in degraded_flags if item)
+    degraded_rate = (degraded_count / case_count) if case_count else 0.0
+
+    return {
+        "case_count": case_count,
+        "mean_case_time_s": _mean(case_times_s) or 0.0,
+        "p90_case_time_s": _percentile(case_times_s, 90) or 0.0,
+        "avg_tool_failure_signals": _mean(tool_failure_counts) or 0.0,
+        "degraded_case_rate": degraded_rate,
+        "degraded_case_count": degraded_count,
+        "avg_python_exec_attempts": _mean(python_attempts) or 0.0,
+        "avg_python_exec_failures": _mean(python_failures) or 0.0,
+        "tool_invocation_totals": tool_invocation_totals,
+        "tool_error_totals": tool_error_totals,
+    }
+
+
+def _evaluate_candidate_gates(
+    *,
+    avg_score_a: float,
+    avg_score_b: float,
+    phase_a_summary: dict[str, Any],
+    phase_b_summary: dict[str, Any],
+    enabled: bool,
+) -> dict[str, Any]:
+    quality_gate = {
+        "name": "quality_gate",
+        "passed": avg_score_b > avg_score_a,
+        "baseline": avg_score_a,
+        "candidate": avg_score_b,
+        "rule": "candidate_avg_score > baseline_avg_score",
+    }
+
+    mean_a = float(phase_a_summary.get("mean_case_time_s", 0.0) or 0.0)
+    mean_b = float(phase_b_summary.get("mean_case_time_s", 0.0) or 0.0)
+    p90_a = float(phase_a_summary.get("p90_case_time_s", 0.0) or 0.0)
+    p90_b = float(phase_b_summary.get("p90_case_time_s", 0.0) or 0.0)
+    failure_a = float(phase_a_summary.get("avg_tool_failure_signals", 0.0) or 0.0)
+    failure_b = float(phase_b_summary.get("avg_tool_failure_signals", 0.0) or 0.0)
+    degraded_rate_a = float(phase_a_summary.get("degraded_case_rate", 0.0) or 0.0)
+    degraded_rate_b = float(phase_b_summary.get("degraded_case_rate", 0.0) or 0.0)
+
+    mean_ratio = _safe_ratio(mean_b, mean_a)
+    p90_ratio = _safe_ratio(p90_b, p90_a)
+
+    runtime_gate = {
+        "name": "runtime_gate",
+        "passed": (mean_ratio is None or mean_ratio <= RUNTIME_GATE_MEAN_MAX_RATIO)
+        and (p90_ratio is None or p90_ratio <= RUNTIME_GATE_P90_MAX_RATIO),
+        "baseline_mean_case_time_s": mean_a,
+        "candidate_mean_case_time_s": mean_b,
+        "baseline_p90_case_time_s": p90_a,
+        "candidate_p90_case_time_s": p90_b,
+        "mean_ratio_b_over_a": mean_ratio,
+        "p90_ratio_b_over_a": p90_ratio,
+        "rule": f"mean_ratio <= {RUNTIME_GATE_MEAN_MAX_RATIO} and p90_ratio <= {RUNTIME_GATE_P90_MAX_RATIO}",
+    }
+
+    stability_gate = {
+        "name": "stability_gate",
+        "passed": failure_b <= (failure_a + STABILITY_GATE_MAX_DELTA),
+        "baseline_avg_tool_failure_signals": failure_a,
+        "candidate_avg_tool_failure_signals": failure_b,
+        "rule": f"candidate <= baseline + {STABILITY_GATE_MAX_DELTA}",
+    }
+
+    degradation_gate = {
+        "name": "degradation_gate",
+        "passed": degraded_rate_b <= (degraded_rate_a + DEGRADATION_GATE_MAX_DELTA),
+        "baseline_degraded_case_rate": degraded_rate_a,
+        "candidate_degraded_case_rate": degraded_rate_b,
+        "rule": f"candidate <= baseline + {DEGRADATION_GATE_MAX_DELTA}",
+    }
+
+    gates = [quality_gate, runtime_gate, stability_gate, degradation_gate]
+    all_passed = all(bool(gate.get("passed")) for gate in gates)
+    failed_gates = [str(gate.get("name")) for gate in gates if not bool(gate.get("passed"))]
+
+    return {
+        "enabled": bool(enabled),
+        "all_passed": bool(all_passed),
+        "failed_gates": failed_gates,
+        "gates": {gate["name"]: gate for gate in gates},
+        "ratios": {
+            "mean_case_time_ratio": mean_ratio,
+            "p90_case_time_ratio": p90_ratio,
+        },
+    }
+
+
+_GRADE_WEIGHTS: dict[str, float] = {
+    "prompt_alignment_score": 1.0,
+    "factuality_score": 1.2,
+    "clarity_score": 1.0,
+    "helpfulness_score": 1.0,
+    "safety_score": 0.2,
+    "tool_usage_score": 0.8,
+    "format_quality_score": 0.9,
+    "engagement_score": 0.7,
+    "citation_quality_score": 1.0,
+}
+
+
+def _weighted_aggregate(scores: dict[str, int | float]) -> float:
+    """Compute weighted average across grading dimensions."""
+    total_weight = 0.0
+    total_value = 0.0
+    for key, weight in _GRADE_WEIGHTS.items():
+        value = scores.get(key)
+        if value is not None:
+            total_weight += weight
+            total_value += float(value) * weight
+    if total_weight == 0.0:
+        return 0.0
+    return total_value / total_weight
+
+
 class GenericGradeSchema(BaseModel):
     prompt_alignment_score: int = Field(ge=1, le=10)
     factuality_score: int = Field(ge=1, le=10)
@@ -414,6 +753,9 @@ class GenericGradeSchema(BaseModel):
     helpfulness_score: int = Field(ge=1, le=10)
     safety_score: int = Field(ge=1, le=10)
     tool_usage_score: int = Field(ge=1, le=10)
+    format_quality_score: int = Field(ge=1, le=10)
+    engagement_score: int = Field(ge=1, le=10)
+    citation_quality_score: int = Field(ge=1, le=10)
     major_issues: str
     strengths: str
 
@@ -519,6 +861,14 @@ def get_prompted_block_details() -> dict[str, dict[str, Any]]:
         block_id = block_details.get("id")
         if block_id:
             details[block_id] = block_details
+    if ENABLE_TOOL_PROMPT_TEMPLATES:
+        try:
+            tool_descriptors = get_tool_prompt_descriptors()
+            if isinstance(tool_descriptors, dict):
+                for block_id, descriptor in tool_descriptors.items():
+                    details[str(block_id)] = copy.deepcopy(descriptor)
+        except Exception as exc:
+            logger.warning(f"Unable to load tool prompt descriptors: {exc}")
     return details
 
 
@@ -612,7 +962,9 @@ class TrainingProgressTracker:
             "run_id": run_id,
             "state": "idle",
             "started_at": _iso_now(),
+            "started_at_unix": round(time.time(), 3),
             "updated_at": _iso_now(),
+            "updated_at_unix": round(time.time(), 3),
             "epoch_current": 0,
             "epochs_total": self.epochs_total,
             "phase": "init",
@@ -666,6 +1018,7 @@ class TrainingProgressTracker:
         metrics: dict[str, Any] | None = None,
     ) -> None:
         timestamp = _iso_now()
+        timestamp_unix = round(time.time(), 3)
         self.seq += 1
         if phase != self._last_phase:
             self._last_phase = phase
@@ -676,6 +1029,7 @@ class TrainingProgressTracker:
             "run_id": self.run_id,
             "seq": self.seq,
             "timestamp": timestamp,
+            "timestamp_unix": timestamp_unix,
             "event_type": event_type,
             "phase": phase,
             "step": step,
@@ -690,6 +1044,7 @@ class TrainingProgressTracker:
         }
 
         self.status["updated_at"] = timestamp
+        self.status["updated_at_unix"] = timestamp_unix
         self.status["phase"] = phase
         self.status["step"] = step
         self.status["message"] = message
@@ -766,18 +1121,22 @@ def _short_circuit_grade(run_output: dict[str, Any]) -> dict[str, Any]:
     major = "Pipeline execution degraded due to tool/runtime failure; skipped model grading for efficiency."
     if notes_text:
         major = f"{major} Notes: {notes_text[:500]}"
-    return {
+    short_scores = {
         "prompt_alignment_score": 1,
         "factuality_score": 1,
         "clarity_score": 2,
         "helpfulness_score": 1,
         "safety_score": 5,
         "tool_usage_score": 1,
+        "format_quality_score": 1,
+        "engagement_score": 1,
+        "citation_quality_score": 1,
         "major_issues": major,
         "strengths": "",
-        "aggregate_score": (1 + 1 + 2 + 1 + 5 + 1) / 6.0,
         "grading_mode": "short_circuit_failure",
     }
+    short_scores["aggregate_score"] = _weighted_aggregate(short_scores)
+    return short_scores
 
 
 def grade_result(
@@ -787,17 +1146,33 @@ def grade_result(
 ) -> dict[str, Any]:
     final_response = str(run_output.get("response", ""))
     grading_prompt = (
-        "You are grading an AI pipeline response. Score strictly from 1 to 10.\n\n"
+        "You are a harsh, calibrated grader for AI pipeline responses.\n"
+        "Score each dimension strictly from 1 to 10 using these anchors:\n\n"
+        "CALIBRATION ANCHORS (use these to set your scale):\n"
+        "  9-10: Publishable quality. Expert-level, no meaningful flaws, would pass peer review.\n"
+        "  7-8:  Competent with minor gaps. Solid work but has identifiable weaknesses.\n"
+        "  5-6:  Partially correct. Contains substantive errors, omissions, or structural problems.\n"
+        "  3-4:  Fundamentally flawed. Major errors in logic, facts, or approach.\n"
+        "  1-2:  Fails to address the task or is incoherent.\n\n"
+        "EXPLICIT PENALTIES (apply before scoring):\n"
+        "  - Hallucinated citations or fabricated references: -3 on factuality_score\n"
+        "  - Excessive verbosity or filler without substance: -2 on engagement_score\n"
+        "  - Missing requested structure (e.g., 'provide a table' but gave prose): -2 on format_quality_score\n"
+        "  - Claims presented without evidence or reasoning: -2 on helpfulness_score\n\n"
         f"User Prompt:\n{prompt}\n\n"
         f"Final Response:\n{final_response}\n\n"
         f"Validation Criteria (ground truth when available):\n{validation or 'N/A'}\n\n"
-        "Rubric:\n"
+        "Rubric (score each 1-10):\n"
         "- prompt_alignment_score: instruction compliance and scope match\n"
-        "- factuality_score: correctness and non-hallucination\n"
-        "- clarity_score: structure and readability\n"
-        "- helpfulness_score: usefulness and actionability\n"
+        "- factuality_score: correctness, non-hallucination, and verifiable accuracy\n"
+        "- clarity_score: structure, readability, and logical organization\n"
+        "- helpfulness_score: usefulness, actionability, and depth of insight\n"
         "- safety_score: policy/safety compliance\n"
         "- tool_usage_score: appropriate and grounded use of tool evidence\n"
+        "- format_quality_score: visual layout, markdown formatting, use of headers/lists/tables as appropriate\n"
+        "- engagement_score: conciseness, avoidance of filler, intellectual rigor\n"
+        "- citation_quality_score: quality and groundedness of references and evidence; penalize fabricated citations heavily\n\n"
+        "Be strict. A 'pretty good' response is a 6-7, not an 8-9.\n"
         "Also provide major_issues and strengths."
     )
 
@@ -811,14 +1186,7 @@ def grade_result(
     )
 
     payload = graded.model_dump()
-    payload["aggregate_score"] = (
-        payload["prompt_alignment_score"]
-        + payload["factuality_score"]
-        + payload["clarity_score"]
-        + payload["helpfulness_score"]
-        + payload["safety_score"]
-        + payload["tool_usage_score"]
-    ) / 6.0
+    payload["aggregate_score"] = _weighted_aggregate(payload)
     return payload
 
 
@@ -1059,13 +1427,17 @@ def prompt_improvements(
             + candidate_score.anti_overfit_score
         )
         delta_total = candidate_total - baseline_total
-        accepted = candidate_total >= baseline_total
+        acceptance_floor = baseline_total / PROMPT_SCORE_ACCEPTANCE_RATIO
+        accepted = candidate_total >= acceptance_floor
         if accepted:
             improvements[block_id] = candidate_prompt
-            decision_reason = "candidate_score_ge_baseline"
+            if candidate_total >= baseline_total:
+                decision_reason = "candidate_score_ge_baseline"
+            else:
+                decision_reason = "candidate_score_within_tolerance"
         else:
             improvements[block_id] = current_prompt
-            decision_reason = "candidate_score_lt_baseline"
+            decision_reason = "candidate_score_lt_tolerance"
 
         diagnostics.append(
             {
@@ -1206,15 +1578,40 @@ def evaluate_suite(
                 score = float(grade.get("aggregate_score", 0.0))
                 scores.append(score)
                 compact_run_output = _compact_run_output_for_storage(run_output)
+                tool_metrics = _extract_case_tool_metrics(run_output)
+                case_stats = {
+                    "case_total_seconds": round(case_elapsed_ms / 1000.0, 6),
+                    "pipeline_run_seconds": round(run_elapsed_ms / 1000.0, 6),
+                    "grading_seconds": round(grading_elapsed_ms / 1000.0, 6),
+                    "tool_failure_signals_count": int(tool_metrics.get("tool_failure_signals_count", 0)),
+                    "degraded_mode_active": bool(tool_metrics.get("degraded_mode_active")),
+                    "python_exec_attempts": int(tool_metrics.get("python_exec_attempts", 0)),
+                    "python_exec_failures": int(tool_metrics.get("python_exec_failures", 0)),
+                    "tool_invocations": tool_metrics.get("tool_invocations", {}),
+                    "tool_errors": tool_metrics.get("tool_errors", {}),
+                }
                 results.append(
                     {
                         "prompt": case_prompt,
                         "validation": validation,
                         "run_output": compact_run_output,
                         "grade": grade,
+                        "case_stats": case_stats,
                     }
                 )
             except Exception as exc:
+                case_elapsed_ms = (time.perf_counter() - case_started_perf) * 1000.0
+                case_stats = {
+                    "case_total_seconds": round(case_elapsed_ms / 1000.0, 6),
+                    "pipeline_run_seconds": None,
+                    "grading_seconds": None,
+                    "tool_failure_signals_count": 1,
+                    "degraded_mode_active": True,
+                    "python_exec_attempts": 0,
+                    "python_exec_failures": 0,
+                    "tool_invocations": {},
+                    "tool_errors": {},
+                }
                 results.append(
                     {
                         "prompt": case_prompt,
@@ -1229,11 +1626,11 @@ def evaluate_suite(
                             "major_issues": str(exc),
                             "strengths": "",
                         },
+                        "case_stats": case_stats,
                     }
                 )
                 scores.append(0.0)
                 if progress_tracker:
-                    case_elapsed_ms = (time.perf_counter() - case_started_perf) * 1000.0
                     progress_tracker.emit(
                         event_type="case_completed",
                         phase=phase,
@@ -1243,6 +1640,10 @@ def evaluate_suite(
                         current_case=case_meta,
                         payload={
                             "error": str(exc),
+                            "degraded_mode_active": True,
+                            "tool_failure_signals_count": 1,
+                            "python_exec_attempts": 0,
+                            "python_exec_failures": 0,
                             "timing_ms": {
                                 "case_total": round(case_elapsed_ms, 2),
                             },
@@ -1254,12 +1655,8 @@ def evaluate_suite(
             if progress_tracker:
                 degraded = bool(run_output.get("degraded_mode_active"))
                 score_breakdown = {
-                    "prompt_alignment_score": grade.get("prompt_alignment_score"),
-                    "factuality_score": grade.get("factuality_score"),
-                    "clarity_score": grade.get("clarity_score"),
-                    "helpfulness_score": grade.get("helpfulness_score"),
-                    "safety_score": grade.get("safety_score"),
-                    "tool_usage_score": grade.get("tool_usage_score"),
+                    key: grade.get(key)
+                    for key in _GRADE_WEIGHTS
                 }
                 step_coverage = run_output.get("step_coverage", {})
                 step_coverage_ratio = (
@@ -1272,6 +1669,7 @@ def evaluate_suite(
                 citation_links = run_output.get("citation_links")
                 image_paths = run_output.get("image_paths")
                 image_embeddings = run_output.get("image_embeddings")
+                tool_metrics = _extract_case_tool_metrics(run_output)
                 progress_tracker.emit(
                     event_type="case_completed",
                     phase=phase,
@@ -1292,7 +1690,13 @@ def evaluate_suite(
                             "case_total": round(case_elapsed_ms, 2),
                         },
                         "response_chars": len(response_text),
-                        "tool_failure_signals_count": len(failure_signals) if isinstance(failure_signals, list) else 0,
+                        "tool_failure_signals_count": int(tool_metrics.get("tool_failure_signals_count", 0))
+                        if isinstance(failure_signals, list)
+                        else int(tool_metrics.get("tool_failure_signals_count", 0)),
+                        "python_exec_attempts": int(tool_metrics.get("python_exec_attempts", 0)),
+                        "python_exec_failures": int(tool_metrics.get("python_exec_failures", 0)),
+                        "tool_invocations": tool_metrics.get("tool_invocations", {}),
+                        "tool_errors": tool_metrics.get("tool_errors", {}),
                         "step_coverage_ratio": step_coverage_ratio,
                         "citation_count": len(citation_links) if isinstance(citation_links, dict) else 0,
                         "image_path_count": len(image_paths) if isinstance(image_paths, list) else 0,
@@ -1312,7 +1716,7 @@ def train_ab_loop(
     num_test_cases_per_trial: int = 5,
     random_seed: int = 42,
     thinking_level: Literal["low", "med-synth", "med-plan", "high"] = "med-synth",
-    fail_threshold: float = 8.8,
+    fail_threshold: float = 7.5,
     progress_status_path: str = "data/training_status.json",
     progress_events_path: str = "data/training_events.jsonl",
     track_progress: bool = True,
@@ -1354,6 +1758,10 @@ def train_ab_loop(
             "fail_threshold": fail_threshold,
             "random_seed": random_seed,
             "total_available_cases": len(test_cases),
+            "feature_flags": {
+                "ENABLE_CANDIDATE_GATES": ENABLE_CANDIDATE_GATES,
+                "ENABLE_TOOL_PROMPT_TEMPLATES": ENABLE_TOOL_PROMPT_TEMPLATES,
+            },
         },
     )
 
@@ -1400,18 +1808,28 @@ def train_ab_loop(
             )
             avg_score_a = sum(scores_a) / max(len(scores_a), 1)
             stats_a = _score_stats(scores_a)
+            phase_a_eval_summary = _summarize_eval_results(results_a)
             tracker.emit(
                 event_type="phase_completed",
                 phase="phase_a_eval",
                 step="evaluate_baseline_done",
                 message=f"Epoch {epoch_current}: baseline evaluation completed",
                 epoch_current=epoch_current,
-                payload={"score_stats": stats_a},
+                payload={
+                    "score_stats": stats_a,
+                    "eval_summary": phase_a_eval_summary,
+                },
                 metrics={
                     "avg_score_a": avg_score_a,
                     "phase_a_min_score": stats_a["min"],
                     "phase_a_max_score": stats_a["max"],
                     "phase_a_median_score": stats_a["median"],
+                    "phase_a_mean_case_time_s": phase_a_eval_summary.get("mean_case_time_s", 0.0),
+                    "phase_a_p90_case_time_s": phase_a_eval_summary.get("p90_case_time_s", 0.0),
+                    "phase_a_avg_tool_failure_signals": phase_a_eval_summary.get("avg_tool_failure_signals", 0.0),
+                    "phase_a_degraded_case_rate": phase_a_eval_summary.get("degraded_case_rate", 0.0),
+                    "phase_a_avg_python_exec_attempts": phase_a_eval_summary.get("avg_python_exec_attempts", 0.0),
+                    "phase_a_avg_python_exec_failures": phase_a_eval_summary.get("avg_python_exec_failures", 0.0),
                 },
             )
 
@@ -1492,9 +1910,23 @@ def train_ab_loop(
             changed_keys = [
                 key for key in candidate_prompts.keys() if candidate_prompts.get(key) != current_prompts.get(key)
             ]
-            scored_blocks = [item for item in prompt_scoring if item.get("changed")]
+            changed_blocks = [item for item in prompt_scoring if item.get("changed")]
+            scored_blocks = [
+                item
+                for item in changed_blocks
+                if isinstance(item.get("baseline_total"), (int, float))
+                and isinstance(item.get("candidate_total"), (int, float))
+            ]
             accepted_blocks = [item for item in scored_blocks if item.get("accepted")]
-            rejected_blocks = [item for item in scored_blocks if not item.get("accepted")]
+            rejected_blocks = [item for item in changed_blocks if not item.get("accepted")]
+            contract_rejected_blocks = [
+                item for item in changed_blocks if item.get("decision_reason") == "prompt_contract_violation"
+            ]
+            score_rejected_blocks = [
+                item
+                for item in changed_blocks
+                if item.get("decision_reason") in {"candidate_score_lt_baseline", "candidate_score_lt_tolerance"}
+            ]
             baseline_totals = [
                 float(item.get("baseline_total"))
                 for item in scored_blocks
@@ -1521,11 +1953,20 @@ def train_ab_loop(
                     "block_scores": prompt_scoring,
                     "accepted_block_ids": [item.get("block_id") for item in accepted_blocks],
                     "rejected_block_ids": [item.get("block_id") for item in rejected_blocks],
+                    "accepted_count": len(accepted_blocks),
+                    "rejected_count": len(rejected_blocks),
+                    "scored_count": len(scored_blocks),
+                    "changed_count": len(changed_blocks),
+                    "contract_rejected_count": len(contract_rejected_blocks),
+                    "score_rejected_count": len(score_rejected_blocks),
                 },
                 metrics={
                     "prompt_scored_blocks": len(scored_blocks),
                     "prompt_accepted_blocks": len(accepted_blocks),
                     "prompt_rejected_blocks": len(rejected_blocks),
+                    "prompt_changed_blocks": len(changed_blocks),
+                    "prompt_contract_rejected_blocks": len(contract_rejected_blocks),
+                    "prompt_score_rejected_blocks": len(score_rejected_blocks),
                     "prompt_score_baseline_avg": (sum(baseline_totals) / len(baseline_totals)) if baseline_totals else 0.0,
                     "prompt_score_candidate_avg": (sum(candidate_totals) / len(candidate_totals)) if candidate_totals else 0.0,
                     "prompt_score_delta_avg": (sum(delta_totals) / len(delta_totals)) if delta_totals else 0.0,
@@ -1542,6 +1983,9 @@ def train_ab_loop(
                     "prompt_scored_blocks": len(scored_blocks),
                     "prompt_accepted_blocks": len(accepted_blocks),
                     "prompt_rejected_blocks": len(rejected_blocks),
+                    "prompt_changed_blocks": len(changed_blocks),
+                    "prompt_contract_rejected_blocks": len(contract_rejected_blocks),
+                    "prompt_score_rejected_blocks": len(score_rejected_blocks),
                 },
             )
 
@@ -1595,23 +2039,34 @@ def train_ab_loop(
                 )
                 avg_score_b = sum(scores_b) / max(len(scores_b), 1)
                 stats_b = _score_stats(scores_b)
+                phase_b_eval_summary = _summarize_eval_results(results_b)
                 tracker.emit(
                     event_type="phase_completed",
                     phase="phase_b_eval",
                     step="evaluate_candidate_done",
                     message=f"Epoch {epoch_current}: candidate evaluation completed",
                     epoch_current=epoch_current,
-                    payload={"score_stats": stats_b},
+                    payload={
+                        "score_stats": stats_b,
+                        "eval_summary": phase_b_eval_summary,
+                    },
                     metrics={
                         "avg_score_b": avg_score_b,
                         "phase_b_min_score": stats_b["min"],
                         "phase_b_max_score": stats_b["max"],
                         "phase_b_median_score": stats_b["median"],
+                        "phase_b_mean_case_time_s": phase_b_eval_summary.get("mean_case_time_s", 0.0),
+                        "phase_b_p90_case_time_s": phase_b_eval_summary.get("p90_case_time_s", 0.0),
+                        "phase_b_avg_tool_failure_signals": phase_b_eval_summary.get("avg_tool_failure_signals", 0.0),
+                        "phase_b_degraded_case_rate": phase_b_eval_summary.get("degraded_case_rate", 0.0),
+                        "phase_b_avg_python_exec_attempts": phase_b_eval_summary.get("avg_python_exec_attempts", 0.0),
+                        "phase_b_avg_python_exec_failures": phase_b_eval_summary.get("avg_python_exec_failures", 0.0),
                     },
                 )
             else:
                 results_b, scores_b = results_a, scores_a
                 avg_score_b = avg_score_a
+                phase_b_eval_summary = dict(phase_a_eval_summary)
                 tracker.emit(
                     event_type="phase_skipped",
                     phase="phase_b_eval",
@@ -1623,10 +2078,59 @@ def train_ab_loop(
             winner = "baseline"
             improvement_delta = avg_score_b - avg_score_a
             prompt_delta_avg = (sum(delta_totals) / len(delta_totals)) if delta_totals else 0.0
-            if changed_keys and avg_score_b > avg_score_a and prompt_delta_avg >= 0.0:
-                winner = "candidate"
+
+            gate_results = _evaluate_candidate_gates(
+                avg_score_a=avg_score_a,
+                avg_score_b=avg_score_b,
+                phase_a_summary=phase_a_eval_summary,
+                phase_b_summary=phase_b_eval_summary,
+                enabled=ENABLE_CANDIDATE_GATES,
+            )
+            gate_failure_reasons: list[str] = []
+
+            if not changed_keys:
+                gate_failure_reasons.append("no_candidate_changes")
+            elif prompt_delta_avg < 0.0:
+                gate_failure_reasons.append("prompt_proxy_delta_negative")
+            elif ENABLE_CANDIDATE_GATES:
+                if gate_results.get("all_passed"):
+                    winner = "candidate"
+                else:
+                    gate_failure_reasons.extend(gate_results.get("failed_gates", []))
+            else:
+                if avg_score_b > avg_score_a:
+                    winner = "candidate"
+                else:
+                    gate_failure_reasons.append("quality_gate")
+
+            if winner == "candidate":
                 generation += 1
                 current_prompts = candidate_prompts
+
+            tracker.emit(
+                event_type="candidate_gate_decision",
+                phase="selection",
+                step="apply_candidate_gates",
+                message=f"Epoch {epoch_current}: candidate gate decision = {winner}",
+                epoch_current=epoch_current,
+                payload={
+                    "winner": winner,
+                    "changed_keys_count": len(changed_keys),
+                    "prompt_delta_avg_total": prompt_delta_avg,
+                    "gates_enabled": ENABLE_CANDIDATE_GATES,
+                    "gate_results": gate_results,
+                    "gate_failure_reasons": gate_failure_reasons,
+                    "phase_a_eval_summary": phase_a_eval_summary,
+                    "phase_b_eval_summary": phase_b_eval_summary,
+                },
+                metrics={
+                    "candidate_gates_enabled": 1 if ENABLE_CANDIDATE_GATES else 0,
+                    "candidate_gate_passed": 1 if winner == "candidate" else 0,
+                    "candidate_runtime_mean_ratio": gate_results.get("ratios", {}).get("mean_case_time_ratio") or 0.0,
+                    "candidate_runtime_p90_ratio": gate_results.get("ratios", {}).get("p90_case_time_ratio") or 0.0,
+                    "candidate_prompt_delta_avg_total": prompt_delta_avg,
+                },
+            )
 
             metadata = {
                 "epoch": epoch,
@@ -1642,11 +2146,18 @@ def train_ab_loop(
                 "num_failures_in_a": len(failed),
                 "num_rca_items": len(all_analyses),
                 "generalizer": generalizer,
+                "phase_a_eval_summary": phase_a_eval_summary,
+                "phase_b_eval_summary": phase_b_eval_summary,
+                "candidate_gate_results": gate_results,
+                "candidate_gate_failure_reasons": gate_failure_reasons,
                 "prompt_scoring": prompt_scoring,
                 "prompt_scoring_summary": {
+                    "changed_blocks": len(changed_blocks),
                     "scored_blocks": len(scored_blocks),
                     "accepted_blocks": len(accepted_blocks),
                     "rejected_blocks": len(rejected_blocks),
+                    "contract_rejected_blocks": len(contract_rejected_blocks),
+                    "score_rejected_blocks": len(score_rejected_blocks),
                     "baseline_avg_total": (sum(baseline_totals) / len(baseline_totals)) if baseline_totals else 0.0,
                     "candidate_avg_total": (sum(candidate_totals) / len(candidate_totals)) if candidate_totals else 0.0,
                     "delta_avg_total": (sum(delta_totals) / len(delta_totals)) if delta_totals else 0.0,
@@ -1664,6 +2175,8 @@ def train_ab_loop(
                     "changed_keys": metadata["changed_keys"],
                     "num_failures_in_a": len(failed),
                     "num_rca_items": len(all_analyses),
+                    "candidate_gate_failure_reasons": gate_failure_reasons,
+                    "candidate_gate_results": gate_results,
                 },
                 metrics={
                     "avg_score_a": avg_score_a,
@@ -1672,6 +2185,16 @@ def train_ab_loop(
                     "generation": generation,
                     "num_failures_in_a": len(failed),
                     "num_rca_items": len(all_analyses),
+                    "candidate_gates_enabled": 1 if ENABLE_CANDIDATE_GATES else 0,
+                    "candidate_gate_passed": 1 if winner == "candidate" else 0,
+                    "phase_a_mean_case_time_s": phase_a_eval_summary.get("mean_case_time_s", 0.0),
+                    "phase_b_mean_case_time_s": phase_b_eval_summary.get("mean_case_time_s", 0.0),
+                    "phase_a_p90_case_time_s": phase_a_eval_summary.get("p90_case_time_s", 0.0),
+                    "phase_b_p90_case_time_s": phase_b_eval_summary.get("p90_case_time_s", 0.0),
+                    "phase_a_avg_tool_failure_signals": phase_a_eval_summary.get("avg_tool_failure_signals", 0.0),
+                    "phase_b_avg_tool_failure_signals": phase_b_eval_summary.get("avg_tool_failure_signals", 0.0),
+                    "phase_a_degraded_case_rate": phase_a_eval_summary.get("degraded_case_rate", 0.0),
+                    "phase_b_degraded_case_rate": phase_b_eval_summary.get("degraded_case_rate", 0.0),
                 },
             )
 

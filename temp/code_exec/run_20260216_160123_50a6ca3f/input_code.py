@@ -1,0 +1,1 @@
+import sympy as sp; D, k, L = sp.symbols('D k L', positive=True); phi = L*sp.sqrt(k/D); result = phi**2; print(result)

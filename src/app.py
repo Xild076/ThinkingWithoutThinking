@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +53,12 @@ UI_DIR = Path(__file__).resolve().parent / "ui"
 TRAINING_STATUS_PATH = Path("data/training_status.json")
 TRAINING_EVENTS_PATH = Path("data/training_events.jsonl")
 TRAINING_LOG_PATH = Path("logs/prompt_training.log")
+ENABLE_MAX_DETAIL_UI_PANELS = str(os.getenv("ENABLE_MAX_DETAIL_UI_PANELS", "1")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 if UI_DIR.exists():
     app.mount("/ui", StaticFiles(directory=str(UI_DIR)), name="ui")
 
@@ -123,6 +131,9 @@ async def training_status() -> dict[str, Any]:
             "status_path": str(TRAINING_STATUS_PATH),
             "events_path": str(TRAINING_EVENTS_PATH),
             "log_path": str(TRAINING_LOG_PATH),
+            "feature_flags": {
+                "ENABLE_MAX_DETAIL_UI_PANELS": ENABLE_MAX_DETAIL_UI_PANELS,
+            },
         }
     return {
         "status": "ok",
@@ -130,6 +141,9 @@ async def training_status() -> dict[str, Any]:
         "status_path": str(TRAINING_STATUS_PATH),
         "events_path": str(TRAINING_EVENTS_PATH),
         "log_path": str(TRAINING_LOG_PATH),
+        "feature_flags": {
+            "ENABLE_MAX_DETAIL_UI_PANELS": ENABLE_MAX_DETAIL_UI_PANELS,
+        },
     }
 
 
@@ -143,10 +157,10 @@ async def training_events(limit: int = Query(default=200, ge=1, le=2000)) -> dic
 
 
 @app.get("/training/stream")
-async def training_stream(poll_ms: int = Query(default=1000, ge=200, le=5000)) -> StreamingResponse:
+async def training_stream(poll_ms: int = Query(default=500, ge=200, le=5000)) -> StreamingResponse:
     def event_stream():
         position = 0
-        heartbeat_interval = 5.0
+        heartbeat_interval = 3.0
         last_heartbeat = 0.0
 
         while True:
@@ -176,9 +190,11 @@ async def training_stream(poll_ms: int = Query(default=1000, ge=200, le=5000)) -
             now = time.time()
             if not emitted and (now - last_heartbeat) >= heartbeat_interval:
                 status = _read_json_file(TRAINING_STATUS_PATH) or {}
+                now_iso = datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds")
                 payload = {
                     "event_type": "heartbeat",
-                    "timestamp": now,
+                    "timestamp": now_iso,
+                    "timestamp_unix": round(now, 3),
                     "run_id": status.get("run_id"),
                     "state": status.get("state", "idle"),
                     "epoch_current": status.get("epoch_current", 0),
@@ -191,6 +207,9 @@ async def training_stream(poll_ms: int = Query(default=1000, ge=200, le=5000)) -
                     "elapsed_seconds": status.get("elapsed_seconds", 0.0),
                     "phase_elapsed_seconds": status.get("phase_elapsed_seconds", 0.0),
                     "metrics": status.get("metrics", {}),
+                    "feature_flags": {
+                        "ENABLE_MAX_DETAIL_UI_PANELS": ENABLE_MAX_DETAIL_UI_PANELS,
+                    },
                 }
                 yield f"data: {json.dumps(payload, cls=JSONEncoder)}\n\n"
                 last_heartbeat = now

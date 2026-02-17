@@ -4,7 +4,7 @@
     "category": "literary_analysis",
     "difficulty": "very_hard",
     "prompt": "Compare narrative reliability in Henry James's 'The Turn of the Screw' and Kazuo Ishiguro's 'Never Let Me Go'. Build two competing interpretations for each novel, then argue which interpretation is better supported while explicitly acknowledging unresolved ambiguity.",
-    "validation": "Must include two competing theses per novel, discuss point of view and narrative filtering, weigh evidence instead of asserting certainty, and clearly mark uncertainties."
+    "validation": "Must include two competing theses per novel (exactly 2, NOT 1 or 3+). Must discuss point of view and narrative filtering. Must weigh evidence instead of asserting certainty. Must clearly mark uncertainties using hedging language. Must NOT collapse both lenses into a single blended claim. Must NOT fabricate quotes from the novels."
   },
   {
     "id": "lit-02",
@@ -138,7 +138,8 @@
     "category": "science",
     "difficulty": "hard",
     "prompt": "Create a Bayesian update walkthrough for a diagnostic test with sensitivity 0.94, specificity 0.91, and prevalence 0.02. Include posterior PPV and NPV.",
-    "validation": "Must compute PPV and NPV correctly from provided parameters and explain base-rate impact clearly."
+    "validation": "Must compute PPV and NPV correctly from provided parameters and explain base-rate impact clearly. Must NOT present PPV as greater than 50% (correct PPV is approximately 17.6%). Must NOT omit the base-rate discussion.",
+    "answer": "PPV = (0.94 * 0.02) / (0.94 * 0.02 + 0.09 * 0.98) = 0.0188 / 0.1070 ≈ 0.176 (17.6%). NPV = (0.91 * 0.98) / (0.91 * 0.98 + 0.06 * 0.02) = 0.8918 / 0.8930 ≈ 0.9987 (99.87%)."
   },
   {
     "id": "science-06",
@@ -152,7 +153,7 @@
     "category": "coding",
     "difficulty": "very_hard",
     "prompt": "Implement Dijkstra and A* in Python for weighted graphs, include complexity discussion, and provide tests that demonstrate a case where an inadmissible heuristic breaks A* optimality.",
-    "validation": "Must include both algorithms, complexity discussion, and at least one test case showing inadmissible heuristic can yield suboptimal path."
+    "validation": "Must include both algorithms with runnable Python code. Complexity discussion must state O((V+E)logV) for Dijkstra. Must include at least one test case showing inadmissible heuristic yields suboptimal path. Must NOT claim A* always finds optimal paths regardless of heuristic. Code must NOT contain obvious syntax errors."
   },
   {
     "id": "coding-02",
@@ -208,7 +209,7 @@
     "category": "engineering",
     "difficulty": "very_hard",
     "prompt": "Design a fault-tolerant architecture for telemetry ingestion at 200k events/sec across two regions with exactly-once semantics requirement. Explain realistic compromises.",
-    "validation": "Must address throughput, regional failover, idempotency/exactly-once tradeoffs, and clearly state compromises and failure modes."
+    "validation": "Must address throughput, regional failover, idempotency/exactly-once tradeoffs, and clearly state compromises and failure modes. Must NOT claim true exactly-once is trivially achievable without acknowledging the impossibility in distributed systems (FLP result). Must include at least one concrete technology choice (e.g., Kafka, Pulsar, Kinesis). Response must NOT exceed 2000 words."
   },
   {
     "id": "engineering-02",
@@ -420,5 +421,158 @@
     "difficulty": "very_hard",
     "prompt": "Create a crisis-response decision framework for AI-assisted wildfire evacuation planning under uncertain forecasts, constrained transport capacity, and communication outages.",
     "validation": "Must include uncertainty handling, operational constraints, fairness/ethics checks, and measurable post-incident review criteria."
+  },
+
+  {
+    "id": "adversarial-01",
+    "category": "reasoning_traps",
+    "difficulty": "hard",
+    "prompt": "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost? Show your work and verify your answer by substitution.",
+    "validation": "Must give the correct answer ($0.05) and NOT $0.10. Must verify by showing $0.05 + $1.05 = $1.10. Must NOT contain the incorrect answer $0.10 presented as correct at any point.",
+    "answer": "The ball costs $0.05. The bat costs $1.05. Check: $0.05 + $1.05 = $1.10."
+  },
+  {
+    "id": "adversarial-02",
+    "category": "reasoning_traps",
+    "difficulty": "hard",
+    "prompt": "If it takes 5 machines 5 minutes to make 5 widgets, how long would it take 100 machines to make 100 widgets? Explain your reasoning step by step.",
+    "validation": "Must give the correct answer (5 minutes) and NOT 100 minutes. Must explain that each machine makes 1 widget in 5 minutes, so 100 machines make 100 widgets in 5 minutes. Response must NOT exceed 500 words.",
+    "answer": "5 minutes. Each machine makes 1 widget per 5 minutes; 100 machines x 5 minutes = 100 widgets."
+  },
+  {
+    "id": "adversarial-03",
+    "category": "reasoning_traps",
+    "difficulty": "very_hard",
+    "prompt": "A farmer has 17 sheep. All but 9 die. How many sheep does the farmer have left? Also: if you have a 7-minute hourglass and an 11-minute hourglass, how do you time exactly 15 minutes?",
+    "validation": "Must answer 9 sheep (NOT 8). Must provide a valid 15-minute timing strategy using only the two hourglasses. Must NOT include fabricated citations or references. Response must be structured with clearly labeled answers for each sub-question.",
+    "answer": "9 sheep remain. For 15 minutes: start both hourglasses; when 7-min runs out (at t=7), flip it; when 11-min runs out (at t=11), flip the 7-min (which has 3 min left); that runs at t=14, flip again for 1 min to reach t=15."
+  },
+  {
+    "id": "adversarial-04",
+    "category": "reasoning_traps",
+    "difficulty": "hard",
+    "prompt": "Three people check into a hotel room that costs $30. They each pay $10. The manager realizes the room only costs $25, so he gives $5 to the bellboy to return. The bellboy keeps $2 and gives $1 back to each person. Now each person paid $9 (total $27), plus $2 the bellboy kept = $29. Where did the missing $1 go?",
+    "validation": "Must correctly identify that there is no missing dollar - the $27 already includes the bellboy's $2, so adding $2 to $27 is double-counting. Must NOT claim there is actually a missing dollar. Must NOT introduce irrelevant math to explain the 'paradox'.",
+    "answer": "There is no missing dollar. The $27 paid = $25 (room) + $2 (bellboy). Adding the bellboy's $2 to the $27 is double-counting."
+  },
+  {
+    "id": "adversarial-05",
+    "category": "coding",
+    "difficulty": "hard",
+    "prompt": "Write a Python function to check if a number is prime. Then use it to determine: is 1 prime? Is 2 prime? Is 91 prime? Give the answers directly.",
+    "validation": "Must correctly state: 1 is NOT prime, 2 IS prime, 91 is NOT prime (91 = 7 x 13). The function must correctly handle edge cases (0, 1, 2, negative numbers). Must NOT claim 91 is prime.",
+    "answer": "1 is not prime. 2 is prime. 91 is not prime (91 = 7 x 13)."
+  },
+  {
+    "id": "adversarial-06",
+    "category": "mathematics",
+    "difficulty": "hard",
+    "prompt": "Evaluate: 0.1 + 0.2 in exact arithmetic vs IEEE 754 floating point. What is the exact decimal result of 0.1 + 0.2 in a standard Python float? Is 0.1 + 0.2 == 0.3 True or False in Python?",
+    "validation": "Must state that 0.1 + 0.2 == 0.3 evaluates to False in Python. Must explain IEEE 754 representation issues. Must NOT claim the comparison is True.",
+    "answer": "In exact arithmetic, 0.1 + 0.2 = 0.3. In IEEE 754 (Python float), 0.1 + 0.2 = 0.30000000000000004. 0.1 + 0.2 == 0.3 is False."
+  },
+  {
+    "id": "selfconsistency-01",
+    "category": "self_consistency",
+    "difficulty": "very_hard",
+    "prompt": "List the top 5 largest countries by area. Then, without looking at your list, independently rank them by area from smallest to largest. Are your two lists consistent? If not, explain the discrepancy.",
+    "validation": "The two lists must be exactly consistent with each other (reverse order). If they are inconsistent, the response must explicitly acknowledge and explain the contradiction. Must NOT present contradictory lists without noting the inconsistency. Countries must be factually correct: Russia, Canada, USA/China (depending on measurement), Brazil."
+  },
+  {
+    "id": "selfconsistency-02",
+    "category": "self_consistency",
+    "difficulty": "hard",
+    "prompt": "Explain the difference between accuracy and precision in measurement. Then provide an example where a measurement is accurate but not precise, and vice versa. Finally, state which is more important in clinical laboratory testing and why.",
+    "validation": "Definitions must be correct and mutually consistent. Examples must genuinely illustrate the stated concepts (accurate-not-precise must show values scattered around the true value; precise-not-accurate must show tight clustering away from true value). Must NOT confuse or swap the two concepts at any point in the response."
+  },
+  {
+    "id": "conciseness-01",
+    "category": "constrained_writing",
+    "difficulty": "medium",
+    "prompt": "Explain how a blockchain works in exactly 3 paragraphs. Each paragraph must be 2-4 sentences long.",
+    "validation": "Must contain exactly 3 paragraphs. Each paragraph must have between 2 and 4 sentences inclusive. Must NOT have fewer or more than 3 paragraphs. Must NOT have any paragraph with more than 4 sentences or fewer than 2. Content must be factually accurate about blockchain mechanics."
+  },
+  {
+    "id": "conciseness-02",
+    "category": "constrained_writing",
+    "difficulty": "medium",
+    "prompt": "Write a summary of photosynthesis in under 100 words. Include the chemical equation.",
+    "validation": "Total word count must be under 100 words. Must include the correct overall photosynthesis equation (6CO2 + 6H2O -> C6H12O6 + 6O2 or equivalent). Must NOT exceed 100 words. Must NOT omit the chemical equation."
+  },
+  {
+    "id": "conciseness-03",
+    "category": "constrained_writing",
+    "difficulty": "hard",
+    "prompt": "Compare TCP and UDP in a table with exactly 5 rows (attributes) and 2 columns (one per protocol). After the table, provide exactly one sentence summarizing when to use each.",
+    "validation": "Must contain a table with exactly 5 attribute rows and 2 protocol columns. Must contain exactly 1 summary sentence after the table, NOT 2 or more. Table attributes must be factually correct. Must NOT present a table with more or fewer than 5 rows."
+  },
+  {
+    "id": "citation-trap-01",
+    "category": "citation_quality",
+    "difficulty": "hard",
+    "prompt": "What were the main findings of the 2023 WHO Global Health Report? Provide specific statistics and cite sections of the report.",
+    "validation": "Must NOT fabricate specific statistics, page numbers, or section references that don't exist. If the model cannot verify the exact report, it MUST explicitly state uncertainty. Fabricating plausible-sounding but false citations should result in a very low score. Must NOT present invented numbers as fact."
+  },
+  {
+    "id": "citation-trap-02",
+    "category": "citation_quality",
+    "difficulty": "very_hard",
+    "prompt": "Summarize the key arguments in John Rawls' 'A Theory of Justice' and provide at least 3 direct quotes with page numbers from the original 1971 edition.",
+    "validation": "Must accurately represent Rawls' arguments (veil of ignorance, difference principle, original position). Must NOT fabricate direct quotes. If exact page-number citations cannot be verified, must explicitly caveat them. Presenting fabricated quotes as real should result in a very low factuality score."
+  },
+  {
+    "id": "math-strict-01",
+    "category": "mathematics",
+    "difficulty": "medium",
+    "prompt": "Solve the quadratic equation 2x^2 - 7x + 3 = 0 using the quadratic formula. Show every step.",
+    "validation": "Must give correct roots x = 3 and x = 0.5 (or 1/2). Must show discriminant calculation (49 - 24 = 25). Must NOT skip steps. Must NOT give wrong roots. Response must NOT exceed 300 words.",
+    "answer": "x = (7 +/- sqrt(25)) / 4 = (7 +/- 5) / 4, giving x = 3 and x = 1/2."
+  },
+  {
+    "id": "math-strict-02",
+    "category": "mathematics",
+    "difficulty": "medium",
+    "prompt": "Convert the decimal number 255 to binary, octal, and hexadecimal. Show your work for each conversion.",
+    "validation": "Must give 11111111 (binary), 377 (octal), FF (hexadecimal). Must show conversion steps for each. Must NOT give incorrect values. Must NOT skip any of the three conversions.",
+    "answer": "255 = 11111111 (binary) = 377 (octal) = FF (hexadecimal)."
+  },
+  {
+    "id": "science-strict-01",
+    "category": "science",
+    "difficulty": "medium",
+    "prompt": "Explain the three laws of thermodynamics. For each law, provide exactly one real-world example.",
+    "validation": "Must state all three laws correctly (zeroth law may optionally be included). Must provide exactly one example per law, NOT zero or more than one. Examples must be genuinely illustrative of the corresponding law and NOT of a different law. Must NOT confuse which example goes with which law."
+  },
+  {
+    "id": "reasoning-trap-01",
+    "category": "reasoning_traps",
+    "difficulty": "very_hard",
+    "prompt": "A doctor tells you that a test for a rare disease (prevalence 1 in 1000) has a 5% false positive rate and 100% sensitivity. You test positive. What is the probability you actually have the disease? Most people get this wrong - show why.",
+    "validation": "Must correctly compute approximately 1.96% (or ~2%) using Bayes' theorem. Must NOT say the probability is 95% or any value close to that. Must show the base-rate calculation. Must explicitly explain why naive intuition (ignoring base rate) gives the wrong answer.",
+    "answer": "P(disease|positive) = (0.001 x 1.0) / (0.001 x 1.0 + 0.999 x 0.05) = 0.001/0.05095 = ~0.0196 or about 1.96%."
+  },
+  {
+    "id": "reasoning-trap-02",
+    "category": "reasoning_traps",
+    "difficulty": "hard",
+    "prompt": "You have two children. One of them is a boy born on a Tuesday. What is the probability that both children are boys? This is NOT 1/2.",
+    "validation": "Must give the correct answer 13/27 (approximately 0.481), NOT 1/2 or 1/3. Must explain the day-of-week conditioning that makes this different from the simpler 'one is a boy' problem. Must NOT oversimplify to the classic 1/3 answer.",
+    "answer": "13/27 approximately 0.481."
+  },
+  {
+    "id": "coding-strict-01",
+    "category": "coding",
+    "difficulty": "medium",
+    "prompt": "Write a Python function that takes a list of integers and returns the second-largest unique value. Handle edge cases: empty list, single element, all duplicates.",
+    "validation": "Function must correctly return second-largest unique value. Must raise an exception or return None/sentinel for lists with fewer than 2 unique values. Must NOT return the largest value. Must NOT fail on empty input. Must include at least 3 test cases demonstrating edge cases.",
+    "answer": "For [3, 1, 4, 4, 5, 5, 2] -> 4. For [7, 7, 7] -> None/error. For [] -> None/error."
+  },
+  {
+    "id": "coding-strict-02",
+    "category": "coding",
+    "difficulty": "medium",
+    "prompt": "Implement FizzBuzz for numbers 1-20 in Python. For multiples of 3 print 'Fizz', multiples of 5 print 'Buzz', multiples of both print 'FizzBuzz', otherwise print the number. Show the expected output.",
+    "validation": "Output must be exactly correct for all 20 numbers. Must NOT miss FizzBuzz at 15. Must NOT print 'Fizz' for 5 or 'Buzz' for 3. Must check divisibility by 15 (or 3-and-5) before checking 3 or 5 individually. Expected output must match: 1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14, FizzBuzz, 16, 17, Fizz, 19, Buzz.",
+    "answer": "1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14, FizzBuzz, 16, 17, Fizz, 19, Buzz."
   }
 ]
