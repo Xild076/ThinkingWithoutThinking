@@ -1,0 +1,1 @@
+from sympy.solvers.diophantine import pell; result = pell(5); print(result)

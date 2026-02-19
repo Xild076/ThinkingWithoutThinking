@@ -1,0 +1,1 @@
+import numpy as np; f=lambda x: np.sin(x); a,b=0,np.pi; xs=np.linspace(a,b,10001); ys=f(xs); integral=np.trapz(ys,xs); result=integral; print(result)

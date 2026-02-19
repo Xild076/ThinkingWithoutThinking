@@ -1,0 +1,1 @@
+failures=['case1','case2','case3'];result=len(failures);print(result)

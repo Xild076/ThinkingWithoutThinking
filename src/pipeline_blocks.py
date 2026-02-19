@@ -1,1955 +1,1912 @@
+import sys
+import inspect
 import json
-import logging
 import re
-from typing import Optional
+import time
+from urllib.parse import urlparse, urlunparse
+from pydantic import BaseModel, Field, model_validator
+from enum import Enum
+from typing import Literal
 
-from .utility import generate_text, python_exec_tool, online_query_tool
-from .pdf_utils import extract_text_from_pdf, create_pdf_from_text, create_pdf_from_markdown
+try:
+    from utility import generate_text, load_prompts, get_prompt, logger
+    from tools.web_search_tool import get_links_from_duckduckgo, get_site_details_many
+    from tools.python_exec_tool import python_exec_tool
+    from tools.wikipedia_tool import get_wikipedia_page_content, search_wikipedia
+except Exception:  # pragma: no cover - package import fallback
+    from src.utility import generate_text, load_prompts, get_prompt, logger
+    from src.tools.web_search_tool import get_links_from_duckduckgo, get_site_details_many
+    from src.tools.python_exec_tool import python_exec_tool
+    from src.tools.wikipedia_tool import get_wikipedia_page_content, search_wikipedia
 
+from collections.abc import Mapping
 
-logger = logging.getLogger(__name__)
+load_prompts("data/prompts.json")
 
+WRITER_MODEL = None
+ANALYTICAL_MODEL = None
 
-class PipelineBlock:
-    """Base class for all pipeline blocks."""
-    description = "Base pipeline block"
+style = "fast"
+
+if style == "fast":
+    WRITER_MODEL = "nemotron"
+    ANALYTICAL_MODEL = "nemotron"
+elif style == "best":
+    WRITER_MODEL = "gemma"
+    ANALYTICAL_MODEL = "nemotron"
+else:
+    raise ValueError(f"Unknown style: {style}")
+
+def _get_all_tool_classes():
+    tool_classes = []
+    classes = inspect.getmembers(sys.modules[__name__], inspect.isclass)
+    for class_item in classes:
+        if issubclass(class_item[1], ToolBlock) and class_item[1] != ToolBlock:
+            tool_classes.append(class_item[1])
+    return tool_classes
+
+def _get_all_prompted_blocks():
+    tool_classes = []
+    classes = inspect.getmembers(sys.modules[__name__], inspect.isclass)
+    for class_item in classes:
+        if issubclass(class_item[1], PipelineBlock) and class_item[1] != PipelineBlock and class_item[1] != RouterBlock and class_item[1] != ToolBlock:
+            if not issubclass(class_item[1], ToolBlock):
+                tool_classes.append(class_item[1])
+    return tool_classes
     
-    def __call__(self):
-        return NotImplementedError("Subclasses should implement this method.")
+
+def _model_to_primitive(obj: BaseModel) -> dict:
+    """Turns BaseModel and all nested BaseModel instances into dicts
+
+    Args:
+        obj (BaseModel): Input object to be converted to primitive types
+
+    Returns:
+        dict: The input object converted to primitive types (dicts, lists, tuples, sets, and basic types)
+    """
+    if isinstance(obj, BaseModel):
+        return _model_to_primitive(dict(obj))
+    if isinstance(obj, Mapping):
+        return {k: _model_to_primitive(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_model_to_primitive(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_model_to_primitive(v) for v in obj)
+    if isinstance(obj, set):
+        return {_model_to_primitive(v) for v in obj}
+    return obj
+
+def validate_prompts():
+    prompts_with_issues = []
+    for block_class in _get_all_prompted_blocks():
+        block_details = block_class.details
+        try:
+            prompt = get_prompt(block_details['id'])
+            for input in block_details['inputs']:
+                if f"{{{{{input.name}}}}}" not in prompt and f"{{{{{{{input.name}}}}}}}" not in prompt:
+                    prompts_with_issues.append((block_details['id'], block_details['name'], f"Missing placeholder for input '{input.name}'"))
+        except Exception as e:
+            logger.error(f"Error loading prompt for block {block_details['name']} with id {block_details['id']}: {e}")
+            prompts_with_issues.append((block_details['id'], block_details['name'], f"Error loading prompt: {e}"))
+            continue
+
+    return prompts_with_issues
+
+class CreativityLevel(float, Enum):
+    MIN = 0.0
+    LOW = 0.2
+    MEDIUM = 0.5
+    HIGH = 0.8
+    MAX = 1.0
+
+
+class PipelineObject(object):
+    def __init__(self, name: str, description: str, type: str):
+        self.name = name
+        self.description = description
+        self.type = type
     
+    def __str__(self):
+        return f"{self.name}(description={self.description}, type={self.type})"
 
-class PlanCreationBlock(PipelineBlock):
-    description = "Generate or refine the execution plan"
-    
-    def __init__(self, self_critique=True):
-        self.self_critique = self_critique
+class PipelineBlock(object):
+    details = {
+        "id": "base_pipeline_block",
+        "name": "Base Pipeline Block",
+        "description": "This is the base class for all pipeline blocks.",
+        "prompt_creation_parameters": {
+            "details": "Details on the creation of a prompt.",
+            "objective": "The objective the prompt is trying to achieve.",
+            "contains": {"criteria": "The general instructions that must be included in the prompt"},
+            "success_rubric": {"criteria": {"description": "Description of criteria for success that must be included in the prompt", "weight": 1.0}},
+        },
+        "inputs": [PipelineObject("input", "Input data for the block", "any")],
+        "outputs": [PipelineObject("output", "Output data from the block", "any")],
+        "schema": BaseModel,
+        "creativity_level": CreativityLevel,
+        "model": Literal["gemma", "nemotron"],
+    }
 
-    def __call__(self, text) -> str:
-        plan = self.plan_prompt(text)
-        if self.self_critique:
-            critique = self.critique_plan_prompt(text, plan)
-            plan = self.fixer_plan_prompt(text, plan, critique)
-        return plan
-    
-    def plan_prompt(self, text):
-        from datetime import datetime
-        current_date = datetime.now().strftime("%B %d, %Y")
-        
-        prompt = (
-            f"Today's date: {current_date}. Reference this for time-sensitive planning.\n\n"
-            f"ROLE: You are an expert execution architect designing an internal plan for an AI system to follow.\n\n"
-            f"OBJECTIVE: Create a structured, actionable plan that the MODEL will execute to answer the user's request.\n"
-            f"This plan is for the MODEL, not for the user. Be direct, specific, and technically precise.\n\n"
-            f"USER REQUEST:\n{text}\n\n"
-            f"OUTPUT FORMAT (use exactly these section headers):\n\n"
-            f"1) CORE INSTRUCTION\n"
-            f"   - One clear sentence capturing the primary task and desired outcome\n"
-            f"   - Focus on WHAT to achieve, not HOW (steps come later)\n"
-            f"   - Example: 'Generate a comprehensive analysis of X with actionable recommendations'\n\n"
-            f"2) CONSTRAINTS\n"
-            f"   - List 4-6 specific constraints as bullets\n"
-            f"   - Include: length/scope, tone, technical depth, format requirements\n"
-            f"   - State what to INCLUDE and what to AVOID\n"
-            f"   - Be concrete (e.g., '500-800 words' not 'concise', 'Include 3 examples' not 'provide examples')\n\n"
-            f"3) PERSONALITY\n"
-            f"   - Define the persona/voice the MODEL should adopt\n"
-            f"   - Match the user's needs (e.g., 'expert educator', 'creative storyteller', 'technical analyst')\n"
-            f"   - One sentence describing communication style and expertise level\n\n"
-            f"4) EXECUTION STEPS\n"
-            f"   - List 4-6 sequential actions the MODEL will perform\n"
-            f"   - Each step should be specific and measurable\n"
-            f"   - ALWAYS include verification as the final step\n"
-            f"   - Example format: '1. Analyze X by extracting Y. 2. Generate Z using method M. 3. Verify all claims against provided data.'\n\n"
-            f"5) EVIDENCE TO EXTRACT\n"
-            f"   - List 4-8 specific data points, facts, or elements the MODEL must identify\n"
-            f"   - Be concrete: 'numerical trends in dataset', 'key themes in text', 'visual patterns'\n"
-            f"   - These drive block execution (code tools, internet searches, etc.)\n\n"
-            f"6) QUALITY RUBRIC\n"
-            f"   - Define 4-6 pass/fail criteria for the final answer\n"
-            f"   - Make criteria measurable when possible\n"
-            f"   - MUST include: 'Logical consistency with zero contradictions or dogma'\n"
-            f"   - Examples: 'Contains 3+ concrete examples', 'All data is factually verifiable', 'Directly actionable without additional research'\n\n"
-            f"7) OUTPUT SCHEMA\n"
-            f"   - Describe the structure of the final answer (as a GUIDE only - actual output is markdown)\n"
-            f"   - Specify sections, ordering, and key components\n"
-            f"   - Example: 'Intro (1 para) → Analysis (3 sections) → Recommendations (numbered list) → Conclusion'\n\n"
-            f"CRITICAL PLANNING PRINCIPLES:\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"SCOPE & INTENT:\n"
-            f"  • Prioritize user's explicit AND implicit needs - read between the lines\n"
-            f"  • Anticipate obstacles and plan mitigation strategies\n"
-            f"  • Ensure final output is complete, self-contained, and immediately usable\n\n"
-            f"CREATIVE WORK (poems, stories, art, designs):\n"
-            f"  • Demand originality - explicitly forbid clichés and obvious interpretations\n"
-            f"  • Specify emotional targets: 'evoke wonder', 'create tension', 'inspire reflection'\n"
-            f"  • Plan for rich sensory details, unexpected metaphors, and layered meaning\n"
-            f"  • Set high quality bars: 'publication-ready', 'gallery-worthy', 'memorable and moving'\n\n"
-            f"VISUALIZATIONS (charts, graphs, plots):\n"
-            f"  • When user requests visuals: MANDATE code tool usage with matplotlib\n"
-            f"  • Specify: plots MUST be saved to files via plt.show() (auto-saved by system)\n"
-            f"  • Require: clear labels, titles, legends, and appropriate chart types\n"
-            f"  • Plan for synthesis to embed images inline using markdown image syntax\n"
-            f"  • If visuals aren't feasible with available data: plan to state this limitation clearly\n\n"
-            f"PIPELINE EFFICIENCY:\n"
-            f"  • TARGET: 3-5 blocks total (including synthesis)\n"
-            f"  • MAXIMUM: 7 blocks (hard limit for API quota)\n"
-            f"  • Avoid redundancy - one well-crafted block beats multiple weak ones\n"
-            f"  • Only plan multi-block sequences when truly necessary for sequential processing\n\n"
-            f"QUALITY & ACCURACY:\n"
-            f"  • Build in verification steps - don't trust without checking\n"
-            f"  • Explicitly forbid hallucinating data, sources, or images\n"
-            f"  • Require date/time accuracy - verify temporal references\n"
-            f"  • Demand logical consistency - zero tolerance for contradictions\n"
-            f"  • For creative brainstorming: ALWAYS plan to select the best idea for execution\n\n"
-            f"DELIVERABLE COMPLETENESS:\n"
-            f"  • Final answer must be COMPLETE - never defer to 'run this script'\n"
-            f"  • Include all results, visualizations, and recommendations directly\n"
-            f"  • User should have everything they need without additional steps\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"CONSTRAINTS: Keep total plan under 200 words. Use concise bullet points. No preamble or meta-commentary."
-        )
-        return generate_text(prompt, temperature=0.25, max_tokens=1200)
+    def __init__(self):
+        pass
 
-    def critique_plan_prompt(self, text, plan):
-        prompt = (
-            f"ROLE: You are a critical plan reviewer analyzing execution plans for flaws and inefficiencies.\n\n"
-            f"TASK: Identify 3-6 concrete issues in this plan that would harm output quality or waste resources.\n\n"
-            f"USER REQUEST:\n{text}\n\n"
-            f"PLAN TO REVIEW:\n{plan}\n\n"
-            f"FOCUS AREAS (prioritize in this order):\n"
-            f"1. LOGICAL CONTRADICTIONS: Any self-contradictory statements, conflicting constraints, or dogmatic assertions?\n"
-            f"2. CORE INSTRUCTION WEAKNESS: Is it vague, too broad, or misaligned with user needs?\n"
-            f"3. INEFFICIENT STEPS: Redundant blocks, unnecessary complexity, or steps that don't advance the goal?\n"
-            f"4. VAGUE RUBRIC: Are success criteria measurable and falsifiable, or just aspirational fluff?\n"
-            f"5. TOKEN WASTE: Excessive verbosity, over-specification, or requesting more data than needed?\n"
-            f"6. ACCURACY RISKS: Missing verification steps, hallucination risks, or weak fact-checking?\n\n"
-            f"OUTPUT FORMAT:\n"
-            f"Return exactly 3-6 issues as a numbered list. For each issue:\n"
-            f"- State the ISSUE (be specific about what's wrong)\n"
-            f"- Explain the IMPACT (why this matters for quality/efficiency)\n"
-            f"- Suggest a FIX (concrete action to resolve it)\n\n"
-            f"Example format:\n"
-            f"1. ISSUE: Core instruction says 'analyze data' without specifying what to analyze.\n"
-            f"   IMPACT: Model may produce irrelevant or shallow analysis.\n"
-            f"   FIX: Specify exact metrics or patterns to extract from the data.\n\n"
-            f"Be ruthlessly critical but constructive. Focus on high-impact improvements."
-        )
-        return generate_text(prompt, temperature=0.2, max_tokens=400)
+    def _validate_inputs(self, inputs: dict) -> None:
+        expected = {input_obj.name: input_obj.type for input_obj in self.details['inputs']}
+        missing = [name for name in expected if name not in inputs]
+        extra = [name for name in inputs if name not in expected]
 
-    def fixer_plan_prompt(self, text, plan, critique):
-        prompt = (
-            f"ROLE: You are refining an execution plan based on critical feedback.\n\n"
-            f"TASK: Produce PLAN v2 that addresses ALL issues raised in the critique while maintaining the same structure.\n\n"
-            f"USER REQUEST:\n{text}\n\n"
-            f"ORIGINAL PLAN:\n{plan}\n\n"
-            f"CRITIQUE (YOU MUST FIX THESE):\n{critique}\n\n"
-            f"REQUIREMENTS FOR PLAN v2:\n"
-            f"- Keep the EXACT same 7 sections: Core Instruction, Constraints, Personality, Execution Steps, Evidence To Extract, Quality Rubric, Output Schema\n"
-            f"- Address EVERY issue mentioned in the critique explicitly\n"
-            f"- Strengthen any vague or weak elements\n"
-            f"- Add verification steps if missing\n"
-            f"- Ensure visualizations (if relevant) will be produced as actual matplotlib plots saved to files\n"
-            f"- Confirm final answer delivers complete results without deferring to external scripts\n"
-            f"- Maintain conciseness (under 200 words total)\n\n"
-            f"OUTPUT: Return ONLY the refined plan with the 7 numbered sections. No preamble, no explanations of changes."
-        )
-        return generate_text(prompt, temperature=0.25, max_tokens=600)
-
-
-class UseCodeToolBlock(PipelineBlock):
-    description = "Run Python code to compute or analyze data. Requires data.extract_info describing what to pull."
-    
-    def __init__(self, max_attempts: int = 8):
-        self.max_attempts = max(1, max_attempts)
-
-    def __call__(self, text, extract_info=None) -> dict:
-        attempts_summary = []
-        previous_error = None
-        previous_code = None
-        final_output = {}
-        final_code = ""
-
-        plot_requested = self._should_generate_plot(text, extract_info)
-
-        for attempt in range(1, self.max_attempts + 1):
-            raw_code = self.create_code_prompt(
-                text,
-                extract_info,
-                previous_code=previous_code,
-                previous_error=previous_error,
-                attempt=attempt,
-                plot_requested=plot_requested,
-            )
-            code = self._extract_code_from_response(raw_code)
-            code, applied_fixes = self._ensure_required_imports(code)
-            previous_code = code
-            # Guard: code may be None; ensure it's a string before calling strip()
-            if not (code and str(code).strip()):
-                logger.warning("UseCodeToolBlock attempt %d returned empty code", attempt)
-                attempts_summary.append(
-                    {
-                        "attempt": attempt,
-                        "success": False,
-                        "error": "Empty code returned",
-                        "raw_code": raw_code,
-                        "stdout": "",
-                        "applied_fixes": [],
-                    }
+        type_mismatches = []
+        for name, expected_type in expected.items():
+            if name not in inputs:
+                continue
+            if expected_type == "any":
+                continue
+            value = inputs[name]
+            expected_py_type = {
+                "str": str,
+                "int": int,
+                "float": float,
+                "bool": bool,
+                "list": list,
+                "dict": dict,
+            }.get(expected_type)
+            if expected_py_type and not isinstance(value, expected_py_type):
+                type_mismatches.append(
+                    f"{name} expected {expected_type} got {type(value).__name__}"
                 )
-                previous_error = "Model returned empty code."
+
+        if missing or extra or type_mismatches:
+            message = (
+                f"Input validation failed. Missing: {missing or 'none'}, "
+                f"Extra: {extra or 'none'}, Type mismatches: {type_mismatches or 'none'}"
+            )
+            logger.error(message)
+            raise ValueError(message)
+
+    def _prompt_value(self, value):
+        if isinstance(value, str):
+            return value
+        if value is None:
+            return ""
+        try:
+            return json.dumps(value, ensure_ascii=False, default=str)
+        except Exception:
+            return str(value)
+
+    def _render_prompt_template(self, prompt_id: str, values: dict[str, object]) -> str:
+        prompt = get_prompt(prompt_id)
+        for key, value in values.items():
+            formatted = self._prompt_value(value)
+            prompt = prompt.replace(f"{{{{{{{key}}}}}}}", formatted)
+            prompt = prompt.replace(f"{{{{{key}}}}}", formatted)
+        return prompt
+
+    def _prompt_builder(self, inputs):
+        return self._render_prompt_template(self.details['id'], inputs)
+
+    def process(self, inputs: dict) -> dict:
+        block_name = self.details.get('name', 'UnknownBlock')
+        logger.info(f"Block process() start: {block_name}")
+        
+        self._validate_inputs(inputs)
+        logger.debug(f"Input validation passed for {block_name}")
+        
+        prompt = self._prompt_builder(inputs)
+        prompt_preview = prompt[:100].replace('\n', ' ')
+        logger.debug(f"Prompt built: {prompt_preview}...")
+        
+        output = generate_text(
+            prompt,
+            model=self.details['model'],
+            schema=self.details['schema'],
+            temperature=self.details['creativity_level']
+        )
+
+        output = _model_to_primitive(output)
+        output_preview = str(output)[:50]
+        logger.info(f"Block process() complete: {block_name} - output: {output_preview}...")
+
+        return output
+
+class ToolBlock(PipelineBlock):
+    details = {
+        "id": "base_tool_block",
+        "name": "Base Tool Block",
+        "description": "This is the base class for all tool blocks.",
+        "inputs": [PipelineObject("input", "Input data for the tool", "any")],
+        "outputs": [PipelineObject("output", "Output data from the tool", "any")],
+        "creativity_level": CreativityLevel,
+        "schema": BaseModel,
+        "model": Literal["gemma", "nemotron"],
+    }
+
+    def __init__(self):
+        super().__init__()
+    
+    def process(self, inputs: dict) -> dict:
+        raise NotImplementedError("ToolBlock process method must be implemented by subclasses.")
+
+class RouterBlock(PipelineBlock):
+    details = {
+        "id": "base_router_block",
+        "name": "Base Router Block",
+        "description": "This is the base class for all router blocks.",
+        "prompt_creation_parameters": "Details on the creation of a prompt for routing.",
+        "inputs": [PipelineObject("input", "Input data for the router", "any")],
+        "outputs": [PipelineObject("routes", "List routes for the router to go to", "list"),
+                    PipelineObject("continuity", "Whether to continue routing post routing", "any")],
+        "schema": BaseModel,
+        "creativity_level": CreativityLevel,
+        "model": Literal["gemma", "nemotron"],
+    }
+
+    def __init__(self):
+        super().__init__()
+    
+    def _get_available_tools(self):
+        tool_classes = _get_all_tool_classes()
+        available_tools = []
+        for tool_class in tool_classes:
+            available_tools.append({
+                "id": tool_class.details['id'],
+                "name": tool_class.details['name'],
+                "description": tool_class.details['description'],
+                "inputs": [{"name": input_obj.name, "description": input_obj.description, "type": input_obj.type} for input_obj in tool_class.details['inputs']],
+                "outputs": [{"name": output_obj.name, "description": output_obj.description, "type": output_obj.type} for output_obj in tool_class.details['outputs']],
+            })
+        return available_tools
+
+    def _available_tools_text(self, available_tools):
+        available_tools_text = ""
+        for tool in available_tools:
+            available_tools_text += (
+                f"Tool ID: {tool['id']}\n"
+                f"Tool Name: {tool['name']}\n"
+                f"Description: {tool['description']}\n"
+                "Inputs:\n"
+            )
+            for input_obj in tool['inputs']:
+                available_tools_text += f"- {input_obj['name']} ({input_obj['type']}): {input_obj['description']}\n"
+            available_tools_text += "Outputs:\n"
+            for output_obj in tool['outputs']:
+                available_tools_text += f"- {output_obj['name']} ({output_obj['type']}): {output_obj['description']}\n"
+            available_tools_text += "\n"
+        return available_tools_text
+        
+    def _parse_routing_output(self, routes):
+        parsed_routes = []
+        tool_classes = _get_all_tool_classes()
+        logger.debug(f"Parsing {len(routes)} routes")
+        for i, route in enumerate(routes):
+            route_id = route.get("id")
+            route_inputs = route.get("inputs")
+            if not route_id or not isinstance(route_inputs, dict):
+                logger.error(f"Route option is missing 'id' or 'inputs': {route}")
+                raise ValueError(f"Route option is missing 'id' or 'inputs': {route}")
+            matching_tool_class = next((tool_class for tool_class in tool_classes if tool_class.details['id'] == route_id), None)
+            if not matching_tool_class:
+                logger.error(f"No matching tool class found for route id: {route_id}")
+                raise ValueError(f"No matching tool class found for route id: {route_id}")
+            logger.debug(f"Route {i+1}/{len(routes)}: {route_id}")
+            parsed_routes.append((matching_tool_class, route_inputs))
+        logger.info(f"Parsed {len(parsed_routes)} routes successfully")
+        return parsed_routes
+    
+    def process(self, inputs: dict) -> dict:
+        raise NotImplementedError("RouterBlock process method must be implemented by subclasses.")
+
+
+# General blocks
+
+# Done
+class InitialPlanCreationBlockSchema(BaseModel):
+    assumed_audience: str = Field(description="The intended audience for the plan")
+    assumed_audience_knowledge_level: str = Field(description="The knowledge level of the intended audience")
+    assumed_audience_reading_level: str = Field(description="The reading level of the intended audience")
+    general_plan: str = Field(description="The generated detailed general plan")
+    steps: list[str] = Field(description="The individual steps of the generated plan")
+    tool_uses: list[str] = Field(description="Possible tool used in the generated plan")
+    complex_response: bool = Field(description="Whether or not each step of the plan is complex enough to warrant subplanning to be comprehensive")
+    long_response: bool = Field(description="Whether the final response will long enough to be broken into multiple responses to be aggregated or not")
+    response_criteria: list[str] = Field(description="The criteria for a successful response to the plan")
+
+class InitialPlanCreationBlock(PipelineBlock):
+    details = {
+        "id": "initial_plan_creation_block",
+        "name": "Initial Plan Creation Block",
+        "description": "Generates a detailed general plan based on the given objective.",
+        "prompt_creation_parameters": {
+            "details": "Create a detailed general plan to achieve the given objective.",
+            "objective": "The objective for which a detailed general plan is to be created.",
+            "success_rubric": {
+                "accuracy": {
+                    "description": "How accurately the plan addresses the objective.",
+                    "weight": 0.4
+                },
+                "feasibility": {
+                    "description": "How feasible the plan is to implement.",
+                    "weight": 0.3
+                },
+                "completeness": {
+                    "description": "How complete and thorough the plan is.",
+                    "weight": 0.3
+                }
+            }
+        },
+        "inputs": [PipelineObject("prompt", "The prompt from which a plan to respond is generated", "str"),
+                   PipelineObject("available_tools", "The tools available for the plan to use", "list")],
+        "outputs": [PipelineObject("plan", "The generated detailed plan", "str"),
+                    PipelineObject("steps", "The individual steps of the generated plan", "list"),
+                    PipelineObject("tool_uses", "Possible tool used in the generated plan", "list"),
+                    PipelineObject("complex_response", "Whether or not each step of the plan is complex enough to warrant subplanning to be comprehensive", "bool"),
+                    PipelineObject("long_response", "Whether the final response will long enough to be broken into multiple responses to be aggregated or not", "bool"),
+                    PipelineObject("response_criteria", "The criteria for a successful response to the plan", "list")],
+        "schema": InitialPlanCreationBlockSchema,
+        "creativity_level": CreativityLevel.MEDIUM,
+        "model": WRITER_MODEL,
+    }
+
+    def __init__(self):
+        super().__init__()
+
+# Done
+class SubPlanCreationBlockSchema(BaseModel):
+    sub_plan: str = Field(default="", description="The generated detailed sub-plan")
+    steps: list[str] = Field(
+        default_factory=list,
+        description="The individual steps of the generated sub-plan to provide necessary information for the success of the main plan",
+    )
+    tool_uses: list[str] = Field(default_factory=list, description="Possible tool used in the generated sub-plan")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_subplan_shapes(cls, payload):
+        if not isinstance(payload, dict):
+            return payload
+
+        normalized = dict(payload)
+        if "sub_plan" not in normalized:
+            for alias in ("subplan", "subPlan", "plan"):
+                if alias in normalized:
+                    normalized["sub_plan"] = normalized.get(alias)
+                    break
+
+        def _extract_step_texts(value: object) -> list[str]:
+            texts: list[str] = []
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str):
+                        text = item.strip()
+                        if text:
+                            texts.append(text)
+                    elif isinstance(item, dict):
+                        candidate = (
+                            item.get("task")
+                            or item.get("step")
+                            or item.get("description")
+                            or item.get("text")
+                            or item.get("objective")
+                            or ""
+                        )
+                        text = str(candidate).strip()
+                        if text:
+                            texts.append(text)
+            elif isinstance(value, dict):
+                nested = value.get("steps") or value.get("tasks") or value.get("sub_plan")
+                texts.extend(_extract_step_texts(nested))
+            elif isinstance(value, str):
+                text = value.strip()
+                if text:
+                    texts.append(text)
+            return texts
+
+        raw_sub_plan = normalized.get("sub_plan")
+        raw_steps = normalized.get("steps")
+        sub_plan_steps = _extract_step_texts(raw_sub_plan)
+        explicit_steps = _extract_step_texts(raw_steps)
+
+        if explicit_steps:
+            normalized["steps"] = explicit_steps
+        elif sub_plan_steps:
+            normalized["steps"] = sub_plan_steps
+
+        if isinstance(raw_sub_plan, list):
+            normalized["sub_plan"] = " ".join(sub_plan_steps).strip()
+        elif isinstance(raw_sub_plan, dict):
+            candidate = (
+                raw_sub_plan.get("summary")
+                or raw_sub_plan.get("overview")
+                or raw_sub_plan.get("sub_plan")
+                or ""
+            )
+            text = str(candidate).strip()
+            if not text and sub_plan_steps:
+                text = " ".join(sub_plan_steps).strip()
+            normalized["sub_plan"] = text
+        elif raw_sub_plan is None:
+            normalized["sub_plan"] = ""
+        else:
+            normalized["sub_plan"] = str(raw_sub_plan).strip()
+
+        tool_uses = normalized.get("tool_uses")
+        if isinstance(tool_uses, list):
+            normalized["tool_uses"] = [
+                str(item).strip()
+                for item in tool_uses
+                if str(item).strip()
+            ]
+        elif tool_uses is None:
+            normalized["tool_uses"] = []
+        else:
+            tool_text = str(tool_uses).strip()
+            normalized["tool_uses"] = [tool_text] if tool_text else []
+
+        return normalized
+
+    @model_validator(mode="after")
+    def _hydrate_missing_subplan_fields(self):
+        if not self.sub_plan and self.steps:
+            self.sub_plan = " ".join(self.steps).strip()
+        if self.sub_plan and not self.steps:
+            self.steps = [self.sub_plan]
+        return self
+
+class SubPlanCreationBlock(PipelineBlock):
+    details = {
+        "id": "sub_plan_creation_block",
+        "name": "Sub-Plan Creation Block",
+        "description": "Generates a detailed sub-plan based on the given portion of a plan and objective.",
+        "prompt_creation_parameters": {
+            "details": "Create a detailed sub-plan to achieve the given objective based on the provided plan.",
+            "objective": "The objective for which a detailed sub-plan is to be created.",
+            "success_rubric": {
+                "accuracy": {
+                    "description": "How accurately the sub-plan addresses the objective and aligns with the main plan.",
+                    "weight": 0.5
+                },
+                "feasibility": {
+                    "description": "How feasible the sub-plan is to implement within the context of the main plan.",
+                    "weight": 0.3
+                },
+                "completeness": {
+                    "description": "How complete and thorough the sub-plan is in relation to its specific task.",
+                    "weight": 0.2
+                }
+            }
+        },
+        "inputs": [PipelineObject("plan", "The main plan from which a sub-plan is generated", "str"),
+               PipelineObject("objective", "The specific step of the plan for which the sub-plan is created", "str"),
+               PipelineObject("context", "Structured context from previous subplans and tool outputs to inform continuity", "dict")],
+        "outputs": [PipelineObject("sub_plan", "The generated detailed sub-plan", "str"),
+                    PipelineObject("steps", "The individual steps of the generated sub-plan to provide necessary information for the success of the main plan", "list"),
+                    PipelineObject("tool_uses", "Possible tool used in the generated sub-plan", "list")],
+        "schema": SubPlanCreationBlockSchema,
+        "creativity_level": CreativityLevel.MEDIUM,
+        "model": WRITER_MODEL,
+    }
+
+    def __init__(self):
+        super().__init__()
+
+# Done
+class SelfCritiqueBlockSchema(BaseModel):
+    class WeaknessItem(BaseModel):
+        type: str = Field(default="", description="Issue severity/type marker such as major or minor")
+        description: str = Field(default="", description="Short issue description")
+        remediation: str = Field(default="", description="Suggested remediation")
+
+    given_item: str = Field(
+        default="",
+        description="Summarize the intent and content of the given item to be critiqued",
+    )
+    general_critique: str = Field(default="", description="The generated critique of the given item")
+    list_of_issues: list[str] = Field(
+        default_factory=list,
+        description="A list of specific issues with the item identified in the critique",
+    )
+    weaknesses: list[WeaknessItem] = Field(
+        default_factory=list,
+        description="Compatibility field for alternate critique schema variants",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_issue_shapes(cls, payload):
+        if not isinstance(payload, dict):
+            return payload
+
+        raw_issues = payload.get("list_of_issues")
+        if isinstance(raw_issues, list):
+            normalized_issues: list[str] = []
+            for issue in raw_issues:
+                if isinstance(issue, str):
+                    text = issue.strip()
+                    if text:
+                        normalized_issues.append(text)
+                    continue
+
+                if isinstance(issue, dict):
+                    issue_type = str(issue.get("type") or issue.get("severity") or "").strip()
+                    description = str(
+                        issue.get("description")
+                        or issue.get("issue")
+                        or issue.get("weakness")
+                        or ""
+                    ).strip()
+                    remediation = str(issue.get("remediation") or issue.get("fix") or "").strip()
+
+                    if not description:
+                        description = str(issue).strip()
+
+                    if issue_type:
+                        description = f"[{issue_type}] {description}"
+                    if remediation:
+                        description = f"{description} Remediation: {remediation}"
+                    if description:
+                        normalized_issues.append(description)
+                    continue
+
+                text = str(issue).strip()
+                if text:
+                    normalized_issues.append(text)
+
+            payload["list_of_issues"] = normalized_issues
+
+        return payload
+
+    @model_validator(mode="after")
+    def _hydrate_from_weaknesses(self):
+        if self.weaknesses and not self.list_of_issues:
+            issues: list[str] = []
+            for weakness in self.weaknesses:
+                if weakness.description:
+                    issues.append(weakness.description)
+            self.list_of_issues = issues
+
+        if self.weaknesses and not self.general_critique:
+            composed = []
+            for weakness in self.weaknesses:
+                if weakness.description:
+                    if weakness.remediation:
+                        composed.append(f"{weakness.description} Remediation: {weakness.remediation}")
+                    else:
+                        composed.append(weakness.description)
+            self.general_critique = " ".join(composed).strip()
+
+        if not self.given_item:
+            self.given_item = "Critique generated without explicit item summary."
+
+        return self
+
+class SelfCritiqueBlock(PipelineBlock):
+    details = {
+        "id": "self_critique_block",
+        "name": "Self-Critique Block",
+        "description": "Generates a critique of the given item based on the provided objective of the item.",
+        "prompt_creation_parameters": {
+            "details": "Generate a critique of the given item based on the provided objective.",
+            "objective": "The objective against which the item is critiqued.",
+            "success_rubric": {
+                "insightfulness": {
+                    "description": "How insightful and constructive the critique is in identifying weaknesses and areas for improvement in the item.",
+                    "weight": 0.5
+                },
+                "relevance": {
+                    "description": "How relevant the critique is to the specific item and objective.",
+                    "weight": 0.3
+                },
+                "actionability": {
+                    "description": "How actionable the critique is in providing clear guidance for improving the item.",
+                    "weight": 0.2
+                }
+            }
+        },
+        "inputs": [PipelineObject("item", "The item to be critiqued", "str"),
+                   PipelineObject("objective", "The objective against which the item is critiqued", "str"),
+                   PipelineObject("context", "The context in which the item is being critiqued", "dict")],
+        "outputs": [PipelineObject("general_critique", "The generated critique of the item", "str"),
+                    PipelineObject("list_of_issues", "A list of specific issues with the item identified in the critique", "list"),
+                    PipelineObject("given_item", "A summary of the intent and content of the given item to be critiqued", "str")],
+        "schema": SelfCritiqueBlockSchema,
+        "creativity_level": CreativityLevel.MEDIUM,
+        "model": ANALYTICAL_MODEL,
+    }
+
+    def __init__(self):
+        super().__init__()
+
+class SynthesisBlockSchema(BaseModel):
+    synthesis: str = Field(description="The synthesized output based on the given inputs")
+
+class SynthesisBlock(PipelineBlock):
+    details = {
+        "id": "synthesis_block",
+        "name": "Synthesis Block",
+        "description": "Generates a synthesis of the given inputs based on the provided objective and plan.",
+        "prompt_creation_parameters": {
+            "details": "Generate a synthesis of the given inputs based on the provided objective and plan.",
+            "objective": "The objective for which the synthesis is being generated.",
+            "success_rubric": {
+                "comprehensiveness": {
+                    "description": "How comprehensively the synthesis integrates and addresses all relevant aspects of the inputs in relation to the objective.",
+                    "weight": 0.5
+                },
+                "coherence": {
+                    "description": "How coherent and logically structured the synthesis is in presenting a unified response to the objective.",
+                    "weight": 0.3
+                },
+                "insightfulness": {
+                    "description": "How insightful and original the synthesis is in generating new perspectives or solutions based on the inputs.",
+                    "weight": 0.2
+                }
+            }
+        },
+        "inputs": [PipelineObject("tool_context", "The context obtained from the tool outputs", "dict"),
+                   PipelineObject("prompt", "The prompt from which the synthesis is being generated", "dict"),
+                   PipelineObject("plan", "The plan for the synthesis", "dict")],
+        "outputs": [PipelineObject("synthesis", "The synthesized output based on the given inputs", "str")],
+        "schema": SynthesisBlockSchema,
+        "creativity_level": CreativityLevel.MEDIUM,
+        "model": WRITER_MODEL,
+    }
+
+    def __init__(self):
+        super().__init__()
+
+# Done
+class ImprovementBlock(PipelineBlock):
+
+    details = {
+        "id": "improvement_block",
+        "name": "Improvement Block",
+        "description": "Generates an improved version of the given item based on the provided critique and objective.",
+        "prompt_creation_parameters": {
+            "details": "Generate an improved version of the given item based on the provided critique and objective.",
+            "objective": "The objective for which the item is being improved.",
+            "success_rubric": {
+                "effectiveness": {
+                    "description": "How effectively the improved item addresses the objective and incorporates the critique.",
+                    "weight": 0.5
+                },
+                "feasibility": {
+                    "description": "How feasible the improved item is in incorporating the critique and enhancing the original item.",
+                    "weight": 0.3
+                },
+                "coherence": {
+                    "description": "How coherent and well-structured the improved item is in comparison to the original item.",
+                    "weight": 0.2
+                }
+            }
+        },
+        "inputs": [PipelineObject("item", "The original item to be improved", "str"),
+                   PipelineObject("critique", "The critique based on which the item is improved", "str"),
+                   PipelineObject("objective", "The objective for which the item is being improved", "str"),
+                   PipelineObject("target_schema", "The schema to use for the improved item (plan or synthesis)", "str")],
+        "outputs": [PipelineObject("improved_item", "The improved version of the given item", "dict")],
+        "schema": InitialPlanCreationBlockSchema | SynthesisBlockSchema,
+        "creativity_level": CreativityLevel.MEDIUM,
+        "model": WRITER_MODEL,
+    }
+
+    def __init__(self):
+        super().__init__()
+
+    def process(self, inputs: dict) -> dict:
+        logger.info("ImprovementBlock process() start")
+        self._validate_inputs(inputs)
+
+        target_schema = (inputs.get("target_schema") or "").strip().lower()
+        schema_lookup = {
+            "plan": InitialPlanCreationBlockSchema,
+            "synthesis": SynthesisBlockSchema,
+        }
+        selected_schema = schema_lookup.get(target_schema)
+        if not selected_schema:
+            logger.error(f"Unknown target_schema '{target_schema}'")
+            raise ValueError(
+                f"Unknown target_schema '{target_schema}'. Expected 'plan' or 'synthesis'."
+            )
+
+        logger.debug(f"ImprovementBlock using schema: {selected_schema.__name__}")
+        prompt = self._prompt_builder(inputs)
+
+        output = generate_text(
+            prompt,
+            model=self.details['model'],
+            schema=selected_schema,
+            temperature=self.details['creativity_level']
+        )
+
+        output = _model_to_primitive(output)
+        output_preview = str(output)[:50]
+        logger.info(f"ImprovementBlock complete - output: {output_preview}...")
+
+        return {
+            "steps_for_improvement": output.get("steps_for_improvement", []),
+            "improved_item": output,
+        }
+
+# Done
+class LongResponseSynthesisBlock(PipelineBlock):
+    details = {
+        "id": "long_response_synthesis_block",
+        "name": "Long Response Synthesis Block",
+        "description": "Generates a synthesis of the given inputs based on the provided objective, specifically designed for one portion of long responses that may need to be broken into multiple parts and aggregated.",
+        "prompt_creation_parameters": {
+            "details": "Generate a synthesis of the given inputs based on the provided objective, specifically designed for one portion of long responses that may need to be broken into multiple parts and aggregated.",
+            "objective": "The objective for which the synthesis is being generated.",
+            "success_rubric": {
+                "Fit": {
+                    "description": "How well does the portion fit into the overall synthesis and contribute to achieving the objective?",
+                    "weight": 0.5
+                },
+                "Coherence": {
+                    "description": "How coherent and logically structured is the portion in relation to the other portions and the overall synthesis?",
+                    "weight": 0.3
+                },
+                "Insightfulness": {
+                    "description": "How insightful and original is the portion in contributing to the overall synthesis and achieving the objective?",
+                    "weight": 0.2
+                }
+            }
+        },
+        "inputs": [PipelineObject("tool_context", "The context obtained from the tool outputs", "dict"),
+                   PipelineObject("prompt", "The prompt from which the synthesis is being generated", "dict"),
+                   PipelineObject("plan", "The plan for the synthesis", "dict"),
+                   PipelineObject("specific_part_outline", "The outline for the specific part of the synthesis; the specific portion of the overall synthesis that this block is responsible for generating", "str")],
+        "outputs": [PipelineObject("synthesis", "The synthesized output of the specific part based on the given inputs", "str")],
+        "schema": SynthesisBlockSchema,
+        "creativity_level": CreativityLevel.MEDIUM,
+        "model": WRITER_MODEL,
+    }
+
+# Router blocks
+
+# Done
+class RouteOption(BaseModel):
+    id: str = Field(description="The id of the route option")
+    inputs: dict = Field(
+        default_factory=dict,
+        description="All necessary inputs for the route option to be executed",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_route_option(cls, payload):
+        if not isinstance(payload, dict):
+            return payload
+        normalized = dict(payload)
+        if "id" not in normalized:
+            for alias in ("tool_id", "tool", "route_id"):
+                if alias in normalized:
+                    normalized["id"] = normalized.get(alias)
+                    break
+        if "inputs" not in normalized or not isinstance(normalized.get("inputs"), dict):
+            normalized["inputs"] = {}
+        return normalized
+    
+class PrimaryToolRouterBlockSchema(BaseModel):
+    routes: list[RouteOption] = Field(
+        default_factory=list,
+        description="The list of routes for the router to go to",
+    )
+    continuity: bool = Field(
+        default=False,
+        description="Whether to continue routing post routing (whether to use the output of the tool to route to other tools)",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_router_shapes(cls, payload):
+        if not isinstance(payload, dict):
+            return payload
+
+        normalized = dict(payload)
+        routes = normalized.get("routes")
+
+        # Common drift: model returns a single route object at top-level.
+        if routes is None and normalized.get("id"):
+            route_inputs = normalized.get("inputs")
+            normalized["routes"] = [{
+                "id": normalized.get("id"),
+                "inputs": route_inputs if isinstance(route_inputs, dict) else {},
+            }]
+        elif isinstance(routes, dict):
+            normalized["routes"] = [routes]
+        elif isinstance(routes, str):
+            route_id = routes.strip()
+            normalized["routes"] = [{"id": route_id, "inputs": {}}] if route_id else []
+        elif isinstance(routes, list):
+            fixed_routes: list[dict] = []
+            for route in routes:
+                if isinstance(route, str):
+                    route_id = route.strip()
+                    if route_id:
+                        fixed_routes.append({"id": route_id, "inputs": {}})
+                elif isinstance(route, dict):
+                    fixed_routes.append(route)
+            normalized["routes"] = fixed_routes
+        else:
+            normalized["routes"] = []
+
+        continuity = normalized.get("continuity", False)
+        if isinstance(continuity, str):
+            lowered = continuity.strip().lower()
+            normalized["continuity"] = lowered in {"1", "true", "yes", "y"}
+        else:
+            normalized["continuity"] = bool(continuity)
+
+        return normalized
+
+class PrimaryToolRouterBlock(RouterBlock):
+    details = {
+        "id": "primary_tool_router_block",
+        "name": "Primary Tool Router Block",
+        "description": "Determines the route to take based on the given input and objective.",
+        "prompt_creation_parameters": {
+            "details": "Determine the route to take based on the given input and objective.",
+            "objective": "The objective for which the route is being determined.",
+            "success_rubric": {
+                "accuracy": {
+                    "description": "How accurately the router determines the appropriate route based on the input and objective.",
+                    "weight": 0.5
+                },
+                "relevance": {
+                    "description": "How relevant the determined route is to the specific input and objective.",
+                    "weight": 0.3
+                },
+                "clarity": {
+                    "description": "How clear and well-defined the determined route is in terms of the necessary steps and inputs required.",
+                    "weight": 0.2
+                }
+            }
+        },
+        "inputs": [PipelineObject("plan", "The plan based on which the route is determined", "str"),
+                   PipelineObject("objective", "The objective for which the route is being determined", "str"),
+                   PipelineObject("available_tools", "The tools available for routing decisions", "list")],
+        "outputs": [PipelineObject("routes", "The list of routes for the router to go to", "list"),
+                    PipelineObject("continuity", "Whether to continue routing post routing (whether to use the output of the tool to route to other tools)", "bool")],
+        "schema": PrimaryToolRouterBlockSchema,
+        "creativity_level": CreativityLevel.LOW,
+        "model": ANALYTICAL_MODEL,
+    }
+
+    def process(self, inputs):
+        logger.info("PrimaryToolRouterBlock process() start")
+        plan = inputs.get("plan")
+        objective = inputs.get("objective")
+        available_tools = self._available_tools_text(self._get_available_tools())
+
+        prompt = self._prompt_builder({
+            "plan": plan,
+            "objective": objective,
+            "available_tools": available_tools
+        })
+
+        output = generate_text(
+            prompt,
+            model=self.details['model'],
+            schema=self.details['schema'],
+            temperature=self.details['creativity_level']
+        )
+
+        output = _model_to_primitive(output)
+        logger.info(f"PrimaryToolRouterBlock: {len(output.get('routes', []))} routes determined, continuity={output.get('continuity')}")
+
+        return output
+
+# Uses schema from Primary Tool Router since they are functionally the same
+class SubToolRouterBlock(RouterBlock):
+    details = {
+        "id": "secondary_tool_router_block",
+        "name": "Secondary Tool Router Block",
+        "description": "Determines the route to take based on the given input, objective, and context post tool use.",
+        "prompt_creation_parameters": {
+            "details": "Determine the route to take based on the given input, objective, and context post tool use.",
+            "objective": "The objective for which the route is being determined.",
+            "success_rubric": {
+                "accuracy": {
+                    "description": "How accurately the router determines the appropriate route based on the input, objective, and context.",
+                    "weight": 0.5
+                },
+                "relevance": {
+                    "description": "How relevant the determined route is to the specific input, objective, and context.",
+                    "weight": 0.3
+                },
+                "clarity": {
+                    "description": "How clear and well-defined the determined route is in terms of the necessary steps and inputs required.",
+                    "weight": 0.2
+                }
+            }
+        },
+        "inputs": [PipelineObject("tool_output", "The output from the tool based on which the route is determined", "str"),
+                   PipelineObject("objective", "The objective for which the route is being determined", "str"),
+                   PipelineObject("plan", "The context for which the route is being determined", "dict"),
+                   PipelineObject("available_tools", "The tools available for routing decisions", "list")],
+        "outputs": [PipelineObject("routes", "The list of routes for the router to go to", "list"),
+                    PipelineObject("continuity", "Whether to continue routing post routing (whether to use the output of the tool to route to other tools)", "bool")],
+        "schema": PrimaryToolRouterBlockSchema,
+        "creativity_level": CreativityLevel.LOW,
+        "model": ANALYTICAL_MODEL,
+    }
+
+    def process(self, inputs):
+        logger.info("SubToolRouterBlock process() start")
+        tool_output = inputs.get("tool_output")
+        objective = inputs.get("objective")
+        plan = inputs.get("plan")
+        available_tools = self._available_tools_text(self._get_available_tools())
+
+
+        prompt = self._prompt_builder({
+            "tool_output": tool_output,
+            "objective": objective,
+            "plan": plan,
+            "available_tools": available_tools
+        })
+
+        output = generate_text(
+            prompt,
+            model=self.details['model'],
+            schema=self.details['schema'],
+            temperature=self.details['creativity_level']
+        )
+
+        output = _model_to_primitive(output)
+        logger.info(f"SubToolRouterBlock: {len(output.get('routes', []))} routes determined, continuity={output.get('continuity')}")
+
+        return output
+
+
+class LargeResponseRouterBlockSchema(BaseModel):
+    response_parts: list[str] = Field(
+        default_factory=list,
+        description="A list of smaller response parts for aggregation with descriptions of each part",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_response_parts(cls, payload):
+        if not isinstance(payload, dict):
+            return payload
+        parts = payload.get("response_parts")
+        if not isinstance(parts, list):
+            return payload
+        normalized: list[str] = []
+        for part in parts:
+            if isinstance(part, str):
+                text = part.strip()
+                if text:
+                    normalized.append(text)
+                continue
+            if isinstance(part, dict):
+                candidate = (
+                    part.get("part")
+                    or part.get("title")
+                    or part.get("description")
+                    or part.get("text")
+                    or ""
+                )
+                text = str(candidate).strip()
+                if text:
+                    normalized.append(text)
+                continue
+            text = str(part).strip()
+            if text:
+                normalized.append(text)
+        payload["response_parts"] = normalized
+        return payload
+
+class LargeResponseRouterBlock(RouterBlock):
+    details = {
+        "id": "large_response_router_block",
+        "name": "Large Response Router Block",
+        "description": "If the response is deemed too long, this block determines how to break the response into smaller parts for aggregation.",
+        "inputs": [PipelineObject("plan", "The plan based on which the routing decision is made", "dict"),
+                   PipelineObject("objective", "The objective for which the routing decision is being made", "str"),
+                   PipelineObject("response_criteria", "The criteria for a successful response to the plan", "list"),
+                   PipelineObject("tool_context", "Any context obtained from the tool outputs", "dict")],
+        "outputs": [PipelineObject("response_parts", "A list of smaller response parts for aggregation with descriptions of each part", "list")],
+        "schema": LargeResponseRouterBlockSchema,
+        "creativity_level": CreativityLevel.MIN,
+        "model": ANALYTICAL_MODEL,
+    }
+
+    def process(self, inputs):
+        prompt = self._prompt_builder(inputs)
+
+        output = generate_text(
+            prompt,
+            model=self.details['model'],
+            schema=self.details['schema'],
+            temperature=self.details['creativity_level']
+        )
+
+        return dict(output)
+
+# Tool Classes
+
+class WebSearchToolBlockSchema(BaseModel):
+    summary: str = Field(description="The relevant information returned from the web search summarized")
+
+class WebSearchToolBlock(ToolBlock):
+    details = {
+        "id": "web_search_tool_block",
+        "name": "Web Search Tool Block",
+        "description": "Performs a web search based on the given query and returns relevant information.",
+        "prompt_creation_parameters": {
+            "details": "Summarize retrieved web evidence grounded strictly in supplied sources.",
+            "objective": "Produce concise, evidence-grounded summaries with uncertainty caveats and citation markers.",
+            "success_rubric": {
+                "evidence_fidelity": {"description": "Uses only provided sources without hallucination.", "weight": 0.45},
+                "relevance": {"description": "Prioritizes most relevant evidence to the user query.", "weight": 0.35},
+                "clarity": {"description": "Delivers concise, structured synthesis.", "weight": 0.2},
+            },
+        },
+        "inputs": [PipelineObject("query", "The query for which to perform the web search", "str")],
+        "outputs": [PipelineObject("cited_summary", "The relevant information returned from the web search summarized", "str"),
+                    PipelineObject("search_result_links", "The relevant information returned from the web search in the form of links", "dict")],
+        "creativity_level": CreativityLevel.LOW,
+        "schema": WebSearchToolBlockSchema,
+        "model": ANALYTICAL_MODEL,
+    }
+
+    def __init__(self):
+        super().__init__()
+
+    def _query_terms(self, query: str) -> list[str]:
+        terms = [term for term in re.findall(r"[a-zA-Z0-9]+", (query or "").lower()) if len(term) >= 3]
+        return list(dict.fromkeys(terms))
+
+    def _normalize_url(self, url: str) -> str:
+        if not url:
+            return ""
+        try:
+            parsed = urlparse(url)
+            normalized = parsed._replace(query="", fragment="")
+            return urlunparse(normalized)
+        except Exception:
+            return url
+
+    def _domain_quality_score(self, url: str) -> int:
+        domain = (urlparse(url).netloc or "").lower()
+        high_quality_markers = [".edu", "wikipedia.org", "stanford.edu", "britannica.com", "arxiv.org", "springer.com"]
+        low_quality_markers = ["pinterest", "reddit", "quora", "fandom", "tiktok", "instagram"]
+        score = 0
+        if any(marker in domain for marker in high_quality_markers):
+            score += 3
+        if any(marker in domain for marker in low_quality_markers):
+            score -= 2
+        return score
+
+    def _clean_text(self, text: str) -> str:
+        if not text:
+            return ""
+        max_input_chars = 140_000
+        max_output_chars = 110_000
+        cleaned = " ".join(text[:max_input_chars].split())
+        noise_markers = [
+            "cookie",
+            "privacy policy",
+            "terms of use",
+            "subscribe",
+            "sign in",
+            "jump to content",
+            "main menu",
+        ]
+        for marker in noise_markers:
+            cleaned = re.sub(rf"\b{re.escape(marker)}\b", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = " ".join(cleaned.split()).strip()
+        if len(cleaned) > max_output_chars:
+            cleaned = cleaned[:max_output_chars]
+        return cleaned
+
+    def _score_relevance(self, query_terms: list[str], title: str, text: str) -> int:
+        haystack = f"{title or ''} {text or ''}".lower()
+        if not haystack.strip():
+            return 0
+        score = 0
+        for term in query_terms:
+            if term in haystack:
+                score += 1
+        if query_terms and all(term in haystack for term in query_terms[: min(2, len(query_terms))]):
+            score += 2
+        return score
+
+    def _relevant_excerpt(self, text: str, query_terms: list[str], max_chars: int) -> str:
+        if not text:
+            return ""
+
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        selected: list[str] = []
+        total_len = 0
+
+        for idx, sentence in enumerate(sentences):
+            lowered = sentence.lower()
+            matches = not query_terms or any(term in lowered for term in query_terms)
+            if not matches:
                 continue
 
-            output = python_exec_tool(code, save_plots=plot_requested)
-            final_output = output
-            final_code = code
+            for neighbor_idx in (idx - 1, idx, idx + 1):
+                if neighbor_idx < 0 or neighbor_idx >= len(sentences):
+                    continue
+                neighbor = sentences[neighbor_idx].strip()
+                if not neighbor:
+                    continue
+                if neighbor in selected:
+                    continue
+                if total_len + len(neighbor) + 1 > max_chars:
+                    break
+                selected.append(neighbor)
+                total_len += len(neighbor) + 1
 
-            success = output.get("success", False)
-            stdout = output.get("output", "")
-            error_msg = output.get("error")
-            structured_output = self._parse_structured_output(stdout)
+            if total_len >= max_chars:
+                break
 
-            attempts_summary.append(
+        if not selected:
+            return text[:max_chars]
+        return " ".join(selected)
+    
+    def process(self, inputs):
+        query = inputs.get("query")
+        logger.info(f"WebSearchToolBlock: searching for '{query}'")
+        process_started = time.perf_counter()
+
+        max_sources = 5
+        max_chars_per_source = 1800
+        max_total_prompt_chars = 12000
+        min_relevance_score = 1
+        max_urls_to_fetch = 12
+        max_per_domain = 2
+        preprocess_budget_seconds = 12.0
+
+        query_terms = self._query_terms(query)
+
+        retrieval_started = time.perf_counter()
+        urls = get_links_from_duckduckgo(query)
+        logger.debug(f"WebSearchToolBlock: found {len(urls)} URLs")
+        outputs = get_site_details_many(urls[:max_urls_to_fetch])
+        retrieval_elapsed = time.perf_counter() - retrieval_started
+        logger.debug(
+            f"WebSearchToolBlock: retrieved {len(outputs)} site details in {retrieval_elapsed:.2f}s"
+        )
+
+        ranked_outputs = []
+        seen_urls = set()
+        domain_counts: dict[str, int] = {}
+        preprocess_started = time.perf_counter()
+        for output in outputs:
+            if time.perf_counter() - preprocess_started > preprocess_budget_seconds:
+                logger.warning(
+                    "WebSearchToolBlock: preprocessing budget exceeded; continuing with partial ranked sources"
+                )
+                break
+            raw_url = str(output.get("url") or "").strip()
+            url = self._normalize_url(raw_url)
+            title = str(output.get("title") or "").strip()
+            raw_text = str(output.get("text") or "")
+            text = self._clean_text(raw_text)
+            if not url or url in seen_urls or not text:
+                continue
+
+            domain = (urlparse(url).netloc or "").lower()
+            current_domain_count = domain_counts.get(domain, 0)
+            if current_domain_count >= max_per_domain:
+                continue
+
+            seen_urls.add(url)
+            domain_counts[domain] = current_domain_count + 1
+
+            relevance_score = self._score_relevance(query_terms, title, text)
+            if relevance_score < min_relevance_score:
+                continue
+
+            quality_score = self._domain_quality_score(url)
+            total_score = relevance_score * 2 + quality_score
+
+            ranked_outputs.append(
                 {
-                    "attempt": attempt,
-                    "success": success,
-                    "error": error_msg,
-                    "raw_code": raw_code,
-                    "stdout": stdout,
-                    "applied_fixes": applied_fixes,
-                    "structured_output": structured_output,
+                    "url": url,
+                    "title": title,
+                    "text": text,
+                    "score": total_score,
                 }
             )
 
-            if success:
-                validation_error = self._validate_structured_output(structured_output, plot_requested)
-                if validation_error:
-                    logger.warning(
-                        "UseCodeToolBlock attempt %d produced invalid structured output: %s",
-                        attempt,
-                        validation_error,
-                    )
-                    success = False
-                    output["success"] = False
-                    output["error"] = validation_error
-                    attempts_summary[-1]["success"] = False
-                    attempts_summary[-1]["error"] = validation_error
-                    previous_error = (
-                        validation_error
-                        + "\nGuidance: Print a single json.dumps payload with keys 'answer', 'details', and 'metadata'."
-                    )
-                    final_output = output
-                    final_code = code
+        preprocess_elapsed = time.perf_counter() - preprocess_started
+        logger.debug(
+            f"WebSearchToolBlock: preprocessing complete in {preprocess_elapsed:.2f}s, candidates={len(ranked_outputs)}"
+        )
+        ranked_outputs.sort(key=lambda item: item["score"], reverse=True)
+        ranked_outputs = ranked_outputs[:max_sources]
+
+        if not ranked_outputs:
+            fallback_outputs = []
+            seen_fallback = set()
+            for output in outputs:
+                url = self._normalize_url(str(output.get("url") or "").strip())
+                if not url or url in seen_fallback:
                     continue
+                title = str(output.get("title") or "").strip()
+                text = self._clean_text(str(output.get("text") or ""))
+                if not text:
+                    continue
+                seen_fallback.add(url)
+                fallback_outputs.append({"url": url, "title": title, "text": text, "score": 0})
+                if len(fallback_outputs) >= 2:
+                    break
+            ranked_outputs = fallback_outputs
+        
+        prompt = ""
+        url_numbered = {}
 
-                logger.info("UseCodeToolBlock succeeded on attempt %d", attempt)
+        for i, output in enumerate(ranked_outputs):
+            source_text = self._relevant_excerpt(output.get("text", ""), query_terms, max_chars_per_source)
+            source_block = (
+                f"Title: {output.get('title')}\n"
+                f"Text: {source_text}\n"
+                f"URL: {output.get('url')}\n"
+                f"Reference ID: {i+1}\n"
+            )
+
+            if len(prompt) + len(source_block) > max_total_prompt_chars:
+                logger.warning("WebSearchToolBlock: reached prompt size cap while assembling sources")
                 break
 
-            logger.warning(
-                "UseCodeToolBlock attempt %d failed: %s", attempt, (error_msg or stdout)[:200]
-            )
-            previous_error = (error_msg or stdout or "Execution failed without message.")
-            
-            # Add specific guidance for common errors
-            if previous_error and "name 'np' is not defined" in previous_error:
-                previous_error += \
-                    "\nGuidance: Rewrite the solution without relying on numpy; use pure Python data structures."
-            elif previous_error and ("googlesearch" in previous_error.lower() or "requests" in previous_error.lower() or "beautifulsoup" in previous_error.lower()):
-                previous_error += \
-                    "\nGuidance: Web scraping modules are NOT available. You already have the article content provided. Work ONLY with the data you have. Do NOT attempt web searches or HTTP requests."
-            elif previous_error and "ModuleNotFoundError" in previous_error:
-                previous_error += \
-                    "\nGuidance: Only use standard library modules (json, re, datetime, etc.) and matplotlib. External packages are not available. Work with the data already provided to you."
-            elif previous_error and "sympy" in previous_error.lower():
-                previous_error += \
-                    "\nGuidance: sympy is NOT available. Solve the system of equations manually using substitution/elimination method or matrix operations with pure Python."
-            elif previous_error and ("list indices must be integers" in previous_error or "Symbol" in previous_error):
-                previous_error += \
-                    "\nGuidance: You're trying to use symbolic variables as list indices. Use numeric calculations only - solve equations algebraically by hand, then calculate the numeric result."
+            prompt += source_block
+            url_numbered[i+1] = output.get("url")
 
-        output_output = final_output.get("output", "") if final_output else ""
-        output_files = final_output.get("plots", []) if final_output else []
-        structured_output = self._parse_structured_output(output_output)
+        if not prompt.strip():
+            logger.warning("WebSearchToolBlock: no sufficiently relevant sources found after filtering")
+            return {
+                "cited_summary": "No relevant information found.",
+                "search_result_links": {},
+            }
+        
+        logger.debug(
+            f"WebSearchToolBlock: prompt assembled with {len(url_numbered)} sources, chars={len(prompt)}"
+        )
+        output_contract = json.dumps(
+            {
+                "summary": "string",
+            },
+            indent=2,
+        )
+        prompt += "\n\n" + self._render_prompt_template(
+            self.details["id"],
+            {
+                "query": query,
+                "output_contract": output_contract,
+            },
+        )
 
-        response = {
-            "code_request": text,
-            "extract_info": extract_info or "",
-            "output": output_output,
-            "files": output_files,
-            "plots": output_files,
-            "raw_result": final_output,
-            "attempts": attempts_summary,
-            "success": final_output.get("success", False) if final_output else False,
-            "final_code": final_code,
-            "structured_output": structured_output,
+        output = generate_text(
+            prompt,
+            model=self.details['model'],
+            schema=self.details['schema'],
+            temperature=self.details['creativity_level']
+        )
+
+        results = {
+            "cited_summary": output.summary,
+            "search_result_links": url_numbered
         }
-        return response
-
-    def _validate_structured_output(self, structured_output, plot_requested: bool) -> Optional[str]:
-        if structured_output is None:
-            return (
-                "Code tool must emit a JSON object via json.dumps; no JSON payload was captured."
-            )
-
-        if not isinstance(structured_output, dict):
-            return "Structured output must be a JSON object."
-
-        required_keys = {"answer", "details", "metadata"}
-        missing = sorted(required_keys - structured_output.keys())
-        if missing:
-            return (
-                "Structured output missing required keys: " + ", ".join(missing)
-            )
-
-        metadata = structured_output.get("metadata")
-        if not isinstance(metadata, dict):
-            return "metadata field must be a JSON object."
-        
-        # CRITICAL: Check if the code reported an error in the output
-        if metadata.get("error") is True:
-            answer = structured_output.get("answer", "")
-            return f"Code execution reported an error: {answer}"
-        
-        # Check if the answer contains error indicators
-        answer = str(structured_output.get("answer", "")).lower()
-        error_indicators = ["error occurred", "exception", "failed", "traceback"]
-        if any(indicator in answer for indicator in error_indicators):
-            return f"Code output contains error message: {structured_output.get('answer', '')}"
-
-        if plot_requested and not metadata.get("plot_saved"):
-            return (
-                "metadata['plot_saved'] must be True when a plot is requested."
-            )
-
-        return None
-
-    def create_code_prompt(
-        self,
-        text,
-        extract_info=None,
-        previous_code=None,
-        previous_error=None,
-        attempt: int = 1,
-        plot_requested: bool = False,
-    ):
-        prompt = (
-            f"ROLE: You are an expert Python programmer writing code to extract information and generate results.\n\n"
-            f"OBJECTIVE: Write clean, efficient Python code to fulfill the request below.\n\n"
-            f"USER REQUEST:\n{text}\n\n"
-            f"INFORMATION TO EXTRACT:\n{extract_info or 'Extract relevant insights, calculations, or patterns from the provided data.'}\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"CRITICAL CONSTRAINTS - READ CAREFULLY:\n"
-            f"═════════════════════════════════════════════════════════════════\n\n"
-            f"DATA ACCESS:\n"
-            f"  ✓ ALLOWED: Work with data already present in the prompt/context above\n"
-            f"  ✓ ALLOWED: Standard library (json, re, datetime, math, collections, itertools, etc.)\n"
-            f"  ✓ ALLOWED: matplotlib.pyplot for visualizations\n"
-            f"  ✗ FORBIDDEN: Web scraping, HTTP requests, or external data fetching\n"
-            f"  ✗ FORBIDDEN: Packages like requests, beautifulsoup, googlesearch, selenium, urllib, httplib\n"
-            f"  ✗ FORBIDDEN: Database connections, file system operations beyond temp plots\n"
-            f"  ✗ FORBIDDEN: Heavy dependencies like numpy, pandas, scipy (use standard library instead)\n\n"
-            f"CODE QUALITY:\n"
-            f"  • Write production-ready code with proper error handling\n"
-            f"  • Use descriptive variable names and add brief inline comments for complex logic\n"
-            f"  • Handle edge cases (empty data, division by zero, missing keys, etc.)\n"
-            f"  • Prefer clarity over cleverness - code should be maintainable\n"
-            f"  • Keep it efficient - avoid unnecessary loops or redundant calculations\n\n"
-            f"OUTPUT REQUIREMENTS:\n"
-            f"  • Code MUST print EXACTLY ONE JSON object at the end using json.dumps()\n"
-            f"  • JSON must contain these exact keys:\n"
-            f"    - 'answer': (string) Clear summary of findings in 2-4 sentences\n"
-            f"    - 'details': (dict/list) Structured data like tables, metrics, intermediate values\n"
-            f"    - 'metadata': (dict) Include flags like 'plot_saved', calculation parameters, data sources\n"
-            f"  • Print NOTHING else to stdout - no debug messages, no extra text\n"
-            f"  • The JSON output is consumed by downstream processing - it must be valid\n\n"
-            f"DELIVERABLE COMPLETENESS:\n"
-            f"  • Provide final analytical results DIRECTLY in the JSON\n"
-            f"  • DO NOT generate 'example scripts' for users to run\n"
-            f"  • DO NOT include instructions like 'save this and execute'\n"
-            f"  • The output IS the final result, not a template\n\n"
-        )
-
-        if plot_requested:
-            prompt += (
-                f"═════════════════════════════════════════════════════════════════\n"
-                f"🎨 VISUALIZATION REQUIRED:\n"
-                f"═════════════════════════════════════════════════════════════════\n\n"
-                f"You MUST generate a high-quality matplotlib plot. Follow this checklist:\n\n"
-                f"SETUP:\n"
-                f"  1. Import: import matplotlib.pyplot as plt\n"
-                f"  2. Create figure: plt.figure(figsize=(10, 6)) or larger if needed\n\n"
-                f"PLOTTING:\n"
-                f"  3. Choose appropriate chart type:\n"
-                f"     • Line plot: trends over time, continuous data (plt.plot)\n"
-                f"     • Bar chart: comparisons, categories (plt.bar)\n"
-                f"     • Scatter plot: correlations, distributions (plt.scatter)\n"
-                f"     • Pie chart: proportions, percentages (plt.pie)\n"
-                f"     • Histogram: frequency distributions (plt.hist)\n"
-                f"  4. Use clear colors and markers for readability\n"
-                f"  5. Add gridlines if helpful: plt.grid(True, alpha=0.3)\n\n"
-                f"LABELS & ANNOTATIONS:\n"
-                f"  6. X-axis label: plt.xlabel('Clear descriptive label', fontsize=12)\n"
-                f"  7. Y-axis label: plt.ylabel('Clear descriptive label', fontsize=12)\n"
-                f"  8. Title: plt.title('Descriptive Title That Explains The Visualization', fontsize=14, fontweight='bold')\n"
-                f"  9. Legend if multiple series: plt.legend(loc='best')\n"
-                f"  10. Consider adding data labels or annotations for key points\n\n"
-                f"FINALIZATION:\n"
-                f"  11. Apply layout: plt.tight_layout() (prevents label cutoff)\n"
-                f"  12. Save: plt.show() - THIS IS CRITICAL\n"
-                f"      • The system auto-saves the figure to a file\n"
-                f"      • DO NOT use plt.savefig() yourself\n"
-                f"      • Call plt.show() EXACTLY ONCE at the very end\n\n"
-                f"JSON OUTPUT FOR PLOTS:\n"
-                f"  • 'answer': Describe what the visualization shows and key insights\n"
-                f"  • 'details': Include the raw data used (as dict/list) so users can verify\n"
-                f"  • 'metadata': {{\n"
-                f"      'plot_saved': True,\n"
-                f"      'chart_type': 'line/bar/scatter/pie/histogram',\n"
-                f"      'data_points': <number of points plotted>,\n"
-                f"      'title': '<your plot title>'\n"
-                f"    }}\n\n"
-                f"The plot file path will be captured automatically and embedded in the final answer.\n\n"
-            )
-
-        if attempt > 1:
-            prompt += (
-                f"═════════════════════════════════════════════════════════════════\n"
-                f"⚠️ PREVIOUS ATTEMPT FAILED (Attempt #{attempt}):\n"
-                f"═════════════════════════════════════════════════════════════════\n\n"
-                f"Carefully study the error below and correct your code.\n"
-            )
-        
-        if previous_error:
-            prompt += (
-                f"\nERROR FROM PREVIOUS ATTEMPT:\n"
-                f"────────────────────────────────────────────────────────────────\n"
-                f"{previous_error}\n"
-                f"────────────────────────────────────────────────────────────────\n\n"
-                f"DEBUGGING CHECKLIST:\n"
-                f"  • If NameError: Import the missing module or define the variable\n"
-                f"  • If KeyError: Check that the key exists before accessing (use .get())\n"
-                f"  • If IndexError: Verify list/array length before accessing indices\n"
-                f"  • If TypeError: Check data types - convert strings to int/float as needed\n"
-                f"  • If ZeroDivisionError: Add checks before division operations\n"
-                f"  • If SyntaxError: Review brackets, quotes, indentation carefully\n\n"
-            )
-        
-        if previous_code:
-            prompt += (
-                f"PREVIOUS CODE (for reference):\n"
-                f"────────────────────────────────────────────────────────────────\n"
-                f"{previous_code}\n"
-                f"────────────────────────────────────────────────────────────────\n\n"
-                f"Provide a COMPLETE corrected version (not a patch). Fix the root cause.\n\n"
-            )
-        
-        prompt += (
-            f"OUTPUT: Return ONLY the Python code. No explanations, no markdown formatting, no comments outside the code.\n"
-            f"The code will be executed immediately in an isolated environment."
-        )
-        
-        return generate_text(prompt, temperature=0.8)
-
-    def _should_generate_plot(self, text: str, extract_info: str | None) -> bool:
-        combined = " ".join(filter(None, [text, extract_info])).lower()
-        keywords = ("plot", "graph", "chart", "visualize", "visualise", "diagram", "curve")
-        return any(keyword in combined for keyword in keywords)
-
-    def _parse_structured_output(self, stdout: str | None):
-        if not stdout:
-            return None
-
-        cleaned = stdout.strip()
-        if not cleaned:
-            return None
-
-        # Attempt direct JSON parse first
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError:
-            pass
-
-        # Try to locate the last JSON object in the text
-        json_candidates = re.findall(r"\{.*\}", cleaned, re.DOTALL)
-        for candidate in reversed(json_candidates):
-            try:
-                return json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-
-        return None
-    def _ensure_required_imports(self, code: str):
-        # Defensive: accept None for code and treat as empty
-        if not (code and str(code).strip()):
-            return code or "", []
-
-        imports_to_add = []
-
-        if "json." in code and "import json" not in code:
-            imports_to_add.append("import json")
-        if "np." in code and "import numpy as np" not in code:
-            imports_to_add.append("import numpy as np")
-        if "plt." in code and "import matplotlib.pyplot as plt" not in code:
-            imports_to_add.append("import matplotlib.pyplot as plt")
-
-        if not imports_to_add:
-            return code, []
-
+        summary_preview = output.summary[:50]
+        total_elapsed = time.perf_counter() - process_started
         logger.info(
-            "UseCodeToolBlock inserting missing imports: %s",
-            ", ".join(imports_to_add),
+            f"WebSearchToolBlock: search complete in {total_elapsed:.2f}s - summary: {summary_preview}..."
         )
-        applied = [f"auto_import:{imp}" for imp in imports_to_add]
-        return "\n".join(imports_to_add + ["", code]), applied
 
-    def _extract_code_from_response(self, response: str) -> str:
-        # Defensive: response may be None
-        trimmed = (response or "").strip()
-        if not trimmed:
-            return ""
-
-        if trimmed.startswith("{"):
-            try:
-                payload = json.loads(trimmed)
-                if isinstance(payload, dict) and "code" in payload:
-                    return payload["code"]
-            except json.JSONDecodeError:
-                pass
-
-        if "```" in trimmed:
-            sections = trimmed.split("```")
-            if len(sections) >= 3:
-                # sections[1] may include language identifier
-                candidate = sections[1]
-                candidate = candidate or ""
-                if candidate.strip().startswith("python"):
-                    candidate = "\n".join(candidate.splitlines()[1:])
-                return candidate.strip()
-
-        return trimmed
+        return results
 
 
-class UseInternetToolBlock(PipelineBlock):
-    description = "Search the web. Requires data.search_query and optional data.link_num (1-10). Gracefully handles fetch failures."
-    
-    def __call__(self, query, num_links):
-        output = online_query_tool(query, num_links)
-        summary = output.get("summary", "")
-        articles = output.get("articles", [])
-        fetch_status = output.get("fetch_status", "UNKNOWN")
-        error = output.get("error", None)
-        
-        # Format the response based on fetch status
-        if fetch_status == "SUCCESS":
-            articles_formatted = "\n".join([f"- {a.get('title', 'Untitled')}: {a.get('link', 'No link')}" for a in articles if a])
-            text = f"""Web search completed successfully for: "{query}"
+class PythonCodeExecutionToolBlockSchema(BaseModel):
+    code_to_run: str = Field(description="The Python code to be executed")
+    packages_needed: list[str] = Field(description="The packages needed to run the code")
 
-Summary of findings:
-{summary}
+class PythonCodeExecutionToolBlock(ToolBlock):
+    details = {
+        "id": "python_code_execution_tool_block",
+        "name": "Python Code Execution Tool Block",
+        "description": "Executes the given Python code and returns the output.",
+        "prompt_creation_parameters": {
+            "details": "Generate deterministic Python code with a strict JSON output contract and repair loop.",
+            "objective": "Solve objective-specific computation tasks safely while minimizing retries and runtime.",
+            "success_rubric": {
+                "schema_fidelity": {"description": "Returns valid JSON fields code_to_run/packages_needed.", "weight": 0.35},
+                "execution_reliability": {"description": "Code executes successfully with bounded complexity.", "weight": 0.4},
+                "safety_and_constraints": {"description": "Respects visual and import constraints.", "weight": 0.25},
+            },
+        },
+        "inputs": [PipelineObject("objective", "The objective of the code execution", "str"),
+                   PipelineObject("visuals_needed", "Whether the code needs to create visuals or not", "bool")],
+        "outputs": [PipelineObject("results", "The output of the code execution", "str"),
+                    PipelineObject("plots", "Any errors that occurred during code execution", "str")],
+        "creativity_level": CreativityLevel.MIN,
+        "schema": PythonCodeExecutionToolBlockSchema,
+        "model": ANALYTICAL_MODEL,
+    }
 
-Sources:
-{articles_formatted if articles_formatted else "(No article links available)"}
-"""
-        else:
-            # Fetch failed - explicitly communicate this to prevent hallucination
-            text = f"""⚠️ WEB SEARCH FAILED for: "{query}"
+    def __init__(self):
+        super().__init__()
 
-Reason: {error or 'Unknown error'}
+    def _infer_package_hints(self, objective: str, visuals_needed: bool) -> list[str]:
+        objective_lower = (objective or "").lower()
+        hints = []
 
-Status: {fetch_status}
+        if any(token in objective_lower for token in ["symbolic", "derive", "algebra", "trigonometric", "coefficient", "proof"]):
+            hints.append("sympy")
+        if any(token in objective_lower for token in ["array", "matrix", "linear algebra", "numerical"]):
+            hints.append("numpy")
+        if any(token in objective_lower for token in ["table", "csv", "dataframe", "dataset"]):
+            hints.append("pandas")
+        if any(token in objective_lower for token in ["regression", "distribution", "hypothesis", "statistical", "stats"]):
+            hints.extend(["scipy", "statsmodels"])
+        if any(token in objective_lower for token in ["crawl", "scrape", "html", "web page"]):
+            hints.extend(["requests", "beautifulsoup4"])
 
-Details:
-{summary}
+        if visuals_needed:
+            if "interactive" in objective_lower:
+                hints.append("plotly")
+            else:
+                hints.append("matplotlib")
 
-IMPORTANT: Cannot provide information about this topic from web sources. 
-Please use general knowledge or ask for alternative assistance.
-"""
-        
-        return text
+        deduped = []
+        seen = set()
+        for package in hints:
+            if package not in seen:
+                seen.add(package)
+                deduped.append(package)
+        return deduped
 
+    def _sanitize_package_plan(self, suggested_packages: list[str], objective: str, code: str, visuals_needed: bool) -> list[str]:
+        objective_hints = set(self._infer_package_hints(objective, visuals_needed))
+        normalized = []
+        for package in suggested_packages or []:
+            if isinstance(package, str) and package.strip():
+                normalized.append(package.strip().lower())
 
-class MathImprovementBlock(PipelineBlock):
-    description = "Validate and improve mathematical reasoning. Catches algebra/calculus/logic errors and provides corrections."
-    
-    def __call__(self, text, math_content, verify_with_code=True) -> dict:
-        """
-        Validate mathematical reasoning and provide corrections if needed.
-        
-        Args:
-            text: The original query or context
-            math_content: The mathematical reasoning or calculation to validate
-            verify_with_code: Whether to attempt numerical verification via Python code
-            
-        Returns:
-            dict with validation status, errors found, corrected version, and code verification
-        """
-        # First pass: LLM-based validation
-        validation = self.validate_math_prompt(text, math_content)
-        
-        # Second pass: Self-verification through independent re-derivation
-        if not validation.get("is_correct", False):
-            logger.info("Math validation found errors. Attempting self-verification...")
-            verification = self.self_verify_prompt(text, math_content, validation)
-            validation["self_verification"] = verification
-        
-        # Third pass: Numerical verification via code (if applicable)
-        code_verification = None
-        if verify_with_code:
-            code_verification = self.verify_with_computation(text, math_content, validation)
-            validation["code_verification"] = code_verification
-        
-        return {
-            "original_math": math_content,
-            "validation": validation,
-            "verified_with_code": code_verification is not None,
+        code_imports = set()
+        for match in re.finditer(r"^\s*(?:import|from)\s+([a-zA-Z0-9_\.]+)", code or "", flags=re.MULTILINE):
+            code_imports.add(match.group(1).split(".")[0].lower())
+
+        import_map = {
+            "bs4": "beautifulsoup4",
+            "sklearn": "scikit-learn",
         }
+
+        combined = set(normalized) | objective_hints | {import_map.get(item, item) for item in code_imports}
+        if not visuals_needed:
+            combined -= {"matplotlib", "seaborn", "plotly"}
+        allowlist = {
+            "numpy", "pandas", "matplotlib", "seaborn", "plotly", "scipy", "sympy",
+            "scikit-learn", "requests", "beautifulsoup4", "pillow", "statsmodels",
+        }
+        return sorted([package for package in combined if package in allowlist])
+
+    def _contains_disallowed_visual_code(self, code: str) -> bool:
+        patterns = [
+            r"^\s*import\s+matplotlib\b",
+            r"^\s*from\s+matplotlib\b",
+            r"^\s*import\s+seaborn\b",
+            r"^\s*from\s+seaborn\b",
+            r"^\s*import\s+plotly\b",
+            r"^\s*from\s+plotly\b",
+            r"\bplt\.show\s*\(",
+            r"\bplt\.savefig\s*\(",
+            r"\bpx\.",
+        ]
+        return any(re.search(pattern, code or "", flags=re.MULTILINE) for pattern in patterns)
+
+    def _execution_timeout(self, objective: str, visuals_needed: bool) -> int:
+        objective_lower = (objective or "").lower()
+        if any(token in objective_lower for token in ["expand", "coefficient", "symbolic", "derive"]):
+            return 25
+        if visuals_needed:
+            return 30
+        return 20
     
-    def validate_math_prompt(self, context, math_content):
-        """Validate mathematical reasoning and identify errors."""
-        prompt = (
-            f"ROLE: You are an expert mathematics validator specializing in error detection and correction.\n\n"
-            f"OBJECTIVE: Carefully validate the mathematical reasoning below. Identify ANY errors and provide corrections.\n\n"
-            f"═══════════════════════════════════════════════════════════════════════════════════\n"
-            f"CONTEXT:\n{context}\n\n"
-            f"MATHEMATICAL REASONING TO VALIDATE:\n{math_content}\n"
-            f"═══════════════════════════════════════════════════════════════════════════════════\n\n"
-            f"VALIDATION CHECKLIST:\n"
-            f"1. ALGEBRAIC CORRECTNESS\n"
-            f"   ✓ Are all equation manipulations valid?\n"
-            f"   ✓ Are factorizations correct?\n"
-            f"   ✓ Are simplifications accurate?\n"
-            f"   ✓ Check for sign errors, distribution errors, exponent errors\n\n"
-            f"2. CALCULUS ACCURACY (if applicable)\n"
-            f"   ✓ Are derivatives computed correctly (chain rule, product rule, quotient rule)?\n"
-            f"   ✓ Are integrals evaluated properly?\n"
-            f"   ✓ Are limits handled correctly?\n"
-            f"   ✓ Are boundary conditions applied?\n\n"
-            f"3. LOGICAL CONSISTENCY\n"
-            f"   ✓ Do the steps follow logically from one to the next?\n"
-            f"   ✓ Are assumptions stated and justified?\n"
-            f"   ✓ Are special cases (division by zero, undefined values) handled?\n\n"
-            f"4. NUMERICAL ACCURACY\n"
-            f"   ✓ Are numerical calculations correct?\n"
-            f"   ✓ Are decimal conversions accurate?\n"
-            f"   ✓ Are rounding errors considered?\n\n"
-            f"5. DIMENSIONAL ANALYSIS (if applicable)\n"
-            f"   ✓ Are units consistent throughout?\n"
-            f"   ✓ Are unit conversions correct?\n\n"
-            f"═══════════════════════════════════════════════════════════════════════════════════\n"
-            f"OUTPUT FORMAT - STRICT JSON REQUIRED:\n"
-            f"═══════════════════════════════════════════════════════════════════════════════════\n\n"
-            f"You MUST return ONLY a valid JSON object. No explanatory text before or after.\n"
-            f"Do NOT wrap the JSON in markdown code blocks (no ```json or ```).\n"
-            f"Return the raw JSON object directly.\n\n"
-            f"Required structure:\n\n"
-            f"{{\n"
-            f"  \"is_correct\": true,\n"
-            f"  \"errors_found\": [],\n"
-            f"  \"severity\": \"none\",\n"
-            f"  \"corrected_reasoning\": \"No corrections needed\",\n"
-            f"  \"final_answer\": \"The reasoning is mathematically sound\",\n"
-            f"  \"explanation\": \"Brief explanation of validation\"\n"
-            f"}}\n\n"
-            f"OR if errors found:\n\n"
-            f"{{\n"
-            f"  \"is_correct\": false,\n"
-            f"  \"errors_found\": [\n"
-            f"    {{\n"
-            f"      \"error_type\": \"algebraic\",\n"
-            f"      \"location\": \"Step 2: factorization\",\n"
-            f"      \"description\": \"Incorrect application of difference of squares\",\n"
-            f"      \"consequence\": \"Final answer is off by a factor of 2\"\n"
-            f"    }}\n"
-            f"  ],\n"
-            f"  \"severity\": \"major\",\n"
-            f"  \"corrected_reasoning\": \"Step-by-step corrected version here\",\n"
-            f"  \"final_answer\": \"Correct final answer\",\n"
-            f"  \"explanation\": \"What was wrong and how it was fixed\"\n"
-            f"}}\n\n"
-            f"CRITICAL RULES:\n"
-            f"  ✓ ONLY report errors you can mathematically verify\n"
-            f"  ✓ NEVER hallucinate errors or corrections not supported by math\n"
-            f"  ✓ If you're unsure, mark severity as 'minor' and explain uncertainty\n"
-            f"  ✓ Show all intermediate steps in corrected_reasoning\n"
-            f"  ✗ DO NOT guess at complex proofs - only validate concrete calculations\n"
-            f"  ✗ DO NOT invent mathematical concepts to justify corrections\n\n"
-            f"Return ONLY the JSON object, no other text."
-        )
+    def process(self, inputs, retries=3):
+        objective = inputs.get("objective") or ""
+        visuals_needed = bool(inputs.get("visuals_needed"))
+        logger.info(f"PythonCodeExecutionToolBlock: objective='{objective[:50]}...', visuals={visuals_needed}")
+
+        package_hints = self._infer_package_hints(objective, visuals_needed)
+        package_hint_text = ", ".join(package_hints) if package_hints else "none"
         
-        raw_response = generate_text(prompt, temperature=0.3, max_tokens=2000)
-        
-        # Try to parse JSON response with enhanced error handling
-        try:
-            cleaned = raw_response.strip()
-            
-            # Strip markdown code blocks if present (like router does)
-            if cleaned.startswith("```"):
-                lines = cleaned.split('\n')
-                if lines[0].startswith("```"):
-                    lines = lines[1:]  # Remove opening ```json or ```
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]  # Remove closing ```
-                cleaned = '\n'.join(lines).strip()
-            
-            # Try direct JSON parse first
-            try:
-                validation_result = json.loads(cleaned)
-                logger.info(f"Math validation complete. Correct: {validation_result.get('is_correct')}")
-                return validation_result
-            except json.JSONDecodeError:
-                # Fallback: Extract JSON object from response
-                match = re.search(r'\{.*\}', cleaned, re.DOTALL)
-                if match:
-                    validation_result = json.loads(match.group(0))
-                    logger.info(f"Math validation complete (extracted). Correct: {validation_result.get('is_correct')}")
-                    return validation_result
-                else:
-                    # Log the actual response for debugging
-                    logger.warning(f"Could not extract JSON from math validation response. Response preview: {raw_response[:500]}")
-                    return {
-                        "is_correct": False,
-                        "errors_found": [],
-                        "severity": "unknown",
-                        "corrected_reasoning": "Could not parse validation response - no JSON object found",
-                        "final_answer": "VALIDATION FAILED",
-                        "explanation": f"Math validation returned unparseable response. Preview: {raw_response[:200]}"
+        errors = None
+        prev_code = None
+        execution_result = {
+            "success": False,
+            "output": "",
+            "plots": [],
+            "error": "Code generation/execution did not run.",
+        }
+        attempt_log = []
+        retry = 0
+        while retry < retries: 
+            logger.debug(f"PythonCodeExecutionToolBlock: attempt {retry+1}/{retries}")
+            output_contract = json.dumps(
+                {
+                    "code_to_run": "string",
+                    "packages_needed": ["string"],
+                },
+                indent=2,
+            )
+            prompt = self._render_prompt_template(
+                self.details["id"],
+                {
+                    "objective": objective,
+                    "visuals_needed": visuals_needed,
+                    "package_hints": package_hint_text,
+                    "previous_error": errors or "none",
+                    "previous_code": prev_code or "",
+                    "output_contract": output_contract,
+                },
+            )
+
+            generated_plan = generate_text(
+                prompt=prompt,
+                model=self.details['model'],
+                schema=self.details['schema'],
+                temperature=self.details['creativity_level'],
+                retries=3,
+                retry_delay=0.8,
+                max_total_retry_wait=12.0,
+            )
+            logger.debug(f"Code generated: {generated_plan.code_to_run[:50]}...")
+
+            if not visuals_needed and self._contains_disallowed_visual_code(generated_plan.code_to_run):
+                errors = "Generated code used visualization libraries/functions while visuals_needed=False."
+                prev_code = generated_plan.code_to_run
+                attempt_log.append(
+                    {
+                        "attempt": retry + 1,
+                        "selected_packages": [],
+                        "generated_code": generated_plan.code_to_run,
+                        "success": False,
+                        "error": errors,
+                        "output_preview": "",
+                        "plots": [],
                     }
-        except Exception as e:
-            logger.error(f"Math validation parsing error: {e}. Response preview: {raw_response[:300]}")
-            return {
-                "is_correct": False,
-                "errors_found": [],
-                "severity": "unknown",
-                "corrected_reasoning": f"Validation error: {str(e)}",
-                "final_answer": "VALIDATION FAILED",
-                "explanation": f"Math validation encountered error: {str(e)}"
-            }
-    
-    def self_verify_prompt(self, context, math_content, validation_result):
-        """
-        Independent re-derivation to verify the correction is actually correct.
-        This acts as a second opinion - solving the problem from scratch AND checking by substitution.
-        """
-        prompt = (
-            f"ROLE: You are a second mathematics expert providing independent verification.\n\n"
-            f"OBJECTIVE: Verify the solution by BOTH solving independently AND checking by substitution.\n\n"
-            f"═══════════════════════════════════════════════════════════════════════════════════\n"
-            f"CONTEXT:\n{context}\n\n"
-            f"PREVIOUS VALIDATION FOUND THESE ISSUES:\n"
-            f"{json.dumps(validation_result.get('errors_found', []), indent=2)}\n\n"
-            f"CORRECTED ANSWER CLAIMED:\n{validation_result.get('final_answer', 'N/A')}\n"
-            f"═══════════════════════════════════════════════════════════════════════════════════\n\n"
-            f"YOUR VERIFICATION STEPS:\n"
-            f"1. **Solve independently**: Work through the problem from first principles\n"
-            f"2. **Check by substitution**: Take the claimed answer and substitute it back into the original problem\n"
-            f"3. **Verify consistency**: Do both methods agree?\n\n"
-            f"EXAMPLE FOR SYSTEM OF EQUATIONS:\n"
-            f"  - If solution claims a_r=10, d_r=-5, a_c=20, d_c=8\n"
-            f"  - Substitute these values back into ALL original equations\n"
-            f"  - Check: Does a_r + 4*d_r + a_c + 4*d_c = 0? → 10 + 4*(-5) + 20 + 4*8 = 10 - 20 + 20 + 32 = 42 ≠ 0 (ERROR!)\n"
-            f"  - This proves the solution is wrong\n\n"
-            f"OUTPUT FORMAT (JSON only):\n"
-            f"{{\n"
-            f"  \"independent_solution\": \"Your step-by-step solution\",\n"
-            f"  \"independent_answer\": \"Your final answer\",\n"
-            f"  \"substitution_check\": \"Results of substituting claimed answer back into problem\",\n"
-            f"  \"substitution_passes\": true/false,\n"
-            f"  \"matches_correction\": true/false,\n"
-            f"  \"confidence\": \"high/medium/low\",\n"
-            f"  \"notes\": \"Any discrepancies or concerns\"\n"
-            f"}}\n\n"
-            f"CRITICAL: The substitution_check is the most important validation. If the answer doesn't satisfy\n"
-            f"the original problem when substituted back, it's WRONG regardless of how elegant the derivation is.\n\n"
-            f"Return ONLY the JSON object."
-        )
-        
-        raw_response = generate_text(prompt, temperature=0.2, max_tokens=1500)
-        
-        try:
-            cleaned = raw_response.strip()
-            if cleaned.startswith("```"):
-                lines = cleaned.split('\n')
-                if lines[0].startswith("```"):
-                    lines = lines[1:]
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                cleaned = '\n'.join(lines).strip()
-            
-            return json.loads(cleaned)
-        except:
-            match = re.search(r'\{.*\}', raw_response, re.DOTALL)
-            if match:
-                return json.loads(match.group(0))
-            return {"error": "Could not parse self-verification response"}
-    
-    def verify_with_computation(self, context, math_content, validation_result):
-        """
-        Attempt to verify the mathematical result using Python computation.
-        This provides numerical ground truth when applicable.
-        """
-        prompt = (
-            f"ROLE: You are writing Python code to numerically verify a mathematical result.\n\n"
-            f"CONTEXT:\n{context}\n\n"
-            f"MATHEMATICAL CLAIM TO VERIFY:\n{validation_result.get('final_answer', math_content)}\n\n"
-            f"═══════════════════════════════════════════════════════════════════════════════════\n"
-            f"TASK: Write Python code that computes the result numerically to verify correctness.\n\n"
-            f"CONSTRAINTS:\n"
-            f"  • Use only standard library (math, cmath, fractions, decimal, etc.)\n"
-            f"  • DO NOT use numpy, scipy, sympy (not available)\n"
-            f"  • Print a SINGLE JSON object with:\n"
-            f"    - 'computed_value': the numerical result\n"
-            f"    - 'verification_status': 'VERIFIED', 'FAILED', or 'NOT_APPLICABLE'\n"
-            f"    - 'details': explanation of what was computed\n\n"
-            f"If the problem is purely symbolic (no numerical answer possible), return:\n"
-            f"{{\n"
-            f"  \"computed_value\": null,\n"
-            f"  \"verification_status\": \"NOT_APPLICABLE\",\n"
-            f"  \"details\": \"Problem is symbolic/algebraic - numerical verification not applicable\"\n"
-            f"}}\n\n"
-            f"RETURN ONLY THE PYTHON CODE (no markdown, no explanations)."
-        )
-        
-        raw_code = generate_text(prompt, temperature=0.3, max_tokens=800)
-        
-        # Extract code if wrapped in markdown
-        code = raw_code.strip()
-        if "```" in code:
-            sections = code.split("```")
-            if len(sections) >= 3:
-                candidate = sections[1]
-                if candidate.strip().startswith("python"):
-                    candidate = "\n".join(candidate.splitlines()[1:])
-                code = candidate.strip()
-        
-        # Execute the verification code
-        try:
-            result = python_exec_tool(code, save_plots=False)
-            if result.get("success"):
-                stdout = result.get("output", "")
-                # Try to parse JSON from stdout
-                try:
-                    verification_data = json.loads(stdout.strip())
-                    logger.info(f"Code verification status: {verification_data.get('verification_status')}")
-                    return verification_data
-                except:
-                    # Try to extract JSON from output
-                    match = re.search(r'\{.*\}', stdout, re.DOTALL)
-                    if match:
-                        return json.loads(match.group(0))
-            return {
-                "computed_value": None,
-                "verification_status": "FAILED",
-                "details": f"Code execution failed: {result.get('error', 'Unknown error')}"
-            }
-        except Exception as e:
-            logger.warning(f"Math code verification error: {e}")
-            return {
-                "computed_value": None,
-                "verification_status": "ERROR",
-                "details": f"Verification error: {str(e)}"
-            }
-
-
-class CreativeIdeaGeneratorBlockTool(PipelineBlock):
-    description = "Brainstorm ideas. Requires data.criteria and optional data.choose_best (boolean)."
-    
-    def __call__(self, text, idea_criteria, choose_best=False) -> dict:
-        ideas = self.create_idea_prompt(text, idea_criteria)
-        response = {
-            "ideas": ideas,
-        }
-        if choose_best:
-            best = self.choose_best_idea_prompt(text, ideas)
-            response["best_idea"] = best
-        return response
-
-    def create_idea_prompt(self, text, idea_criteria):
-        prompt = (
-            f"ROLE: You are an elite creative consultant specializing in breakthrough thinking across domains:\n"
-            f"arts, technology, business strategy, scientific research, design, and social innovation.\n\n"
-            f"OBJECTIVE: Generate EXACTLY 10 complete, ORIGINAL ideas that fulfill the user's request.\n"
-            f"These must be genuine concepts, not variations of a single theme.\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"QUALITY STANDARDS - NON-NEGOTIABLE:\n"
-            f"═════════════════════════════════════════════════════════════════\n\n"
-            f"ORIGINALITY:\n"
-            f"  • Each idea must be DISTINCT - avoid presenting 10 variations of the same concept\n"
-            f"  • Push beyond the obvious - reject your first impulse and think deeper\n"
-            f"  • Blend unexpected elements from different domains (cross-pollination)\n"
-            f"  • Challenge assumptions - what if the opposite were true?\n"
-            f"  • Look for white space - what hasn't been done yet?\n\n"
-            f"DEPTH:\n"
-            f"  • Ideas should be specific enough to visualize and implement\n"
-            f"  • Avoid generic concepts - make them tangible and concrete\n"
-            f"  • Include unique mechanisms, angles, or approaches\n"
-            f"  • Show how the idea differs from conventional wisdom\n\n"
-            f"FRESHNESS:\n"
-            f"  • Ban clichés, tired tropes, and overused frameworks\n"
-            f"  • Seek surprising combinations and novel perspectives\n"
-            f"  • Consider emerging trends, technologies, or cultural shifts\n"
-            f"  • What would make someone say 'I've never thought of it that way'?\n\n"
-            f"DIVERSITY:\n"
-            f"  • Vary your approach - some radical, some practical, some experimental\n"
-            f"  • Mix different scales - micro solutions and macro visions\n"
-            f"  • Include both incremental innovations and paradigm shifts\n"
-            f"  • Represent different risk-reward profiles\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"USER REQUEST:\n{text}\n\n"
-            f"CRITERIA TO FULFILL:\n{idea_criteria}\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"OUTPUT FORMAT - STRICT JSON REQUIRED:\n"
-            f"═════════════════════════════════════════════════════════════════\n\n"
-            f"Return a JSON array of EXACTLY 10 objects. Each object must have:\n\n"
-            f"{{\n"
-            f"  \"title\": \"<Compelling 3-8 word concept title>\",\n"
-            f"  \"justification\": \"<2-3 sentence explanation covering: what it is, why it's innovative, how it fulfills criteria>\"\n"
-            f"}}\n\n"
-            f"CRITICAL OUTPUT RULES:\n"
-            f"  ✓ Return ONLY valid JSON - no prose before or after the array\n"
-            f"  ✓ Each title should be distinctive and memorable\n"
-            f"  ✓ Each justification should sell the idea's uniqueness\n"
-            f"  ✗ DO NOT echo the criteria back as an 'idea'\n"
-            f"  ✗ DO NOT restate the user's request verbatim\n"
-            f"  ✗ DO NOT include explanatory text outside the JSON\n"
-            f"  ✗ DO NOT use placeholder language like '[idea X]' or 'Option 1'\n\n"
-            f"EXAMPLES OF WHAT TO AVOID:\n"
-            f"  ❌ Title: 'Fulfill the criteria by doing X' (this echoes the criteria)\n"
-            f"  ❌ Title: 'Idea 1', 'Concept A' (generic labels)\n"
-            f"  ❌ Justification: 'This meets all the requirements' (empty statement)\n"
-            f"  ❌ Including prose like: 'Here are 10 ideas that fulfill...'\n\n"
-            f"EXAMPLES OF GOOD IDEAS:\n"
-            f"  ✅ Title: 'Quantum Memory Palace for Language Learning'\n"
-            f"     Justification: 'Combines spaced repetition with VR environments where vocabulary\n"
-            f"                    materializes in contextually relevant 3D spaces, leveraging spatial\n"
-            f"                    memory for 3x faster retention compared to traditional flashcards.'\n"
-            f"  ✅ Title: 'Reverse Mentorship Pods for Corporate Innovation'\n"
-            f"     Justification: 'Junior employees lead monthly strategy sessions teaching executives\n"
-            f"                    about emerging tech and culture, breaking hierarchical thinking and\n"
-            f"                    injecting fresh perspectives into stagnant decision-making.'\n\n"
-            f"═════════════════════════════════════════════════════════════════\n\n"
-            f"Think boldly. Surprise us. Be specific. Push boundaries.\n\n"
-            f"Return your JSON array now:"
-        )
-
-        raw = generate_text(prompt, temperature=1.2, max_tokens=2000)
-
-        # Try to parse JSON array from the raw output
-        ideas_list = []
-        try:
-            import json as _json, re as _re
-            m = _re.search(r"\[.*\]", raw, _re.DOTALL)
-            if m:
-                parsed = _json.loads(m.group(0))
-                # If parsed is list of objects, convert to string summaries
-                if isinstance(parsed, list):
-                    for item in parsed:
-                        if isinstance(item, dict):
-                            title = item.get("title") or item.get("concept") or ""
-                            justification = item.get("justification") or item.get("reason") or ""
-                            ideas_list.append(f"{title.strip()} — {justification.strip()}")
-                        else:
-                            ideas_list.append(str(item).strip())
-        except Exception:
-            ideas_list = []
-
-        # Fallback: parse numbered list if JSON parse failed
-        if not ideas_list:
-            import re as _re
-            lines = [ln.strip() for ln in (raw or "").splitlines() if ln.strip()]
-            # Collect lines that look like numbered ideas (start with 1. 2. etc.)
-            numbered = []
-            for ln in lines:
-                if _re.match(r"^\d+\.", ln):
-                    numbered.append(_re.sub(r"^\d+\.\s*", "", ln))
-            if numbered:
-                ideas_list = numbered
-            else:
-                # Last resort: split by blank lines into idea chunks
-                chunks = (raw or "").split("\n\n")
-                ideas_list = [c.replace('\n', ' ').strip() for c in chunks if c.strip()][:10]
-
-        # Sanitize/filter: remove items that merely echo the criteria or the prompt
-        def _normalize(s: str) -> str:
-            return _re.sub(r"\s+", " ", (s or "").strip()).lower()
-
-        norm_criteria = _normalize(idea_criteria)
-        norm_prompt = _normalize(text)
-        filtered = []
-        for idea in ideas_list:
-            n = _normalize(idea)
-            if not n:
+                )
+                logger.warning(f"PythonCodeExecutionToolBlock: attempt {retry+1} rejected - visuals disabled but plotting code present")
+                retry += 1
                 continue
-            # Skip if idea is identical to criteria or prompt
-            if norm_criteria and (norm_criteria in n or n in norm_criteria):
-                logger.warning("Dropping idea that repeats criteria: %s", idea)
-                continue
-            if norm_prompt and (norm_prompt in n or n in norm_prompt):
-                logger.warning("Dropping idea that repeats prompt: %s", idea)
-                continue
-            filtered.append(idea)
 
-        # Ensure we return at most 10 items
-        return filtered[:10]
-    
-    def choose_best_idea_prompt(self, text, ideas, choose_best=True):
-        from src import utility
-
-        # Ensure ideas is a list of strings
-        if isinstance(ideas, str):
-            # Try to split by numbered list
-            idea_lines = [line.strip() for line in ideas.splitlines() if line.strip()]
-            ideas_list = idea_lines
-        elif isinstance(ideas, list):
-            ideas_list = ideas
-        else:
-            ideas_list = [str(ideas)]
-
-        criteria = (
-            "Alignment with user's request; creativity and originality; feasibility and impact; "
-            "absence of dogma; adherence to constraints; uniqueness among alternatives."
-        )
-
-        try:
-            eval_result = utility.evaluate_ideas_via_client(text, ideas_list, criteria)
-        except Exception as e:
-            # Fallback to simple deterministic selection (first idea)
-            logger.warning('Idea evaluation failed, falling back: %s', str(e))
-            selected_index = 0
-            feedback = ['Evaluation failed - fallback selection'] * len(ideas_list)
-        else:
-            selected_index = int(eval_result.get('selected_index', 0) or 0)
-            feedback = eval_result.get('feedback', [])
-
-        # Clamp index
-        if selected_index < 0 or selected_index >= len(ideas_list):
-            selected_index = 0
-
-        selected_idea = ideas_list[selected_index]
-
-        # Expand the chosen idea into a full, detailed deliverable
-        expansion_prompt = (
-            f"ROLE: You are transforming a selected creative concept into a complete, high-quality deliverable.\n\n"
-            f"SELECTED IDEA (the winner from evaluation):\n{selected_idea}\n\n"
-            f"ORIGINAL USER REQUEST (for context):\n{text}\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"TASK: Expand this idea into a FULL, POLISHED final output.\n"
-            f"═════════════════════════════════════════════════════════════════\n\n"
-            f"EXPANSION GUIDELINES:\n\n"
-            f"IF CREATIVE WORK (poem, story, artwork description, design):\n"
-            f"  • Produce the COMPLETE creative piece, not just an outline\n"
-            f"  • Honor all constraints (length, style, tone, theme)\n"
-            f"  • Aim for publication/gallery quality - make it memorable\n"
-            f"  • Use vivid sensory details, precise language, emotional depth\n"
-            f"  • Avoid clichés and generic imagery\n"
-            f"  • Let the idea shine through with originality and craft\n\n"
-            f"IF PRACTICAL/STRATEGIC WORK (plan, strategy, solution):\n"
-            f"  • Provide a detailed implementation plan with concrete steps\n"
-            f"  • Include examples, frameworks, or methodologies\n"
-            f"  • Address potential challenges and mitigation strategies\n"
-            f"  • Specify expected outcomes and success metrics\n"
-            f"  • Make it actionable - readers should know exactly what to do\n\n"
-            f"RATIONALE REQUIREMENT:\n"
-            f"  • Include a brief 2-3 sentence rationale explaining:\n"
-            f"    - Why this idea best fits the user's needs\n"
-            f"    - What makes it superior to alternatives\n"
-            f"    - How it uniquely addresses the request\n\n"
-            f"QUALITY EXPECTATIONS:\n"
-            f"  • Depth over breadth - go deep on this ONE idea\n"
-            f"  • Professional quality - suitable for real-world use\n"
-            f"  • Complete and self-contained - no placeholders or TODOs\n"
-            f"  • Directly addresses the original request\n\n"
-            f"OUTPUT FORMAT:\n"
-            f"  • For creative work: The finished piece + rationale\n"
-            f"  • For practical work: Detailed plan with steps/examples + rationale\n"
-            f"  • Use markdown formatting for readability\n"
-            f"  • Structure with clear headers and sections\n\n"
-            f"Deliver the expanded concept now:"
-        )
-
-        expanded = generate_text(expansion_prompt, temperature=0.9, max_tokens=1000)
-
-        return {
-            "best_index": selected_index,
-            "best_idea": selected_idea,
-            "feedback": feedback,
-            "expanded": expanded,
-        }
-
-
-class SynthesizeFinalAnswerBlock(PipelineBlock):
-    description = "Produce the final response using all collected context. This block MUST be last."
-    
-    def __call__(self, prompt, plan, collected_info) -> dict:
-        # CRITICAL: First check if web search failed - if so, REFUSE to generate content
-        web_fetch_failed, failure_details = self._check_web_fetch_failure(collected_info)
-        
-        if web_fetch_failed:
-            # If web search was required and failed, return ONLY the failure message
-            # Do NOT try to synthesize or hallucinate content
-            failure_response = (
-                f"I'm sorry, but I was unable to search the web for your query.\n\n"
-                f"**Error Details:**\n{failure_details}\n\n"
-                f"**What happened:**\n"
-                f"The web search returned no results. This could be due to:\n"
-                f"• Network connectivity issues\n"
-                f"• The search service being temporarily unavailable\n"
-                f"• Your query being blocked or rate-limited\n"
-                f"• Google News not having indexed content for this search\n\n"
-                f"**What to try:**\n"
-                f"• Rephrase your search query with different keywords\n"
-                f"• Try a more general search term\n"
-                f"• Wait a moment and try again\n"
-                f"• If searching for very recent news, try again in a few minutes\n\n"
-                f"I cannot provide information about this topic because the web search failed. "
-                f"I will not fabricate or guess at news content, sources, or links."
+            selected_packages = self._sanitize_package_plan(
+                suggested_packages=generated_plan.packages_needed,
+                objective=objective,
+                code=generated_plan.code_to_run,
+                visuals_needed=visuals_needed,
             )
-            
-            return {
-                "initial_response": failure_response,
-                "score": {"clarity": 10, "logic": 10, "completeness": 8, "accuracy": 10},
-                "final_response": failure_response,
-            }
-        
-        # Normal flow: web search succeeded or wasn't needed
-        initial_response = self.create_synthesis_prompt(prompt, plan, collected_info)
-        scorer = self.scorer_prompt(prompt, initial_response)
-        improved = self.improver_prompt(prompt, initial_response, plan, scorer)
-        return {
-            "initial_response": initial_response,
-            "score": scorer,
-            "final_response": improved,
-        }
-    
-    def _check_web_fetch_failure(self, collected_info: dict) -> tuple:
-        """Check if any web fetch tool returned a failure status. Returns (failed, details)."""
-        for key, value in collected_info.items():
-            if "use_internet_tool" in key and isinstance(value, str):
-                if "WEB SEARCH FAILED" in value or "WEB FETCH FAILED" in value or "EXTRACTION FAILED" in value:
-                    return True, value[:800]  # Return failure message
-        return False, ""
 
-    def create_synthesis_prompt(self, prompt, plan, collected_info:dict):
-        collated, assets = self._collate_collected_info(collected_info)
-        
-        collected_info_text = json.dumps(collated, indent=2, ensure_ascii=False)
-        
-        # CRITICAL: Limit context size to prevent token quota exhaustion
-        # Reduced from 50K to 30K chars to be more conservative
-        MAX_CONTEXT_CHARS = 30000  # ~7.5K tokens, leaves room for plan, prompt, instructions
-        if len(collected_info_text) > MAX_CONTEXT_CHARS:
-            logger.warning(
-                f"Collected info is {len(collected_info_text):,} chars "
-                f"(~{len(collected_info_text)//4:,} tokens). Truncating to {MAX_CONTEXT_CHARS:,} chars "
-                f"to prevent quota exhaustion."
+            attempt_timeout = self._execution_timeout(objective, visuals_needed)
+            exec_start = time.perf_counter()
+            logger.debug(
+                "PythonCodeExecutionToolBlock: executing attempt %s with timeout=%ss packages=%s",
+                retry + 1,
+                attempt_timeout,
+                selected_packages,
             )
-            collected_info_text = collected_info_text[:MAX_CONTEXT_CHARS] + "\n... [TRUNCATED DUE TO SIZE]"
-        
-        assets_text = "\n".join(assets) if assets else "None"
-        
-        # Extract structured output from code tool if available
-        code_tool_data = None
-        for key, value in collected_info.items():
-            if "use_code_tool" in key and isinstance(value, dict):
-                code_tool_data = value.get("structured_output")
+            execution_result = python_exec_tool(
+                generated_plan.code_to_run,
+                install_packages=selected_packages,
+                timeout=attempt_timeout,
+                save_plots=visuals_needed,
+            )
+            exec_elapsed = time.perf_counter() - exec_start
+            logger.info(
+                "PythonCodeExecutionToolBlock: execution attempt %s finished in %.2fs (success=%s)",
+                retry + 1,
+                exec_elapsed,
+                bool(execution_result.get("success")),
+            )
+            attempt_log.append(
+                {
+                    "attempt": retry + 1,
+                    "selected_packages": selected_packages,
+                    "generated_code": generated_plan.code_to_run,
+                    "success": bool(execution_result.get("success")),
+                    "error": execution_result.get("error"),
+                    "output_preview": str(execution_result.get("output", ""))[:800],
+                    "plots": execution_result.get("plots", []),
+                }
+            )
+
+            if execution_result.get('success'):
+                logger.info(f"PythonCodeExecutionToolBlock: execution successful")
+                errors = None
                 break
-        
-        prompt_text = (
-            f"You are synthesizing a final answer. PRIORITIZE the USER'S ORIGINAL PROMPT first and use the INTERNAL PLAN only as secondary execution guidance.\n"
-            f"Follow the Output Schema exactly and ensure all Rubric criteria are met.\n\n"
-        )
-        
-        prompt_text += (
-            f"PROMPT (PRIMARY - use this to determine purpose and scope):\n{prompt}\n\n"
-            f"PLAN (SECONDARY - use to shape steps but do NOT override user's explicit intent):\n{plan}\n\n"
-            f"COLLECTED INFORMATION:\n{collected_info_text}\n\n"
-        )
-        
-        if code_tool_data:
-            prompt_text += f"CODE TOOL STRUCTURED OUTPUT:\n{json.dumps(code_tool_data, indent=2)}\n\n"
-        
-        # Add explicit date context
-        from datetime import datetime
-        current_date = datetime.now().strftime("%B %d, %Y")
-        
-        # Check if we actually have plots
-        has_plots = assets and assets != ["None"] and len(assets) > 0
-        
-        prompt_text += f"IMPORTANT: Today's date is {current_date}. Use this date for all time-sensitive references.\n\n"
-        
-        if has_plots:
-            prompt_text += f"AVAILABLE PLOTS (local file paths):\n{assets_text}\n\n"
-        
-        prompt_text += (
-            f"CRITICAL REQUIREMENTS:\n"
-            f"1. Return your answer in MARKDOWN format, NOT JSON. Write in clear, readable paragraphs.\n"
-            f"2. If the Output Schema specifies JSON structure, use that as a GUIDE for organizing your content, but write it as formatted text with headers, lists, and paragraphs.\n"
-            f"3. FORMATTING: For mathematical notation:\n"
-            f"   - Use HTML tags like <sup> and <sub> for superscripts/subscripts (they will render properly)\n"
-            f"   - For example: x<sup>2</sup>, x<sup>3</sup>, H<sub>2</sub>O\n"
-            f"   - These will display correctly in the final output\n"
-        )
-        
-        if has_plots:
-            prompt_text += (
-                f"4. PLOTS ARE AVAILABLE: Integrate EVERY plot naturally into your response using markdown: ![Description](file_path)\n"
-                f"   - CRITICAL: ONLY use the EXACT file paths listed above - DO NOT invent or modify paths\n"
-                f"   - You have {len(assets)} plot(s) available. Use all of them.\n"
-                f"   - Embed images inline where they best support your explanation - do NOT create a separate 'Visuals' or 'Results' section\n"
-                f"   - Each graph should appear near the text that discusses it\n"
-                f"   - DO NOT mention plots if you cannot embed them with real paths\n"
-                f"   - DO NOT create image references for plots 2, 3, etc. if only 1 plot was provided\n"
-            )
-        else:
-            prompt_text += (
-                f"4. NO PLOTS AVAILABLE: Do NOT create a 'Visuals' section. Do NOT mention charts, graphs, or images.\n"
-                f"   - Do NOT use placeholder image paths like 'placeholder_*.png'\n"
-                f"   - Do NOT create markdown image references like ![...](path) - you have ZERO plots\n"
-                f"   - If visualizations would be helpful, mention this as a limitation, not as an existing feature\n"
-            )
-        
-        prompt_text += (
-            f"5. Use data from 'answer' and 'details' fields in the code tool output to write a comprehensive response\n"
-            f"6. Ensure the response directly solves the user's request without asking them to run additional code\n"
-            f"7. For any web links, place them in a 'References' section at the end\n"
-            f"8. Include dates ONLY when they are critical to the content - avoid adding dates just as timestamps\n"
-            f"9. CRITICAL - ANTI-HALLUCINATION RULE:\n"
-            f"   - Do NOT fabricate data, statistics, quotes, or sources\n"
-            f"   - Do NOT invent article titles, news summaries, or current events if web search failed\n"
-            f"   - Do NOT create fake charts, graphs, or images\n"
-            f"   - ONLY use information from the 'COLLECTED INFORMATION' section above\n"
-            f"   - If web search FAILED (marked in collected info), say so explicitly\n"
-            f"   - When uncertain about facts: state 'I cannot verify this' rather than guessing\n"
-            f"10. CRITICAL: Deliver the answer DIRECTLY without meta-commentary\n"
-            f"   - DO NOT explain your approach ('This response aims to...', 'The following will...', 'I've structured this...')\n"
-            f"   - DO NOT reference the scoring/improvement process\n"
-            f"   - DO NOT add concluding statements like 'This expanded response...'\n"
-            f"   - Just provide the actual answer the user wants to read\n\n"
-            f"Return only the final answer in markdown format. DO NOT wrap it in JSON."
-        )
-        # Increased temperature from 0.4 to 0.6 for more natural, less robotic responses
-        return generate_text(prompt_text, temperature=0.6)
-    
-    def scorer_prompt(self, text, response):
-        prompt = (
-            f"ROLE: You are a rigorous Quality Assurance evaluator scoring AI-generated responses.\n\n"
-            f"TASK: Evaluate this response across three dimensions and return a JSON score.\n\n"
-            f"USER'S ORIGINAL REQUEST:\n{text}\n\n"
-            f"RESPONSE TO EVALUATE:\n{response}\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"SCORING DIMENSIONS (each 0-10):\n"
-            f"═════════════════════════════════════════════════════════════════\n\n"
-            f"1. CLARITY (0-10)\n"
-            f"   How easy is this response to understand?\n"
-            f"   • 9-10: Crystal clear, well-structured, perfect flow\n"
-            f"   • 7-8: Clear and understandable with minor ambiguities\n"
-            f"   • 5-6: Somewhat unclear, requires re-reading\n"
-            f"   • 3-4: Confusing structure or language\n"
-            f"   • 0-2: Nearly incomprehensible\n\n"
-            f"   CHECK FOR:\n"
-            f"   ✓ Logical organization with clear sections\n"
-            f"   ✓ Smooth transitions between ideas\n"
-            f"   ✓ Plain language appropriate to audience\n"
-            f"   ✓ Proper formatting (headers, lists, emphasis)\n"
-            f"   ✗ Jargon without explanation\n"
-            f"   ✗ Run-on paragraphs or wall-of-text\n"
-            f"   ✗ Unclear pronoun references\n\n"
-            f"2. LOGIC (0-10)\n"
-            f"   Is this response internally consistent and factually sound?\n"
-            f"   • 9-10: Perfectly consistent, all claims verifiable\n"
-            f"   • 7-8: Mostly sound with minor inconsistencies\n"
-            f"   • 5-6: Some logical issues or unsupported claims\n"
-            f"   • 3-4: Multiple contradictions or errors\n"
-            f"   • 0-2: Fundamentally flawed or incoherent\n\n"
-            f"   INSTANT ZERO OR NEAR-ZERO SCORES FOR:\n"
-            f"   ⚠️ Placeholder images (placeholder_*.png) that don't exist\n"
-            f"   ⚠️ Claiming 'see visualization below' when no image exists\n"
-            f"   ⚠️ Multiple image references (plot_1, plot_2, plot_3) when only 1 exists\n"
-            f"   ⚠️ Date inconsistencies or temporal impossibilities\n"
-            f"   ⚠️ Self-contradictory statements within the text\n"
-            f"   ⚠️ Hallucinated data, statistics, or sources\n"
-            f"   ⚠️ Broken internal references ('see Section 5' but no Section 5)\n\n"
-            f"   CHECK FOR:\n"
-            f"   ✓ All image references point to real paths (/var/folders/ or /tmp/)\n"
-            f"   ✓ Claims match provided data\n"
-            f"   ✓ No contradictions between sections\n"
-            f"   ✓ Dates and timeframes are accurate\n"
-            f"   ✓ Cause-effect relationships make sense\n\n"
-            f"3. ACTIONABILITY (0-10)\n"
-            f"   Can the user immediately use or act on this response?\n"
-            f"   • 9-10: Complete, specific, ready to implement immediately\n"
-            f"   • 7-8: Mostly actionable with minor gaps\n"
-            f"   • 5-6: Provides direction but lacks specifics\n"
-            f"   • 3-4: Too abstract or theoretical to act on\n"
-            f"   • 0-2: No practical value, purely conceptual\n\n"
-            f"   CONTEXT MATTERS:\n"
-            f"   • If user wanted poetry/art → abstract is GOOD (7-10)\n"
-            f"   • If user wanted analysis/plan → abstract is BAD (0-3)\n"
-            f"   • If user wanted data → must include actual data (not 'data shows X')\n"
-            f"   • If user wanted steps → must have numbered, specific steps\n\n"
-            f"   CHECK FOR:\n"
-            f"   ✓ Concrete examples, not just principles\n"
-            f"   ✓ Specific numbers, names, steps (not 'several' or 'many')\n"
-            f"   ✓ Clear next steps or deliverables\n"
-            f"   ✓ Answers the actual question asked\n"
-            f"   ✗ Vague qualifiers ('often', 'typically', 'might')\n"
-            f"   ✗ Generic advice that applies to everything\n"
-            f"   ✗ Deferring to 'consult an expert' or 'do more research'\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"FEEDBACK REQUIREMENTS:\n"
-            f"═════════════════════════════════════════════════════════════════\n\n"
-            f"Your feedback must be:\n"
-            f"  • SPECIFIC: Name exact problems with line/section references\n"
-            f"  • ACTIONABLE: Suggest concrete fixes, not vague improvements\n"
-            f"  • PRIORITIZED: Start with most critical issues\n\n"
-            f"Examples of GOOD feedback:\n"
-            f"  ✅ 'Remove the image reference on line 12 (placeholder_chart.png) - this file doesn't exist.'\n"
-            f"  ✅ 'Section 2 claims X but Section 4 contradicts with Y. Resolve by...'\n"
-            f"  ✅ 'Replace vague statement \"many benefits\" with 3 specific benefits with examples.'\n\n"
-            f"Examples of BAD feedback:\n"
-            f"  ❌ 'Not actionable enough' (what specifically is missing?)\n"
-            f"  ❌ 'Could be clearer' (which part? how?)\n"
-            f"  ❌ 'Good but needs improvement' (empty statement)\n\n"
-            f"IF ANY SCORE < 7: Your feedback MUST explain exactly what needs fixing.\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"OUTPUT FORMAT - EXACT JSON REQUIRED:\n"
-            f"═════════════════════════════════════════════════════════════════\n\n"
-            f"Return ONLY this JSON structure (no other text):\n\n"
-            f"{{\n"
-            f"  \"clarity\": <0-10>,\n"
-            f"  \"logic\": <0-10>,\n"
-            f"  \"actionability\": <0-10>,\n"
-            f"  \"feedback\": \"<Specific, actionable feedback with examples>\"\n"
-            f"}}\n\n"
-            f"Be tough but fair. High standards produce high quality."
-        )
-        return generate_text(prompt, temperature=0.1, max_tokens=400)
 
-    def improver_prompt(self, text, response, plan, scorer):
-        from datetime import datetime
-        current_date = datetime.now().strftime("%B %d, %Y")
-        
-        prompt = (
-            f"Today's date: {current_date}. Ensure all dates are accurate and only included when contextually relevant.\n\n"
-            f"ROLE: You are a Quality Control specialist refining AI responses based on critical evaluation feedback.\n\n"
-            f"OBJECTIVE: Produce an IMPROVED version of the response that addresses ALL issues identified in the scorer feedback.\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"USER'S ORIGINAL REQUEST:\n{text}\n\n"
-            f"EXECUTION PLAN (for reference):\n{plan}\n\n"
-            f"CURRENT RESPONSE (needs improvement):\n{response}\n\n"
-            f"SCORER FEEDBACK (YOU MUST FIX EVERYTHING MENTIONED):\n{scorer}\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"IMPROVEMENT METHODOLOGY:\n"
-            f"═════════════════════════════════════════════════════════════════\n\n"
-            f"1. INTERPRET SCORES AS SEVERITY SIGNALS:\n"
-            f"   • Score 0-4: CRITICAL FAILURE - requires complete rewrite\n"
-            f"   • Score 5-6: MAJOR ISSUES - substantial revision needed\n"
-            f"   • Score 7-8: MINOR FIXES - targeted improvements\n"
-            f"   • Score 9-10: POLISH - small refinements\n\n"
-            f"2. PRIORITIZE FIXES BY IMPACT:\n"
-            f"   FIRST: Logic errors (contradictions, hallucinations, fake images)\n"
-            f"   SECOND: Missing actionability (add specifics, examples, steps)\n"
-            f"   THIRD: Clarity issues (restructure, simplify language)\n\n"
-            f"3. ADDRESS SPECIFIC FEEDBACK POINTS:\n"
-            f"   • Read each feedback item carefully\n"
-            f"   • Make the EXACT changes suggested\n"
-            f"   • Don't just rephrase - actually fix the underlying problem\n"
-            f"   • If feedback says 'add X', you must add X\n"
-            f"   • If feedback says 'remove Y', you must remove Y\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"CRITICAL IMAGE/VISUAL VALIDATION:\n"
-            f"═════════════════════════════════════════════════════════════════\n\n"
-            f"MANDATORY CHECKS (skip these = automatic failure):\n"
-            f"  ⚠️ Count ALL markdown image references: ![description](path)\n"
-            f"  ⚠️ For EACH image reference, verify the path is real:\n"
-            f"     • Real paths start with /var/folders/ or /tmp/\n"
-            f"     • Fake paths: placeholder_*.png, plot_2.png (when only 1 exists), output.png\n"
-            f"  ⚠️ If current response has 3 image refs but only 1 real plot exists:\n"
-            f"     → DELETE the 2 fake image references completely\n"
-            f"  ⚠️ If current response has a 'Visuals' or 'Results' section with fake images:\n"
-            f"     → Either integrate the ONE real image inline OR delete the section entirely\n"
-            f"  ⚠️ NEVER create new image references - only use what's explicitly provided\n\n"
-            f"EMBEDDING GUIDELINES (for real images only):\n"
-            f"  • Place images INLINE near the text they illustrate\n"
-            f"  • Do NOT create separate 'Visualizations' sections\n"
-            f"  • Format: ![Brief description](exact_path_provided)\n"
-            f"  • If no real images exist, do NOT mention visuals at all\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"CONTENT IMPROVEMENTS:\n"
-            f"═════════════════════════════════════════════════════════════════\n\n"
-            f"IF CLARITY SCORE < 7:\n"
-            f"  • Break up long paragraphs (3-5 sentences max each)\n"
-            f"  • Add clear section headers with descriptive titles\n"
-            f"  • Use bullet points or numbered lists for multiple items\n"
-            f"  • Simplify complex sentences - aim for 15-25 words per sentence\n"
-            f"  • Define technical terms on first use\n"
-            f"  • Add transitions between sections\n\n"
-            f"IF LOGIC SCORE < 7:\n"
-            f"  • Find and fix ALL contradictions (cite specific locations)\n"
-            f"  • Remove ALL hallucinated content (fake data, fake images, fake sources)\n"
-            f"  • Verify dates are accurate and consistent\n"
-            f"  • Ensure cause-effect relationships are valid\n"
-            f"  • Cross-check all internal references\n"
-            f"  • Align claims with provided evidence\n\n"
-            f"IF ACTIONABILITY SCORE < 7:\n"
-            f"  • Add SPECIFIC examples (not 'for example, things like...')\n"
-            f"  • Convert principles to concrete steps\n"
-            f"  • Include actual numbers, names, timeframes\n"
-            f"  • Replace vague language: 'several' → '3-5', 'often' → '60% of the time'\n"
-            f"  • Provide clear next actions or deliverables\n"
-            f"  • Make it immediately usable without further research\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"FORMAT & STYLE REQUIREMENTS:\n"
-            f"═════════════════════════════════════════════════════════════════\n\n"
-            f"OUTPUT FORMAT:\n"
-            f"  • Return in MARKDOWN format (NOT JSON)\n"
-            f"  • Use the Output Schema from the plan as a structural GUIDE\n"
-            f"  • Write in clear, natural paragraphs with proper headers\n\n"
-            f"MATHEMATICAL NOTATION:\n"
-            f"  • Use HTML tags for superscripts: x<sup>2</sup>, 10<sup>6</sup>\n"
-            f"  • Use HTML tags for subscripts: H<sub>2</sub>O, CO<sub>2</sub>\n"
-            f"  • These render properly in markdown viewers\n\n"
-            f"DATE HANDLING:\n"
-            f"  • Include dates ONLY when contextually essential\n"
-            f"  • Avoid adding dates as mere timestamps\n"
-            f"  • Verify accuracy against today's date: {current_date}\n\n"
-            f"REFERENCES:\n"
-            f"  • Place web links in a 'References' section at the end\n"
-            f"  • Format as numbered list with descriptive text\n\n"
-            f"META-COMMENTARY:\n"
-            f"  ✗ REMOVE: 'This response aims to...', 'I've structured this...', 'The following will...'\n"
-            f"  ✗ REMOVE: 'This expanded response...', 'I've added...', 'As requested...'\n"
-            f"  ✗ REMOVE: References to the scoring/improvement process\n"
-            f"  ✓ KEEP: Just the actual content the user wants to read\n\n"
-            f"═════════════════════════════════════════════════════════════════\n"
-            f"FINAL CHECKS BEFORE SUBMISSION:\n"
-            f"═════════════════════════════════════════════════════════════════\n\n"
-            f"[ ] Every feedback point has been addressed\n"
-            f"[ ] All fake/placeholder images have been removed\n"
-            f"[ ] No contradictions remain in the text\n"
-            f"[ ] Response directly answers the user's question\n"
-            f"[ ] No meta-commentary about the response itself\n"
-            f"[ ] Markdown formatting is clean and readable\n"
-            f"[ ] Specific examples and concrete details are included\n\n"
-            f"Return ONLY the improved final answer in MARKDOWN. No explanations of changes. No JSON wrapper."
-        )
-        return generate_text(prompt, temperature=0.6)
+            errors = execution_result.get('error')
+            prev_code = generated_plan.code_to_run
+            logger.warning(f"PythonCodeExecutionToolBlock: attempt {retry+1} failed - {str(errors)[:50]}...")
+            retry += 1
 
-    def _collate_collected_info(self, collected_info: dict):
-        import os
-        assets: list[str] = []
-        block_payloads = {}
+        results = execution_result.get('output', '')
+        if errors:
+            if results:
+                results += "\n"
+            results += "The code execution failed after multiple attempts. Ensure that the user is aware of the failures and potential resulting inaccuracies."
+        plots = execution_result.get('plots', [])
 
-        for key, value in collected_info.items():
-            if isinstance(value, dict):
-                sanitized = {}
-                for inner_key, inner_value in value.items():
-                    if inner_key in {"files", "plots"} and isinstance(inner_value, list):
-                        # CRITICAL: Only include files that actually exist on disk
-                        for item in inner_value:
-                            item_path = str(item)
-                            # Include asset paths even if files are not present on disk. The UI
-                            # will verify existence when attempting to render. Keep a warning
-                            # so we can trace missing assets during debugging, but still report
-                            # the paths to callers/tests.
-                            if os.path.isfile(item_path):
-                                assets.append(item_path)
-                            else:
-                                logger.warning(f"Asset path reported but file not found: {item_path}")
-                                assets.append(item_path)
-                    sanitized[inner_key] = self._coerce_serializable(inner_value)
-                block_payloads[key] = sanitized
-            else:
-                block_payloads[key] = self._coerce_serializable(value)
-
-        return {"blocks": block_payloads}, assets
-
-    @staticmethod
-    def _coerce_serializable(value):
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            return value
-        if isinstance(value, list):
-            return [SynthesizeFinalAnswerBlock._coerce_serializable(v) for v in value]
-        if isinstance(value, dict):
-            return {
-                str(k): SynthesizeFinalAnswerBlock._coerce_serializable(v)
-                for k, v in value.items()
-            }
-        return repr(value)
-
-
-class DataAnalysisBlock(PipelineBlock):
-    description = "Analyze structured data (tables, CSV, JSON). Extracts patterns, statistics, correlations, and insights."
-    
-    def __call__(self, text, data_description) -> dict:
-        """
-        Analyze structured data to extract insights.
-        
-        Args:
-            text: The analysis request
-            data_description: Description of the data or the data itself
-            
-        Returns:
-            dict with analysis results including statistics, patterns, and visualizations
-        """
-        # Generate analysis plan
-        analysis_plan = self.plan_analysis(text, data_description)
-        
-        # Execute analysis via code
-        code_prompt = (
-            f"Generate Python code to analyze this data:\n\n"
-            f"REQUEST: {text}\n\n"
-            f"DATA: {data_description}\n\n"
-            f"ANALYSIS PLAN: {analysis_plan}\n\n"
-            f"The code must:\n"
-            f"1. Parse/load the data (if it's CSV/JSON text, parse it)\n"
-            f"2. Calculate statistics (mean, median, std dev, correlations, etc.)\n"
-            f"3. Identify patterns or outliers\n"
-            f"4. Output results as JSON with 'summary', 'statistics', 'insights' keys\n"
-            f"5. Optionally create visualizations with matplotlib if helpful\n\n"
-            f"Use only standard library + matplotlib. Return ONLY Python code."
-        )
-        
-        code_block = UseCodeToolBlock(max_attempts=5)
-        result = code_block(code_prompt, extract_info=analysis_plan)
-        
         return {
-            "analysis_plan": analysis_plan,
-            "code_result": result,
-            "structured_output": result.get("structured_output"),
-        }
-    
-    def plan_analysis(self, text, data_description):
-        """Plan what analysis to perform."""
-        prompt = (
-            f"ROLE: You are a data analyst planning an analysis strategy.\n\n"
-            f"USER REQUEST: {text}\n\n"
-            f"DATA AVAILABLE: {data_description}\n\n"
-            f"Create a concise analysis plan (3-5 bullet points) specifying:\n"
-            f"• What statistics to calculate\n"
-            f"• What patterns to look for\n"
-            f"• What visualizations would be helpful\n"
-            f"• What insights to extract\n\n"
-            f"Be specific and actionable."
-        )
-        return generate_text(prompt, temperature=0.5, max_tokens=400)
-
-
-class ComparisonBlock(PipelineBlock):
-    description = "Compare multiple items (products, ideas, options). Provides structured pros/cons and recommendations."
-    
-    def __call__(self, text, items_to_compare) -> dict:
-        """
-        Compare multiple items across relevant dimensions.
-        
-        Args:
-            text: The comparison request
-            items_to_compare: List or description of items to compare
-            
-        Returns:
-            dict with comparison matrix, pros/cons, and recommendation
-        """
-        comparison = self.compare_items(text, items_to_compare)
-        
-        return {
-            "comparison_result": comparison,
-        }
-    
-    def compare_items(self, text, items_to_compare):
-        """Generate structured comparison."""
-        prompt = (
-            f"ROLE: You are an expert analyst creating objective comparisons.\n\n"
-            f"REQUEST: {text}\n\n"
-            f"ITEMS TO COMPARE: {items_to_compare}\n\n"
-            f"═══════════════════════════════════════════════════════════════════════════════════\n"
-            f"TASK: Create a comprehensive comparison in JSON format.\n\n"
-            f"OUTPUT STRUCTURE:\n"
-            f"{{\n"
-            f"  \"criteria\": [\"criterion1\", \"criterion2\", ...],\n"
-            f"  \"items\": [\n"
-            f"    {{\n"
-            f"      \"name\": \"Item 1\",\n"
-            f"      \"scores\": {{\"criterion1\": 8, \"criterion2\": 6, ...}},\n"
-            f"      \"pros\": [\"advantage 1\", \"advantage 2\"],\n"
-            f"      \"cons\": [\"disadvantage 1\", \"disadvantage 2\"],\n"
-            f"      \"best_for\": \"Use case where this excels\"\n"
-            f"    }}\n"
-            f"  ],\n"
-            f"  \"recommendation\": {{\n"
-            f"    \"winner\": \"Item name\",\n"
-            f"    \"reasoning\": \"Why this is the best choice\",\n"
-            f"    \"alternatives\": \"When to consider other options\"\n"
-            f"  }}\n"
-            f"}}\n\n"
-            f"REQUIREMENTS:\n"
-            f"  • Use 0-10 scoring for each criterion\n"
-            f"  • Be objective - support claims with reasoning\n"
-            f"  • Identify clear trade-offs\n"
-            f"  • Make a definitive recommendation unless truly tied\n\n"
-            f"Return ONLY the JSON object."
-        )
-        
-        raw_response = generate_text(prompt, temperature=0.4, max_tokens=2000)
-        
-        # Parse JSON response
-        try:
-            cleaned = raw_response.strip()
-            if cleaned.startswith("```"):
-                lines = cleaned.split('\n')
-                if lines[0].startswith("```"):
-                    lines = lines[1:]
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                cleaned = '\n'.join(lines).strip()
-            
-            return json.loads(cleaned)
-        except:
-            match = re.search(r'\{.*\}', raw_response, re.DOTALL)
-            if match:
-                return json.loads(match.group(0))
-            return {"error": "Could not parse comparison response", "raw": raw_response[:500]}
-
-class SummarizeBlock(PipelineBlock):
-    description = "Summarize long documents, articles, or text. Supports different summary styles (bullet points, abstract, ELI5)."
-    
-    def __call__(self, text, content_to_summarize, summary_style="comprehensive") -> dict:
-        """
-        Summarize content in the requested style.
-        
-        Args:
-            text: Instructions for summarization
-            content_to_summarize: The content to summarize
-            summary_style: "comprehensive", "bullets", "abstract", "eli5", or "executive"
-            
-        Returns:
-            dict with summary in requested format
-        """
-        summary = self.create_summary(text, content_to_summarize, summary_style)
-        
-        return {
-            "original_length": len(content_to_summarize),
-            "summary": summary,
-            "style": summary_style,
-        }
-    
-    def create_summary(self, instructions, content, style):
-        """Generate summary in specified style."""
-        style_guides = {
-            "comprehensive": "Detailed summary covering all main points, key arguments, and supporting evidence. 3-5 paragraphs.",
-            "bullets": "Concise bullet-point list of key takeaways (5-10 bullets). Each bullet is one sentence.",
-            "abstract": "Academic-style abstract (150-250 words): background, methods, findings, conclusions.",
-            "eli5": "Explain Like I'm 5: Simple language, analogies, no jargon. Make it accessible to a child.",
-            "executive": "Executive summary for busy leaders: Bottom line first, key metrics, actionable insights. 2-3 paragraphs max.",
-        }
-        
-        style_guide = style_guides.get(style, style_guides["comprehensive"])
-        
-        prompt = (
-            f"ROLE: You are an expert at distilling complex content into clear summaries.\n\n"
-            f"INSTRUCTIONS: {instructions}\n\n"
-            f"CONTENT TO SUMMARIZE:\n{content[:15000]}\n\n"  # Limit to prevent token overflow
-            f"═══════════════════════════════════════════════════════════════════════════════════\n"
-            f"SUMMARY STYLE: {style}\n"
-            f"REQUIREMENTS: {style_guide}\n\n"
-            f"CRITICAL RULES:\n"
-            f"  • Capture the MAIN ideas accurately - no hallucinations\n"
-            f"  • Use the author's terminology for key concepts\n"
-            f"  • Preserve important numbers, dates, and names\n"
-            f"  • Maintain objectivity - don't add your opinions\n"
-            f"  • If content is too short to summarize, say so\n\n"
-            f"Provide the summary now (do NOT wrap in JSON):"
-        )
-        
-        return generate_text(prompt, temperature=0.4, max_tokens=1000)
-
-
-class TranslateBlock(PipelineBlock):
-    description = "Translate text between languages while preserving tone, style, and cultural context."
-    
-    def __call__(self, text, content_to_translate, target_language, source_language="auto") -> dict:
-        """
-        Translate content to target language.
-        
-        Args:
-            text: Any additional context or instructions
-            content_to_translate: The text to translate
-            target_language: Target language (e.g., "Spanish", "French", "Japanese")
-            source_language: Source language or "auto" for auto-detection
-            
-        Returns:
-            dict with translated text and metadata
-        """
-        translation = self.translate_content(text, content_to_translate, target_language, source_language)
-        
-        return {
-            "original": content_to_translate[:500],  # Preview
-            "translation": translation,
-            "target_language": target_language,
-        }
-    
-    def translate_content(self, context, content, target_lang, source_lang):
-        """Perform translation with cultural awareness."""
-        prompt = (
-            f"ROLE: You are an expert translator fluent in {target_lang}.\n\n"
-            f"CONTEXT: {context}\n\n"
-            f"SOURCE LANGUAGE: {source_lang}\n"
-            f"TARGET LANGUAGE: {target_lang}\n\n"
-            f"CONTENT TO TRANSLATE:\n{content}\n\n"
-            f"═══════════════════════════════════════════════════════════════════════════════════\n"
-            f"TRANSLATION REQUIREMENTS:\n"
-            f"  • Preserve the original meaning and tone precisely\n"
-            f"  • Adapt idioms and cultural references appropriately\n"
-            f"  • Maintain formality level (casual vs formal)\n"
-            f"  • Keep technical terms accurate\n"
-            f"  • Use natural phrasing in target language (not word-for-word)\n"
-            f"  • Preserve formatting (line breaks, emphasis, etc.)\n\n"
-            f"Provide ONLY the translated text (no explanations or meta-commentary):"
-        )
-        
-        return generate_text(prompt, temperature=0.3, max_tokens=2000)
-
-
-class FactCheckBlock(PipelineBlock):
-    description = "Verify factual claims using web search and logical analysis. Returns verification status for each claim."
-    
-    def __call__(self, text, claims_to_verify) -> dict:
-        """
-        Fact-check claims using web search and reasoning.
-        
-        Args:
-            text: Context for the fact-check
-            claims_to_verify: String or list of claims to verify
-            
-        Returns:
-            dict with verification results for each claim
-        """
-        # Parse claims into list
-        if isinstance(claims_to_verify, str):
-            claims_list = [c.strip() for c in claims_to_verify.split('\n') if c.strip()]
-        else:
-            claims_list = claims_to_verify
-        
-        # Verify each claim
-        results = []
-        for i, claim in enumerate(claims_list[:5]):  # Limit to 5 claims to avoid quota issues
-            logger.info(f"Fact-checking claim {i+1}: {claim[:100]}...")
-            verification = self.verify_claim(claim, text)
-            results.append({
-                "claim": claim,
-                "verification": verification,
-            })
-        
-        return {
-            "claims_checked": len(results),
             "results": results,
+            "plots": plots,
+            "diagnostics": {
+                "objective": objective,
+                "visuals_needed": visuals_needed,
+                "package_hints": package_hints,
+                "attempts_allowed": retries,
+                "attempts_run": len(attempt_log),
+                "final_success": bool(execution_result.get("success")),
+                "final_error": errors or execution_result.get("error"),
+                "attempt_log": attempt_log,
+            },
         }
+        
+
+class WikipediaSearchToolBlockSchema(BaseModel):
+    summary: str = Field(description="The relevant information returned from the Wikipedia search summarized")
+
+class WikipediaSearchToolBlock(ToolBlock):
+    details = {
+        "id": "wikipedia_search_tool_block",
+        "name": "Wikipedia Search Tool Block",
+        "description": "Performs a search on Wikipedia based on the given query and returns relevant information.",
+        "prompt_creation_parameters": {
+            "details": "Summarize Wikipedia content with explicit relevance checks and fallback wording.",
+            "objective": "Provide concise, query-aligned summaries and state insufficient relevance explicitly.",
+            "success_rubric": {
+                "query_alignment": {"description": "Summary stays directly tied to query intent.", "weight": 0.45},
+                "faithfulness": {"description": "No fabricated claims beyond provided Wikipedia content.", "weight": 0.35},
+                "fallback_quality": {"description": "Signals insufficient relevance clearly when needed.", "weight": 0.2},
+            },
+        },
+        "inputs": [PipelineObject("query", "The query for which to perform the Wikipedia search", "str")],
+        "outputs": [PipelineObject("summary", "The relevant information returned from the Wikipedia search summarized", "str"),
+                    PipelineObject("url", "The URL of the Wikipedia page from which the information was retrieved", "str")],
+        "creativity_level": CreativityLevel.LOW,
+        "schema": WikipediaSearchToolBlockSchema,
+        "model": ANALYTICAL_MODEL,
+    }
+
+    def __init__(self):
+        super().__init__()
     
-    def verify_claim(self, claim, context):
-        """Verify a single claim."""
-        # First, try web search for factual verification
-        search_query = f"verify fact: {claim}"
-        web_result = online_query_tool(search_query, num_links=3)
-        
-        # Then use LLM to analyze the evidence
-        prompt = (
-            f"ROLE: You are a fact-checker analyzing evidence for a claim.\n\n"
-            f"CLAIM TO VERIFY: {claim}\n\n"
-            f"CONTEXT: {context}\n\n"
-            f"WEB SEARCH RESULTS:\n{web_result.get('summary', 'No results')}\n\n"
-            f"═══════════════════════════════════════════════════════════════════════════════════\n"
-            f"TASK: Determine if the claim is TRUE, FALSE, PARTIALLY_TRUE, or UNVERIFIABLE.\n\n"
-            f"OUTPUT FORMAT (JSON only):\n"
-            f"{{\n"
-            f"  \"verdict\": \"TRUE/FALSE/PARTIALLY_TRUE/UNVERIFIABLE\",\n"
-            f"  \"confidence\": \"high/medium/low\",\n"
-            f"  \"evidence\": \"Supporting or contradicting evidence found\",\n"
-            f"  \"reasoning\": \"Why you reached this verdict\",\n"
-            f"  \"sources\": [\"source1\", \"source2\"]\n"
-            f"}}\n\n"
-            f"CRITICAL RULES:\n"
-            f"  • If web search failed, mark as UNVERIFIABLE with low confidence\n"
-            f"  • Do NOT guess or use general knowledge for specific factual claims\n"
-            f"  • Be conservative - if uncertain, say UNVERIFIABLE\n"
-            f"  • Show your reasoning clearly\n\n"
-            f"Return ONLY the JSON object."
-        )
-        
-        raw_response = generate_text(prompt, temperature=0.2, max_tokens=600)
-        
-        # Parse response
-        try:
-            cleaned = raw_response.strip()
-            if cleaned.startswith("```"):
-                lines = cleaned.split('\n')
-                if lines[0].startswith("```"):
-                    lines = lines[1:]
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                cleaned = '\n'.join(lines).strip()
-            
-            return json.loads(cleaned)
-        except:
-            match = re.search(r'\{.*\}', raw_response, re.DOTALL)
-            if match:
-                try:
-                    return json.loads(match.group(0))
-                except:
-                    pass
-            return {
-                "verdict": "UNVERIFIABLE",
-                "confidence": "low",
-                "evidence": "Could not parse verification response",
-                "reasoning": "Technical error in fact-checking",
-                "sources": []
-            }
+    def process(self, inputs, fast_mode=False):
+        query = inputs.get("query")
+        logger.info(f"WikipediaSearchToolBlock: searching for '{query}', fast_mode={fast_mode}")
 
+        page = search_wikipedia(query)
+        logger.debug(f"WikipediaSearchToolBlock: found page '{page}'")
 
-class DebugBlock(PipelineBlock):
-    description = "Debug code, identify issues, and suggest fixes. Supports Python, JavaScript, and other languages."
-    
-    def __call__(self, text, code_to_debug, error_message=None) -> dict:
-        """
-        Debug code and suggest fixes.
-        
-        Args:
-            text: Description of the problem
-            code_to_debug: The code with issues
-            error_message: Optional error message or stack trace
-            
-        Returns:
-            dict with diagnosis, fixes, and corrected code
-        """
-        diagnosis = self.diagnose_code(text, code_to_debug, error_message)
-        
-        return {
-            "diagnosis": diagnosis,
-        }
-    
-    def diagnose_code(self, problem_description, code, error_message):
-        """Diagnose code issues and provide fixes."""
-        prompt = (
-            f"ROLE: You are an expert debugger analyzing problematic code.\n\n"
-            f"PROBLEM DESCRIPTION: {problem_description}\n\n"
-            f"CODE WITH ISSUES:\n```\n{code}\n```\n\n"
-        )
-        
-        if error_message:
-            prompt += f"ERROR MESSAGE:\n{error_message}\n\n"
-        
-        prompt += (
-            f"═══════════════════════════════════════════════════════════════════════════════════\n"
-            f"TASK: Identify all issues and provide fixes.\n\n"
-            f"OUTPUT FORMAT (JSON only):\n"
-            f"{{\n"
-            f"  \"issues_found\": [\n"
-            f"    {{\n"
-            f"      \"type\": \"syntax/logic/performance/security\",\n"
-            f"      \"severity\": \"critical/major/minor\",\n"
-            f"      \"location\": \"Line 5 or function name\",\n"
-            f"      \"description\": \"What's wrong\",\n"
-            f"      \"fix\": \"How to fix it\"\n"
-            f"    }}\n"
-            f"  ],\n"
-            f"  \"corrected_code\": \"Full corrected version of the code\",\n"
-            f"  \"explanation\": \"Summary of changes made\",\n"
-            f"  \"testing_suggestions\": [\"How to test the fix\"]\n"
-            f"}}\n\n"
-            f"REQUIREMENTS:\n"
-            f"  • Identify ALL issues, not just the first one\n"
-            f"  • Provide working, tested fixes\n"
-            f"  • Explain WHY each change is necessary\n"
-            f"  • Consider edge cases and best practices\n\n"
-            f"Return ONLY the JSON object."
-        )
-        
-        raw_response = generate_text(prompt, temperature=0.3, max_tokens=2000)
-        
-        # Parse response
-        try:
-            cleaned = raw_response.strip()
-            if cleaned.startswith("```"):
-                lines = cleaned.split('\n')
-                if lines[0].startswith("```"):
-                    lines = lines[1:]
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                cleaned = '\n'.join(lines).strip()
-            
-            return json.loads(cleaned)
-        except:
-            match = re.search(r'\{.*\}', raw_response, re.DOTALL)
-            if match:
-                try:
-                    return json.loads(match.group(0))
-                except:
-                    pass
-            return {"error": "Could not parse debug response", "raw": raw_response[:500]}
+        content = get_wikipedia_page_content(page)
+        output_contract = json.dumps({"summary": "string"}, indent=2)
 
+        if fast_mode:
+            logger.debug(f"WikipediaSearchToolBlock: using fast mode summarization")
+            prompt = self._render_prompt_template(
+                self.details["id"],
+                {
+                    "query": query,
+                    "content": content.get("content", ""),
+                    "mode": "fast",
+                    "output_contract": output_contract,
+                },
+            )
 
-class ReadPDFBlock(PipelineBlock):
-    description = "Extract text content from uploaded PDF files for analysis."
-    
-    def __call__(self, text, pdf_path) -> dict:
-        """
-        Extract text from a PDF file.
-        
-        Args:
-            text: Context or instructions
-            pdf_path: Path to the PDF file
-            
-        Returns:
-            dict with extracted text and metadata
-        """
-        extracted_text = extract_text_from_pdf(pdf_path)
-        
-        return {
-            "pdf_path": pdf_path,
-            "extracted_text": extracted_text,
-            "text_length": len(extracted_text),
-            "success": not extracted_text.startswith("ERROR:")
-        }
+            output = generate_text(
+                prompt=prompt,
+                model=self.details['model'],
+                schema=self.details['schema'],
+                temperature=self.details['creativity_level']
+            )
 
-
-class CreatePDFBlock(PipelineBlock):
-    description = "Create PDF documents from text or markdown content. Useful for generating reports, summaries, or formatted documents."
-    
-    def __call__(self, text, content_to_convert, output_filename="output.pdf", title=None, use_markdown=True) -> dict:
-        """
-        Create a PDF from text content.
-        
-        Args:
-            text: Context or instructions
-            content_to_convert: The text/markdown content to convert to PDF
-            output_filename: Name for the output PDF file
-            title: Optional title for the PDF document
-            use_markdown: Whether to treat content as markdown (True) or plain text (False)
-            
-        Returns:
-            dict with PDF creation results and file path
-        """
-        import tempfile
-        import os
-        
-        # Create output path in temp directory
-        temp_dir = tempfile.gettempdir()
-        output_path = os.path.join(temp_dir, output_filename)
-        
-        # Create PDF based on format
-        if use_markdown:
-            success = create_pdf_from_markdown(content_to_convert, output_path, title)
+            summary = output.summary
         else:
-            success = create_pdf_from_text(content_to_convert, output_path, title)
-        
-        result = {
-            "success": success,
-            "output_path": output_path if success else None,
-            "filename": output_filename,
-            "title": title,
-            "format": "markdown" if use_markdown else "plain_text",
-            "content_length": len(content_to_convert)
+            summary = content.get("summary")
+
+            query_terms = {term for term in re.findall(r"[a-zA-Z0-9]+", (query or "").lower()) if len(term) >= 4}
+            summary_lower = (summary or "").lower()
+            if query_terms and not any(term in summary_lower for term in query_terms):
+                prompt = self._render_prompt_template(
+                    self.details["id"],
+                    {
+                        "query": query,
+                        "content": content.get("content", ""),
+                        "mode": "relevance_repair",
+                        "output_contract": output_contract,
+                    },
+                )
+                output = generate_text(
+                    prompt=prompt,
+                    model=self.details['model'],
+                    schema=self.details['schema'],
+                    temperature=self.details['creativity_level']
+                )
+                summary = output.summary
+
+        summary_preview = summary[:50]
+        logger.info(f"WikipediaSearchToolBlock: complete - summary: {summary_preview}...")
+
+        return {
+            "summary": summary,
+            "url": content.get("url")
         }
-        
-        if success:
-            logger.info(f"PDF created successfully: {output_path}")
-        else:
-            logger.error(f"Failed to create PDF: {output_filename}")
-        
-        return result
+
+
+class CreativeIdeaGeneratorSchemaToolBlock(BaseModel):
+    ideas: list[str] = Field(description="A list of creative ideas generated based on the objective")
+
+class CreativeIdeaGeneratorToolBlock(ToolBlock):
+    details = {
+        "id": "creative_idea_generator_tool_block",
+        "name": "Creative Idea Generator Tool Block",
+        "description": "Generates creative ideas based on the given, art-related objective.",
+        "prompt_creation_parameters": {
+            "details": "Generate diverse idea sets with explicit feasibility tagging.",
+            "objective": "Produce practical and novel ideas without duplication.",
+            "success_rubric": {
+                "diversity": {"description": "Ideas span distinct creative directions.", "weight": 0.4},
+                "feasibility": {"description": "Each idea includes concrete feasibility signal.", "weight": 0.3},
+                "novelty": {"description": "Includes high-variance, non-generic options.", "weight": 0.3},
+            },
+        },
+        "inputs": [PipelineObject("objective", "The objective for which to generate creative ideas", "str")],
+        "outputs": [PipelineObject("ideas", "A list of creative ideas generated based on the objective", "list")],
+        "creativity_level": CreativityLevel.HIGH,
+        "schema": CreativeIdeaGeneratorSchemaToolBlock,
+        "model": WRITER_MODEL,
+    }
+
+    def __init__(self):
+        super().__init__()
+    
+    def process(self, inputs):
+        objective = inputs.get("objective") or ""
+        logger.info(f"CreativeIdeaGeneratorToolBlock: generating ideas for '{objective[:50]}...'")
+
+        prompt = self._render_prompt_template(
+            self.details["id"],
+            {
+                "objective": objective,
+                "output_contract": json.dumps({"ideas": ["string"]}, indent=2),
+            },
+        )
+
+        output = generate_text(
+            prompt=prompt,
+            model=self.details['model'],
+            schema=self.details['schema'],
+            temperature=self.details['creativity_level']
+        )
+
+        logger.info(f"CreativeIdeaGeneratorToolBlock: generated {len(output.ideas)} ideas")
+
+        return {
+            "ideas": output.ideas
+        }
+
+
+class DeductiveReasoningPremiseToolBlockSchema(BaseModel):
+    reasoning: str = Field(description="The reasoning process used to generate the premises")
+    premises: list[str] = Field(description="A list of premises used in the deductive reasoning process")
+
+class DeductiveReasoningConfirmPremiseToolBlockSchema(BaseModel):
+    reasoning: str = Field(description="The reasoning process used to confirm or deny the validity of each premise")
+    premise_validations: list[bool] = Field(description="A list of booleans indicating whether each premise is valid or not")
+
+class DeductiveReasoningConclusionToolBlockSchema(BaseModel):
+    reasoning: str = Field(description="The reasoning process used to arrive at the conclusion based on the premises")
+    conclusion: str = Field(description="The conclusion arrived at based on the premises")
+
+class DeductiveReasoningConclusionConfirmationToolBlockSchema(BaseModel):
+    reasoning: str = Field(description="The reasoning process used to confirm or deny the validity of the conclusion")
+    conclusion_valid: bool = Field(description="A boolean indicating whether the conclusion is valid or not")
+
+class DeductiveReasoningToolBlock(ToolBlock):
+    details = {
+        "id": "deductive_reasoning_premise_tool_block",
+        "name": "Deductive Reasoning Premise Tool Block",
+        "description": "Generates premises based on the given objective for use in a deductive reasoning process.",
+        "prompt_creation_parameters": {
+            "details": "Generate and validate premises, then derive conclusion constrained to validated premises.",
+            "objective": "Increase reasoning trace reliability with explicit premise and conclusion checks.",
+            "success_rubric": {
+                "premise_validity": {"description": "Premises are precise, non-redundant, and checkable.", "weight": 0.35},
+                "logical_consistency": {"description": "Conclusion depends only on validated premises.", "weight": 0.45},
+                "explanatory_clarity": {"description": "Reasoning text is concise and easy to audit.", "weight": 0.2},
+            },
+        },
+        "inputs": [PipelineObject("objective", "The objective of which deductive reasoning is needed to solve.", "str")],
+        "outputs": [PipelineObject("premise_reasoning", "The reasoning process used to generate the premises", "str"),
+                    PipelineObject("premises", "A list of premises used in the deductive reasoning process", "list"),
+                    PipelineObject("conclusion_reasoning", "The reasoning process used to arrive at the conclusion based on the premises", "str"),
+                    PipelineObject("conclusion", "The conclusion arrived at based on the premises", "str")],
+        "creativity_level": CreativityLevel.MEDIUM,
+        "schema": [DeductiveReasoningPremiseToolBlockSchema,
+                   DeductiveReasoningConclusionToolBlockSchema,
+                   DeductiveReasoningConclusionConfirmationToolBlockSchema,
+                   DeductiveReasoningConfirmPremiseToolBlockSchema],
+        "model": ANALYTICAL_MODEL,
+    }
+
+    def __init__(self):
+        super().__init__()
+    
+    def process(self, inputs):
+        objective = inputs.get("objective") or ""
+        logger.info(f"DeductiveReasoningPremiseToolBlock: generating premises for '{objective[:50]}...'")
+
+        prompt_premise = self._render_prompt_template(
+            "deductive_reasoning_premise_tool_block",
+            {
+                "objective": objective,
+                "output_contract": json.dumps(
+                    {
+                        "reasoning": "string",
+                        "premises": ["string"],
+                    },
+                    indent=2,
+                ),
+            },
+        )
+
+        output = generate_text(
+            prompt=prompt_premise,
+            model=self.details['model'],
+            schema=self.details['schema'][0],  # Use the DeductiveReasoningPremiseToolBlockSchema for this step
+            temperature=self.details['creativity_level']
+        )
+
+        logger.info(f"DeductiveReasoningPremiseToolBlock: generated {len(output.premises)} premises")
+
+        prompt_confirm_premise = self._render_prompt_template(
+            "deductive_reasoning_confirm_premise_tool_block",
+            {
+                "objective": objective,
+                "premises": output.premises,
+                "validated_premises_instruction": "Only validate against objective-grounded criteria.",
+                "output_contract": json.dumps(
+                    {
+                        "reasoning": "string",
+                        "premise_validations": ["boolean"],
+                    },
+                    indent=2,
+                ),
+            },
+        )
+
+        output_confirm = generate_text(
+            prompt=prompt_confirm_premise,
+            model=self.details['model'],
+            schema=self.details['schema'][3],  # Use the DeductiveReasoningConfirmPremiseToolBlockSchema for this step
+            temperature=self.details['creativity_level']
+        )
+
+        premise_validations = list(output_confirm.premise_validations or [])
+        if len(premise_validations) < len(output.premises):
+            premise_validations.extend([False] * (len(output.premises) - len(premise_validations)))
+        premise_validations = premise_validations[:len(output.premises)]
+
+        premise_confirmed = []
+        for premise_text, is_valid in zip(output.premises, premise_validations):
+            logger.info(f"Premise: '{premise_text[:50]}...', Valid: {is_valid}")
+            premise_confirmed.append({"premise": premise_text, "valid": is_valid})
+
+        valid_premises = [item["premise"] for item in premise_confirmed if item["valid"]]
+        if not valid_premises:
+            valid_premises = output.premises[:1]
+
+        prompt_conclusion = self._render_prompt_template(
+            "deductive_reasoning_conclusion_tool_block",
+            {
+                "objective": objective,
+                "valid_premises": valid_premises,
+                "validated_premises_instruction": "Use only validated premises; do not introduce new assumptions.",
+                "output_contract": json.dumps(
+                    {
+                        "reasoning": "string",
+                        "conclusion": "string",
+                    },
+                    indent=2,
+                ),
+            },
+        )
+
+        output_conclusion = generate_text(
+            prompt=prompt_conclusion,
+            model=self.details['model'],
+            schema=self.details['schema'][1],  # Use the DeductiveReasoningConclusionToolBlockSchema for this step
+            temperature=self.details['creativity_level']
+        )
+
+        prompt_confirm_conclusion = self._render_prompt_template(
+            "deductive_reasoning_conclusion_confirmation_tool_block",
+            {
+                "objective": objective,
+                "conclusion": output_conclusion.conclusion,
+                "validated_premises_instruction": "Check logical dependence on validated premises only.",
+                "output_contract": json.dumps(
+                    {
+                        "reasoning": "string",
+                        "conclusion_valid": "boolean",
+                    },
+                    indent=2,
+                ),
+            },
+        )
+
+        output_confirm_conclusion = generate_text(
+            prompt=prompt_confirm_conclusion,
+            model=self.details['model'],
+            schema=self.details['schema'][2],  # Use the DeductiveReasoningConclusionConfirmationToolBlockSchema for this step
+            temperature=self.details['creativity_level']
+        )
+
+        return {
+            "premise_reasoning": output.reasoning,
+            "premises": output.premises,
+            "premise_confirmed": premise_confirmed,
+            "conclusion_reasoning": output_conclusion.reasoning,
+            "conclusion": output_conclusion.conclusion,
+            "conclusion_valid": output_confirm_conclusion.conclusion_valid
+        }
+
+
+def get_tool_prompt_descriptors() -> dict[str, dict[str, object]]:
+    return {
+        "web_search_tool_block": {
+            "id": "web_search_tool_block",
+            "name": "Web Search Tool Prompt",
+            "schema": WebSearchToolBlockSchema,
+            "prompt_creation_parameters": WebSearchToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "wikipedia_search_tool_block": {
+            "id": "wikipedia_search_tool_block",
+            "name": "Wikipedia Search Tool Prompt",
+            "schema": WikipediaSearchToolBlockSchema,
+            "prompt_creation_parameters": WikipediaSearchToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "python_code_execution_tool_block": {
+            "id": "python_code_execution_tool_block",
+            "name": "Python Code Execution Tool Prompt",
+            "schema": PythonCodeExecutionToolBlockSchema,
+            "prompt_creation_parameters": PythonCodeExecutionToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "creative_idea_generator_tool_block": {
+            "id": "creative_idea_generator_tool_block",
+            "name": "Creative Idea Generator Tool Prompt",
+            "schema": CreativeIdeaGeneratorSchemaToolBlock,
+            "prompt_creation_parameters": CreativeIdeaGeneratorToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "deductive_reasoning_premise_tool_block": {
+            "id": "deductive_reasoning_premise_tool_block",
+            "name": "Deductive Premise Tool Prompt",
+            "schema": DeductiveReasoningPremiseToolBlockSchema,
+            "prompt_creation_parameters": DeductiveReasoningToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "deductive_reasoning_confirm_premise_tool_block": {
+            "id": "deductive_reasoning_confirm_premise_tool_block",
+            "name": "Deductive Premise Validation Prompt",
+            "schema": DeductiveReasoningConfirmPremiseToolBlockSchema,
+            "prompt_creation_parameters": DeductiveReasoningToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "deductive_reasoning_conclusion_tool_block": {
+            "id": "deductive_reasoning_conclusion_tool_block",
+            "name": "Deductive Conclusion Prompt",
+            "schema": DeductiveReasoningConclusionToolBlockSchema,
+            "prompt_creation_parameters": DeductiveReasoningToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+        "deductive_reasoning_conclusion_confirmation_tool_block": {
+            "id": "deductive_reasoning_conclusion_confirmation_tool_block",
+            "name": "Deductive Conclusion Validation Prompt",
+            "schema": DeductiveReasoningConclusionConfirmationToolBlockSchema,
+            "prompt_creation_parameters": DeductiveReasoningToolBlock.details.get("prompt_creation_parameters", {}),
+        },
+    }
+
+
+validate_prompts()

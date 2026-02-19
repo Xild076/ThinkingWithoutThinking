@@ -1,0 +1,1 @@
+import sympy as sp;x,y=9,4;result=x**2-5*y**2;print(result)

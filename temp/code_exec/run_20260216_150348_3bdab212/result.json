@@ -1,0 +1,1 @@
+{"success": true, "output": "Derivation 1 (sympy summation) = 17299975731542641/10838475198270720, Derivation 2 (list comprehension) = 17299975731542641/10838475198270720; both equal S_20 = 17299975731542641/10838475198270720, consistency: True", "result": null, "plots": [], "error": null}

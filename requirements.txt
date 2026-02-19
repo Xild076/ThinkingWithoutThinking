@@ -306,6 +306,10 @@ websockets==15.0.1
     # via google-genai
 wheel==0.45.1
     # via pip-tools
+fastapi
+openai
+groq
+uvicorn
 
 # The following packages are considered to be unsafe in a requirements file:
 # pip

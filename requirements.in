@@ -1,4 +1,8 @@
 google-genai
+openai
+groq
+fastapi
+uvicorn
 python-dotenv
 streamlit
 requests

@@ -1,0 +1,1501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Training Monitor · ThinkingWithoutThinking</title>
+<style>
+:root{
+  --bg:#f5ecd9;--bg-g1:rgba(182,138,87,.18);--bg-g2:rgba(131,115,82,.12);
+  --surface:#fbf6eb;--surface-alt:#f0e6d0;--surface-hover:#f5eed5;
+  --ink:#2c2416;--ink2:#70604a;--ink3:#9c8b72;
+  --accent:#ad7a46;--accent-h:#c08a4a;--accent-soft:rgba(173,122,70,.12);
+  --ok:#3f7c4a;--ok-bg:rgba(63,124,74,.08);
+  --warn:#a67222;--warn-bg:rgba(166,114,34,.08);
+  --bad:#ad4f4f;--bad-bg:rgba(173,79,79,.08);
+  --border:rgba(126,102,67,.18);--border-f:rgba(173,122,70,.5);
+  --mono:"SF Mono","Fira Code","JetBrains Mono",Menlo,Monaco,Consolas,monospace;
+  --sans:"Inter","Avenir Next",-apple-system,"Segoe UI",sans-serif;
+  --r:12px;--rs:8px;
+  --shadow:0 1px 3px rgba(0,0,0,.06),0 8px 24px rgba(73,56,33,.1);
+  --shadow-lg:0 4px 12px rgba(0,0,0,.08),0 20px 40px rgba(73,56,33,.14);
+  --t:160ms cubic-bezier(.22,1,.36,1);
+  /* chart palette */
+  --ch-a:#b07d3e;--ch-b:#3d7d50;--ch-c:#5a7fb8;--ch-d:#b84848;--ch-e:#8a6cc5;
+}
+[data-theme="dark"]{
+  --bg:#1f1c17;--bg-g1:rgba(120,90,50,.12);--bg-g2:rgba(80,65,42,.1);
+  --surface:#2a261e;--surface-alt:#322d23;--surface-hover:#3a342a;
+  --ink:#ddd5c4;--ink2:#b0a48e;--ink3:#8a7d6a;
+  --accent:#c49050;--accent-h:#d4a060;--accent-soft:rgba(196,144,80,.12);
+  --ok:#6aad6a;--ok-bg:rgba(106,173,106,.1);
+  --warn:#c49050;--warn-bg:rgba(196,144,80,.1);
+  --bad:#c46a6a;--bad-bg:rgba(196,106,106,.1);
+  --border:rgba(160,140,100,.2);--border-f:rgba(196,144,80,.45);
+  --shadow:0 1px 3px rgba(0,0,0,.2),0 8px 24px rgba(0,0,0,.18);
+  --shadow-lg:0 4px 12px rgba(0,0,0,.25),0 20px 40px rgba(0,0,0,.22);
+  --ch-a:#c49050;--ch-b:#6aad6a;--ch-c:#7eaae0;--ch-d:#c46a6a;--ch-e:#a888dd;
+}
+*{box-sizing:border-box;margin:0}
+body{
+  background:radial-gradient(ellipse 900px 380px at 8% -8%,var(--bg-g1),transparent),
+             radial-gradient(ellipse 900px 420px at 95% 5%,var(--bg-g2),transparent),var(--bg);
+  color:var(--ink);font-family:var(--sans);min-height:100vh;line-height:1.5;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;
+}
+
+/* ─── Layout ─── */
+.layout{max-width:1440px;margin:0 auto;padding:16px;display:grid;grid-template-columns:320px 1fr;gap:16px;min-height:100vh}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow)}
+
+/* ─── Sidebar ─── */
+.sidebar{padding:20px;position:sticky;top:16px;align-self:start;max-height:calc(100vh - 32px);overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+.logo-row{display:flex;align-items:center;justify-content:space-between}
+.logo{font-size:1rem;font-weight:800;letter-spacing:-.02em}.logo span{color:var(--accent)}
+.theme-btn{appearance:none;background:var(--surface-alt);border:1px solid var(--border);border-radius:999px;width:36px;height:20px;cursor:pointer;position:relative;transition:background var(--t);padding:0}
+.theme-btn::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--accent);transition:transform var(--t)}
+[data-theme="dark"] .theme-btn::after{transform:translateX(16px)}
+.subtitle{color:var(--ink3);font-size:.78rem}
+
+/* chips */
+.chip-row{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:3px 10px;font-size:.72rem;font-weight:600;border:1px solid var(--border);background:var(--surface-alt);color:var(--ink2);transition:all var(--t)}
+.chip.ok{color:var(--ok);border-color:var(--ok);background:var(--ok-bg)}
+.chip.warn{color:var(--warn);border-color:var(--warn);background:var(--warn-bg)}
+.chip.bad{color:var(--bad);border-color:var(--bad);background:var(--bad-bg)}
+.pulse-dot{width:6px;height:6px;border-radius:50%;background:var(--ok);animation:pulse 1.5s ease-in-out infinite;display:inline-block}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+
+/* progress */
+.progress-wrap{display:flex;flex-direction:column;gap:4px}
+.progress-label{display:flex;justify-content:space-between;font-size:.72rem;color:var(--ink2);font-weight:600}
+.progress-track{height:6px;background:var(--surface-alt);border:1px solid var(--border);border-radius:999px;overflow:hidden}
+.progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--ok));border-radius:999px;transition:width .4s ease;width:0}
+
+/* KV */
+.kv-grid{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:.78rem}
+.kv-key{color:var(--ink3);font-weight:600;white-space:nowrap;text-align:right}
+.kv-val{color:var(--ink);font-family:var(--mono);font-size:.74rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* current prompt detail */
+.prompt-detail{background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--rs);padding:12px;display:flex;flex-direction:column;gap:6px}
+.prompt-detail-header{display:flex;justify-content:space-between;align-items:center}
+.prompt-detail-title{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)}
+.prompt-detail-badge{font-size:.65rem;font-weight:700;padding:2px 8px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--ink2)}
+.prompt-detail-badge.cat-reasoning{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
+.prompt-detail-badge.cat-safety{color:var(--bad);border-color:var(--bad);background:var(--bad-bg)}
+.prompt-detail-badge.cat-coding{color:#5a7fb8;border-color:#5a7fb8;background:rgba(90,127,184,.1)}
+.prompt-detail-badge.diff-hard{color:var(--bad);border-color:var(--bad)}.prompt-detail-badge.diff-medium{color:var(--warn);border-color:var(--warn)}.prompt-detail-badge.diff-easy{color:var(--ok);border-color:var(--ok)}
+.prompt-preview{font-size:.76rem;color:var(--ink2);line-height:1.4;font-style:italic;max-height:3.6em;overflow:hidden;text-overflow:ellipsis}
+.prompt-detail-kv{display:grid;grid-template-columns:auto 1fr;gap:1px 8px;font-size:.72rem}
+.prompt-detail-kv .kv-key{font-size:.68rem}
+.prompt-detail-kv .kv-val{font-size:.7rem}
+.prompt-timer{font-family:var(--mono);font-size:.88rem;font-weight:800;color:var(--accent);text-align:center;padding:2px 0}
+
+/* buttons */
+button{appearance:none;border:none;border-radius:var(--rs);padding:8px 12px;font-weight:700;font-size:.8rem;font-family:var(--sans);cursor:pointer;transition:all var(--t);display:inline-flex;align-items:center;justify-content:center;gap:5px}
+.btn-row{display:flex;gap:6px;flex-wrap:wrap}
+.btn-secondary{background:var(--surface-alt);color:var(--ink2);border:1px solid var(--border)}
+.btn-secondary:hover{background:var(--surface-hover);color:var(--ink)}
+.nav-link a{display:flex;align-items:center;gap:6px;color:var(--ink2);text-decoration:none;border:1px solid var(--border);border-radius:var(--rs);padding:8px 12px;font-size:.8rem;transition:all var(--t)}
+.nav-link a:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
+
+/* ─── Main area ─── */
+.main{display:flex;flex-direction:column;gap:14px;min-width:0}
+
+/* metric cards */
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.metric-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:12px;display:flex;flex-direction:column;gap:4px;transition:transform var(--t),box-shadow var(--t)}
+.metric-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg)}
+.metric-label{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)}
+.metric-value{font-size:1.3rem;font-weight:800;font-family:var(--mono);color:var(--ink);transition:color .3s}
+.metric-sub{font-size:.68rem;color:var(--ink3);font-family:var(--mono)}
+.metric-card.highlight .metric-value{color:var(--accent)}
+
+/* tabs */
+.tab-bar{display:flex;gap:2px;padding:6px;background:var(--surface-alt);border-radius:var(--r);border:1px solid var(--border);flex-wrap:wrap}
+.tab-btn{flex:1;padding:8px 10px;font-size:.78rem;font-weight:600;border-radius:var(--rs);color:var(--ink2);background:transparent;transition:all var(--t);border:none;min-width:110px}
+.tab-btn:hover{background:var(--surface);color:var(--ink)}
+.tab-btn.active{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.tab-badge{font-size:.65rem;background:var(--accent);color:#fff;border-radius:999px;padding:1px 6px;margin-left:4px;font-weight:700}
+.tab-panel{display:none}.tab-panel.active{display:block}
+
+/* charts */
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.chart-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:14px;position:relative}
+.chart-title{font-size:.78rem;font-weight:700;margin-bottom:8px;color:var(--ink2)}
+.chart-canvas{width:100%;height:180px;display:block}
+.chart-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.legend-item{display:flex;align-items:center;gap:4px;font-size:.68rem;color:var(--ink2);font-weight:600}
+.legend-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.chart-tooltip{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:.72rem;font-family:var(--mono);pointer-events:none;z-index:10;box-shadow:var(--shadow);display:none;color:var(--ink);white-space:nowrap}
+
+/* alerts */
+.alerts-panel{padding:14px;display:none}
+.alert-item{display:flex;align-items:flex-start;gap:8px;padding:8px 12px;border-radius:var(--rs);margin-bottom:6px;font-size:.8rem;line-height:1.4}
+.alert-item.warn{background:var(--warn-bg);color:var(--warn);border:1px solid rgba(176,120,32,.2)}
+.alert-item.bad{background:var(--bad-bg);color:var(--bad);border:1px solid rgba(184,72,72,.2)}
+.alert-icon{flex-shrink:0;font-size:1rem}
+
+/* tables */
+.table-wrap{padding:14px;overflow-x:auto}
+.data-table{width:100%;border-collapse:collapse;font-size:.78rem}
+.data-table th,.data-table td{padding:6px 10px;text-align:left;border-bottom:1px solid var(--border)}
+.data-table th{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);cursor:pointer;user-select:none;transition:color var(--t);position:relative}
+.data-table th:hover{color:var(--accent)}
+.data-table th .sort-arrow{margin-left:3px;font-size:.6rem;opacity:.4}
+.data-table th.sorted .sort-arrow{opacity:1;color:var(--accent)}
+.data-table td{color:var(--ink2);font-family:var(--mono);font-size:.74rem}
+.data-table tbody tr:hover{background:var(--surface-hover)}
+.section-title{font-size:.78rem;font-weight:700;color:var(--ink2);margin:0 0 8px}
+.diag-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;padding:14px}
+.diag-card{background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--rs);padding:10px}
+.diag-kv{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:.72rem}
+.diag-kv .k{color:var(--ink3);font-weight:700}
+.diag-kv .v{font-family:var(--mono);color:var(--ink2)}
+.badge{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:2px 8px;font-size:.66rem;font-weight:700;border:1px solid var(--border)}
+.badge.low{color:var(--warn);border-color:var(--warn);background:var(--warn-bg)}
+.badge.med{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
+.badge.high{color:var(--ok);border-color:var(--ok);background:var(--ok-bg)}
+
+/* events */
+.event-panel{padding:14px;max-height:50vh;overflow-y:auto;overflow-x:hidden}
+.event-search{width:100%;border:1px solid var(--border);background:var(--surface-alt);color:var(--ink);border-radius:999px;padding:7px 14px;font-size:.82rem;font-family:var(--sans);margin-bottom:8px;transition:border-color var(--t)}
+.event-search:focus{outline:none;border-color:var(--border-f)}
+.event-search::placeholder{color:var(--ink3)}
+.event-list{display:flex;flex-direction:column;gap:4px;min-width:0}
+.event{border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:var(--rs);background:var(--surface-alt);overflow:hidden;animation:slideUp 200ms ease}
+.event.warn-e{border-left-color:var(--warn)}.event.bad-e{border-left-color:var(--bad)}.event.ok-e{border-left-color:var(--ok)}.event.hidden{display:none}
+.event-header{padding:7px 12px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;cursor:pointer;transition:background var(--t);user-select:none}
+.event-header:hover{background:var(--surface-hover)}
+.event-title{font-size:.76rem;font-weight:700;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.event-meta{font-size:.68rem;color:var(--ink3);font-family:var(--mono);display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap}
+.event-chevron{transition:transform var(--t);color:var(--ink3);font-size:.7rem}
+.event.open .event-chevron{transform:rotate(90deg)}
+.event-body{display:none;padding:6px 12px 10px;border-top:1px solid var(--border)}.event.open .event-body{display:block}
+pre{margin:0;font-size:.72rem;line-height:1.35;font-family:var(--mono);white-space:pre-wrap;word-break:break-word;color:var(--ink2)}
+
+/* toast */
+.toast-container{position:fixed;bottom:20px;right:20px;z-index:1000;display:flex;flex-direction:column;gap:8px}
+.toast{padding:10px 16px;border-radius:var(--rs);font-size:.82rem;font-weight:600;color:#fff;box-shadow:var(--shadow-lg);animation:toastIn 300ms ease,toastOut 300ms ease 2700ms forwards;max-width:320px}
+.toast.ok{background:var(--ok)}.toast.warn{background:var(--warn)}.toast.bad{background:var(--bad)}
+
+@keyframes slideUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+@keyframes toastOut{from{opacity:1}to{opacity:0;transform:translateY(10px)}}
+
+/* responsive */
+@media(max-width:1060px){.layout{grid-template-columns:1fr}.sidebar{position:static;max-height:none}.chart-grid{grid-template-columns:1fr}}
+@media(max-width:640px){
+  .metric-grid{grid-template-columns:1fr 1fr}
+  .tab-btn{min-width:0;flex:1 1 48%}
+  .event-header{grid-template-columns:1fr;align-items:flex-start}
+  .event-meta{white-space:normal;overflow-wrap:anywhere}
+}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:var(--ink3)}
+</style>
+</head>
+<body>
+<div class="toast-container" id="toast-container"></div>
+<div class="layout">
+  <!-- ─── Sidebar ─── -->
+  <section class="panel sidebar">
+    <div class="logo-row">
+      <div class="logo"><span>Training</span> Monitor</div>
+      <button class="theme-btn" id="theme-toggle" title="Toggle dark mode"></button>
+    </div>
+    <p class="subtitle">Live A/B prompt training dashboard.</p>
+
+    <div class="chip-row">
+      <span class="chip" id="ch-state">idle</span>
+      <span class="chip" id="ch-events">0 events</span>
+      <span class="chip" id="ch-eta">—</span>
+      <span class="chip" id="ch-alerts">0 alerts</span>
+    </div>
+
+    <div class="progress-wrap">
+      <div class="progress-label"><span id="prog-label">Epoch 0 / 0</span><span id="prog-pct">0%</span></div>
+      <div class="progress-track"><div class="progress-fill" id="prog-fill"></div></div>
+    </div>
+
+    <div class="kv-grid" id="kv-grid">
+      <span class="kv-key">Run ID</span><span class="kv-val" id="kv-run-id">—</span>
+      <span class="kv-key">Phase</span><span class="kv-val" id="kv-phase">—</span>
+      <span class="kv-key">Step</span><span class="kv-val" id="kv-step">—</span>
+      <span class="kv-key">Message</span><span class="kv-val" id="kv-msg">—</span>
+      <span class="kv-key">Run ETA</span><span class="kv-val" id="kv-run-eta">—</span>
+      <span class="kv-key">Phase ETA</span><span class="kv-val" id="kv-phase-eta">—</span>
+      <span class="kv-key">Updated</span><span class="kv-val" id="kv-updated">—</span>
+    </div>
+
+    <div class="prompt-detail" id="prompt-detail" style="display:none">
+      <div class="prompt-detail-header">
+        <span class="prompt-detail-title">Current Prompt</span>
+        <span class="prompt-detail-badge" id="pd-index">—</span>
+      </div>
+      <div class="prompt-timer" id="pd-timer">0.0s</div>
+      <p class="prompt-preview" id="pd-preview">—</p>
+      <div class="prompt-detail-kv">
+        <span class="kv-key">ID</span><span class="kv-val" id="pd-id">—</span>
+        <span class="kv-key">Category</span><span class="kv-val" id="pd-category">—</span>
+        <span class="kv-key">Difficulty</span><span class="kv-val" id="pd-difficulty">—</span>
+        <span class="kv-key">Last Score</span><span class="kv-val" id="pd-score">—</span>
+        <span class="kv-key">Grading</span><span class="kv-val" id="pd-grading">—</span>
+        <span class="kv-key">Response</span><span class="kv-val" id="pd-resp-chars">—</span>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn-secondary" id="btn-reconnect">🔌 Reconnect</button>
+      <button class="btn-secondary" id="btn-refresh">🔄 Refresh</button>
+      <button class="btn-secondary" id="btn-clear">🗑 Clear</button>
+      <button class="btn-secondary" id="btn-export">⬇ Export</button>
+    </div>
+
+    <div class="nav-link">
+      <a href="/" target="_blank" rel="noopener noreferrer">🏠 Pipeline Runner</a>
+    </div>
+  </section>
+
+  <!-- ─── Main ─── -->
+  <section class="main">
+    <div class="metric-grid" id="metric-grid">
+      <div class="metric-card"><div class="metric-label">Avg A (Baseline)</div><div class="metric-value" id="m-avg-a">—</div><div class="metric-sub" id="m-avg-a-sub"></div></div>
+      <div class="metric-card"><div class="metric-label">Avg B (Candidate)</div><div class="metric-value" id="m-avg-b">—</div><div class="metric-sub" id="m-avg-b-sub"></div></div>
+      <div class="metric-card highlight"><div class="metric-label">Δ (B − A)</div><div class="metric-value" id="m-delta">—</div><div class="metric-sub" id="m-delta-sub"></div></div>
+      <div class="metric-card"><div class="metric-label">Latest Case</div><div class="metric-value" id="m-latest">—</div><div class="metric-sub" id="m-latest-sub"></div></div>
+      <div class="metric-card"><div class="metric-label">Failures</div><div class="metric-value" id="m-fail">0</div><div class="metric-sub" id="m-fail-sub"></div></div>
+      <div class="metric-card"><div class="metric-label">RCA Items</div><div class="metric-value" id="m-rca">0</div><div class="metric-sub" id="m-rca-sub"></div></div>
+      <div class="metric-card"><div class="metric-label">Elapsed</div><div class="metric-value" id="m-elapsed">—</div><div class="metric-sub" id="m-elapsed-sub"></div></div>
+      <div class="metric-card"><div class="metric-label">Phase Elapsed</div><div class="metric-value" id="m-phase-el">—</div><div class="metric-sub" id="m-phase-el-sub"></div></div>
+      <div class="metric-card"><div class="metric-label">Avg Case Time</div><div class="metric-value" id="m-avg-case">—</div><div class="metric-sub" id="m-avg-case-sub"></div></div>
+      <div class="metric-card"><div class="metric-label">P90 Case Time</div><div class="metric-value" id="m-p90">—</div><div class="metric-sub" id="m-p90-sub"></div></div>
+      <div class="metric-card"><div class="metric-label">Throughput</div><div class="metric-value" id="m-thru">—</div><div class="metric-sub" id="m-thru-sub">cases/min</div></div>
+    </div>
+
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="charts">Charts</button>
+      <button class="tab-btn" data-tab="alerts">Alerts<span class="tab-badge" id="alert-badge" style="display:none">0</span></button>
+      <button class="tab-btn" data-tab="timing">Timing</button>
+      <button class="tab-btn" data-tab="prompts">Prompts</button>
+      <button class="tab-btn" data-tab="diagnostics">Diagnostics</button>
+      <button class="tab-btn" data-tab="events">Events<span class="tab-badge" id="event-badge" style="display:none">0</span></button>
+    </div>
+
+    <!-- Charts -->
+    <section class="panel tab-panel active" id="tab-charts">
+      <div class="chart-grid">
+        <div class="chart-card">
+          <div class="chart-title">Epoch Scores</div>
+          <canvas class="chart-canvas" id="chart-scores"></canvas>
+          <div class="chart-tooltip" id="tip-scores"></div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-a)"></div>Baseline (A)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-b)"></div>Candidate (B)</div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Failures &amp; RCA</div>
+          <canvas class="chart-canvas" id="chart-failures"></canvas>
+          <div class="chart-tooltip" id="tip-failures"></div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-d)"></div>Failures</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-e)"></div>RCA Items</div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Prompt Decisions</div>
+          <canvas class="chart-canvas" id="chart-prompts"></canvas>
+          <div class="chart-tooltip" id="tip-prompts"></div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-b)"></div>Accepted</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-d)"></div>Rejected</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-c)"></div>Scored</div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Runtime (seconds)</div>
+          <canvas class="chart-canvas" id="chart-runtime"></canvas>
+          <div class="chart-tooltip" id="tip-runtime"></div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-a)"></div>Pipeline</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-c)"></div>Grading</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-e)"></div>Case Total</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Alerts -->
+    <section class="panel tab-panel" id="tab-alerts">
+      <div class="alerts-panel" id="alerts-panel" style="display:block">
+        <div id="alert-list"><p style="color:var(--ink3);font-size:.82rem;font-style:italic;padding:8px">No intervention warnings.</p></div>
+      </div>
+    </section>
+
+    <!-- Timing -->
+    <section class="panel tab-panel" id="tab-timing">
+      <div class="table-wrap">
+        <table class="data-table" id="timing-table">
+          <thead><tr>
+            <th data-col="phase">Phase <span class="sort-arrow">▼</span></th>
+            <th data-col="samples">Samples <span class="sort-arrow">▼</span></th>
+            <th data-col="avg">Avg <span class="sort-arrow">▼</span></th>
+            <th data-col="p90">P90 <span class="sort-arrow">▼</span></th>
+            <th data-col="latest">Latest <span class="sort-arrow">▼</span></th>
+          </tr></thead>
+          <tbody id="timing-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Prompts -->
+    <section class="panel tab-panel" id="tab-prompts">
+      <div class="table-wrap">
+        <table class="data-table" id="prompt-table">
+          <thead><tr>
+            <th data-col="block">Block <span class="sort-arrow">▼</span></th>
+            <th data-col="baseline">Baseline <span class="sort-arrow">▼</span></th>
+            <th data-col="candidate">Candidate <span class="sort-arrow">▼</span></th>
+            <th data-col="delta">Delta <span class="sort-arrow">▼</span></th>
+            <th data-col="accepted">Accepted <span class="sort-arrow">▼</span></th>
+            <th data-col="reason">Reason <span class="sort-arrow">▼</span></th>
+          </tr></thead>
+          <tbody id="prompt-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Diagnostics -->
+    <section class="panel tab-panel" id="tab-diagnostics">
+      <div class="diag-grid">
+        <div class="diag-card">
+          <div class="section-title">Run Health</div>
+          <div class="diag-kv">
+            <span class="k">Event Lag</span><span class="v" id="rh-event-lag">—</span>
+            <span class="k">ETA Confidence</span><span class="v" id="rh-eta-conf">—</span>
+            <span class="k">Projection Variance</span><span class="v" id="rh-proj-var">—</span>
+            <span class="k">Degraded Rate</span><span class="v" id="rh-degraded-rate">—</span>
+            <span class="k">Tool Fail / Case</span><span class="v" id="rh-tool-fails">—</span>
+            <span class="k">Active Call</span><span class="v" id="rh-active-call">—</span>
+            <span class="k">Stall Warnings</span><span class="v" id="rh-stall-count">0</span>
+          </div>
+        </div>
+        <div class="diag-card">
+          <div class="section-title">Prompt Funnel</div>
+          <div class="diag-kv">
+            <span class="k">Changed</span><span class="v" id="pf-changed">—</span>
+            <span class="k">Scored</span><span class="v" id="pf-scored">—</span>
+            <span class="k">Accepted</span><span class="v" id="pf-accepted">—</span>
+            <span class="k">Score-Rejected</span><span class="v" id="pf-score-rej">—</span>
+            <span class="k">Contract-Rejected</span><span class="v" id="pf-contract-rej">—</span>
+          </div>
+        </div>
+        <div class="diag-card">
+          <div class="section-title">Candidate Gates</div>
+          <div class="diag-kv">
+            <span class="k">Latest Winner</span><span class="v" id="gd-winner">—</span>
+            <span class="k">Failed Gates</span><span class="v" id="gd-failed">—</span>
+            <span class="k">Runtime Ratio</span><span class="v" id="gd-runtime-ratio">—</span>
+            <span class="k">P90 Ratio</span><span class="v" id="gd-p90-ratio">—</span>
+            <span class="k">Gate Mode</span><span class="v" id="gd-enabled">—</span>
+          </div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <div class="section-title">Case Diagnostics</div>
+        <table class="data-table" id="case-table">
+          <thead><tr>
+            <th>Epoch</th>
+            <th>Phase</th>
+            <th>Case ID</th>
+            <th>Score</th>
+            <th>Runtime</th>
+            <th>Degraded</th>
+            <th>Tool Fails</th>
+            <th>Python Attempts</th>
+            <th>Citations</th>
+            <th>Coverage</th>
+          </tr></thead>
+          <tbody id="case-tbody"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <div class="section-title">Tool Health</div>
+        <table class="data-table" id="tool-table">
+          <thead><tr>
+            <th>Tool ID</th>
+            <th>Invocations</th>
+            <th>Errors</th>
+            <th>Error Rate</th>
+            <th>Python Attempts</th>
+            <th>Python Failures</th>
+          </tr></thead>
+          <tbody id="tool-tbody"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <div class="section-title">A vs B Matched Case Diff</div>
+        <table class="data-table" id="case-diff-table">
+          <thead><tr>
+            <th>Case ID</th>
+            <th>Score A</th>
+            <th>Score B</th>
+            <th>Δ Score</th>
+            <th>Runtime A</th>
+            <th>Runtime B</th>
+            <th>Δ Runtime</th>
+            <th>Degraded A/B</th>
+          </tr></thead>
+          <tbody id="case-diff-tbody"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <div class="section-title">Gate Decision History</div>
+        <table class="data-table" id="gate-table">
+          <thead><tr>
+            <th>Epoch</th>
+            <th>Winner</th>
+            <th>Failed Gates</th>
+            <th>Mean Ratio</th>
+            <th>P90 Ratio</th>
+            <th>Prompt Δ</th>
+          </tr></thead>
+          <tbody id="gate-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Events -->
+    <section class="panel tab-panel" id="tab-events">
+      <div class="event-panel" id="event-panel">
+        <input class="event-search" id="event-search" placeholder="Filter events..."/>
+        <div class="event-list" id="event-list"></div>
+      </div>
+    </section>
+  </section>
+</div>
+
+<script>
+/* ─── Elements ─── */
+const $=id=>document.getElementById(id);
+const chState=$('ch-state'),chEvents=$('ch-events'),chEta=$('ch-eta'),chAlerts=$('ch-alerts');
+const progLabel=$('prog-label'),progPct=$('prog-pct'),progFill=$('prog-fill');
+const eventList=$('event-list'),eventSearch=$('event-search'),eventBadge=$('event-badge');
+const alertList=$('alert-list'),alertBadge=$('alert-badge');
+const toastBox=$('toast-container');
+
+/* ─── State ─── */
+let eventTotal=0,alertCount=0;
+let enableMaxDetailPanels=true;
+
+const trend={
+  scoresA:[],scoresB:[],deltas:[],failures:[],rca:[],
+  promptAccept:[],promptReject:[],promptScored:[],
+  promptChanged:[],promptContractReject:[],promptScoreReject:[],
+  rtPipeline:[],rtGrading:[],rtCase:[]
+};
+
+const diag={
+  phaseTimings:{},caseTimes:[],allCaseTimes:[],phaseCaseTimes:{},lastEventTs:null,eventCount:0,
+  runStartTs:null,epochStartTs:null,phaseStartTs:null,
+  currentEpoch:0,totalEpochs:0,currentPhase:'',
+  casesPerEpoch:{},casesPerPhase:{},caseTotals:{},
+  caseRecords:[],
+  toolHealth:{},
+  gateDecisions:[],
+  latestGateDecision:null,
+  activeCall:null,
+  stalledWarningCount:0,
+  mutationRejectionBreakdown:{},
+  mutationRejectionIssueMatrix:{},
+  etaConfidence:'low',
+  etaVariance:null,
+  caseByPhaseAndId:{phase_a_eval:{},phase_b_eval:{}}
+};
+
+/* prompt detail state */
+let currentCaseMeta=null,caseStartedAt=null,caseTimerInterval=null,lastCaseScore=null;
+const pdPanel=$('prompt-detail'),pdIndex=$('pd-index'),pdTimer=$('pd-timer'),pdPreview=$('pd-preview');
+const pdId=$('pd-id'),pdCategory=$('pd-category'),pdDifficulty=$('pd-difficulty');
+const pdScore=$('pd-score'),pdGrading=$('pd-grading'),pdRespChars=$('pd-resp-chars');
+
+function startCaseTimer(){
+  stopCaseTimer();caseStartedAt=Date.now();
+  caseTimerInterval=setInterval(()=>{
+    const s=(Date.now()-caseStartedAt)/1000;
+    pdTimer.textContent=s<60?s.toFixed(1)+'s':(s/60).toFixed(1)+'m';
+  },100);
+}
+function stopCaseTimer(){if(caseTimerInterval){clearInterval(caseTimerInterval);caseTimerInterval=null;}}
+
+function catClass(c){
+  if(!c)return'';
+  const l=c.toLowerCase();
+  if(l.includes('reason')||l.includes('logic')||l.includes('trap'))return'cat-reasoning';
+  if(l.includes('safe')||l.includes('refus'))return'cat-safety';
+  if(l.includes('cod')||l.includes('debug'))return'cat-coding';
+  return'';
+}
+function diffClass(d){
+  if(!d)return'';
+  const l=d.toLowerCase();
+  if(l==='hard')return'diff-hard';if(l==='medium')return'diff-medium';if(l==='easy')return'diff-easy';
+  return'';
+}
+
+function updatePromptDetail(meta,payload){
+  if(!meta){pdPanel.style.display='none';stopCaseTimer();return;}
+  pdPanel.style.display='flex';
+  currentCaseMeta=meta;
+  pdIndex.textContent=`${meta.index||'?'} / ${meta.total||'?'}`;
+  pdPreview.textContent=meta.prompt_preview||'—';
+  pdId.textContent=meta.id||'—';
+  const cat=meta.category||'—';
+  pdCategory.textContent=cat;
+  pdCategory.className='kv-val';
+  const diff=meta.difficulty||'—';
+  pdDifficulty.textContent=diff;
+  pdDifficulty.className='kv-val';
+  /* update badge styling */
+  pdIndex.className=`prompt-detail-badge ${catClass(cat)} ${diffClass(diff)}`.trim();
+  if(payload){
+    if(payload.aggregate_score!=null){lastCaseScore=payload.aggregate_score;pdScore.textContent=sf(lastCaseScore);}
+    if(payload.grading_mode)pdGrading.textContent=payload.grading_mode;
+    if(payload.response_chars!=null)pdRespChars.textContent=`${payload.response_chars} chars`;
+    if(payload.timing_ms){
+      const t=payload.timing_ms;
+      if(t.case_total!=null){stopCaseTimer();pdTimer.textContent=fmtDur(t.case_total/1000);}
+    }
+  }
+}
+
+const MAX_TREND=50;
+function cap(arr){while(arr.length>MAX_TREND)arr.shift();}
+function toNum(v){const n=parseFloat(v);return isFinite(n)?n:null;}
+function sf(v,d=2){const n=toNum(v);return n==null?'—':n.toFixed(d);}
+function mean(a){if(!a.length)return null;return a.reduce((s,x)=>s+x,0)/a.length;}
+function pct(a,p){if(!a.length)return null;const s=[...a].sort((a,b)=>a-b);const i=Math.ceil(p/100*s.length)-1;return s[Math.max(0,i)];}
+function stddev(a){if(!a.length)return null;const m=mean(a);if(m==null)return null;const v=a.reduce((s,x)=>s+Math.pow(x-m,2),0)/a.length;return Math.sqrt(v);}
+function fmtDur(s){if(s==null||!isFinite(s))return'—';if(s<60)return s.toFixed(1)+'s';if(s<3600)return(s/60).toFixed(1)+'m';return(s/3600).toFixed(2)+'h';}
+function fmtJson(v){try{return JSON.stringify(v,null,2)}catch{return String(v)}}
+function esc(v){return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function parseEventTimestamp(v){
+  if(v==null||v==='')return null;
+  if(typeof v==='number'){
+    const d=new Date(v>1e12?v:v*1000);
+    return Number.isNaN(d.getTime())?null:d;
+  }
+  if(typeof v==='string'){
+    const trimmed=v.trim();
+    if(!trimmed)return null;
+    const asNum=Number(trimmed);
+    if(Number.isFinite(asNum)){
+      const d=new Date(asNum>1e12?asNum:asNum*1000);
+      return Number.isNaN(d.getTime())?null:d;
+    }
+    const d=new Date(trimmed);
+    return Number.isNaN(d.getTime())?null:d;
+  }
+  const d=new Date(v);
+  return Number.isNaN(d.getTime())?null:d;
+}
+function formatClockTime(v){
+  const d=parseEventTimestamp(v);
+  return d?d.toLocaleTimeString():'—';
+}
+
+/* ─── Theme ─── */
+function initTheme(){
+  const s=localStorage.getItem('twt-theme');
+  const t=s||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');
+  document.documentElement.setAttribute('data-theme',t);
+}
+$('theme-toggle').addEventListener('click',()=>{
+  const c=document.documentElement.getAttribute('data-theme');
+  const n=c==='dark'?'light':'dark';
+  document.documentElement.setAttribute('data-theme',n);
+  localStorage.setItem('twt-theme',n);
+  requestAnimationFrame(drawAllCharts);
+});
+initTheme();
+
+/* ─── Toast ─── */
+function showToast(msg,type='ok'){
+  const t=document.createElement('div');t.className=`toast ${type}`;t.textContent=msg;
+  toastBox.appendChild(t);setTimeout(()=>t.remove(),3200);
+}
+
+/* ─── Tabs ─── */
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active');$(`tab-${btn.dataset.tab}`).classList.add('active');
+  });
+});
+
+/* ─── Event search ─── */
+eventSearch.addEventListener('input',()=>{
+  const q=eventSearch.value.toLowerCase();
+  eventList.querySelectorAll('.event').forEach(el=>el.classList.toggle('hidden',q&&!el.textContent.toLowerCase().includes(q)));
+});
+
+/* ─── Table sorting ─── */
+function setupTableSort(tableId,tbodyId){
+  const table=document.getElementById(tableId);
+  if(!table)return;
+  const headers=table.querySelectorAll('th[data-col]');
+  let sortCol=null,sortAsc=true;
+  headers.forEach(th=>{
+    th.addEventListener('click',()=>{
+      const col=th.dataset.col;
+      if(sortCol===col)sortAsc=!sortAsc;else{sortCol=col;sortAsc=true;}
+      headers.forEach(h=>{h.classList.remove('sorted');h.querySelector('.sort-arrow').textContent='▼';});
+      th.classList.add('sorted');th.querySelector('.sort-arrow').textContent=sortAsc?'▲':'▼';
+      const tbody=document.getElementById(tbodyId);
+      const rows=[...tbody.querySelectorAll('tr')];
+      const ci=[...table.querySelectorAll('th[data-col]')].findIndex(h=>h.dataset.col===col);
+      rows.sort((a,b)=>{
+        let va=a.cells[ci]?.textContent||'',vb=b.cells[ci]?.textContent||'';
+        const na=parseFloat(va),nb=parseFloat(vb);
+        if(!isNaN(na)&&!isNaN(nb))return sortAsc?na-nb:nb-na;
+        return sortAsc?va.localeCompare(vb):vb.localeCompare(va);
+      });
+      rows.forEach(r=>tbody.appendChild(r));
+    });
+  });
+}
+setupTableSort('timing-table','timing-tbody');
+setupTableSort('prompt-table','prompt-tbody');
+setupTableSort('case-table','case-tbody');
+setupTableSort('tool-table','tool-tbody');
+setupTableSort('case-diff-table','case-diff-tbody');
+setupTableSort('gate-table','gate-tbody');
+
+/* ─── Chart drawing ─── */
+function getCSSVar(name){return getComputedStyle(document.documentElement).getPropertyValue(name).trim();}
+
+function drawLineChart(canvasId,tipId,series,xLabels){
+  const canvas=document.getElementById(canvasId);
+  const tip=document.getElementById(tipId);
+  if(!canvas)return;
+  const dpr=window.devicePixelRatio||1;
+  const rect=canvas.getBoundingClientRect();
+  canvas.width=rect.width*dpr;canvas.height=rect.height*dpr;
+  const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
+  const W=rect.width,H=rect.height;
+  const pad={t:12,r:14,b:28,l:42};
+  const cw=W-pad.l-pad.r,ch=H-pad.t-pad.b;
+
+  /* determine bounds */
+  let minV=Infinity,maxV=-Infinity;
+  for(const s of series){for(const v of s.data){if(v!=null){minV=Math.min(minV,v);maxV=Math.max(maxV,v);}}}
+  if(!isFinite(minV)){minV=0;maxV=1;}
+  if(minV===maxV){minV-=.5;maxV+=.5;}
+  const range=maxV-minV;minV-=range*.08;maxV+=range*.08;
+
+  const ink3=getCSSVar('--ink3');
+  const border=getCSSVar('--border');
+
+  /* grid */
+  ctx.strokeStyle=border;ctx.lineWidth=.5;
+  const gridRows=4;
+  for(let i=0;i<=gridRows;i++){
+    const y=pad.t+ch*(1-i/gridRows);
+    ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+cw,y);ctx.stroke();
+    const val=minV+(maxV-minV)*(i/gridRows);
+    ctx.fillStyle=ink3;ctx.font='10px '+getCSSVar('--mono');ctx.textAlign='right';ctx.textBaseline='middle';
+    ctx.fillText(val.toFixed(1),pad.l-6,y);
+  }
+
+  /* x labels */
+  const maxXLabels=Math.min(xLabels.length,8);
+  const step=Math.max(1,Math.floor(xLabels.length/maxXLabels));
+  ctx.fillStyle=ink3;ctx.font='10px '+getCSSVar('--mono');ctx.textAlign='center';ctx.textBaseline='top';
+  for(let i=0;i<xLabels.length;i+=step){
+    const x=pad.l+cw*(i/(Math.max(1,xLabels.length-1)));
+    ctx.fillText(xLabels[i],x,pad.t+ch+6);
+  }
+
+  /* series */
+  const pts=[];
+  for(const s of series){
+    const color=getCSSVar(s.color);
+    ctx.strokeStyle=color;ctx.lineWidth=2;ctx.lineJoin='round';ctx.lineCap='round';
+    ctx.beginPath();let started=false;
+    const seriesPts=[];
+    for(let i=0;i<s.data.length;i++){
+      if(s.data[i]==null){seriesPts.push(null);continue;}
+      const x=pad.l+cw*(i/Math.max(1,s.data.length-1));
+      const y=pad.t+ch*(1-(s.data[i]-minV)/(maxV-minV));
+      seriesPts.push({x,y,val:s.data[i],label:s.label});
+      if(!started){ctx.moveTo(x,y);started=true;}else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+
+    /* dots */
+    ctx.fillStyle=color;
+    for(const p of seriesPts){
+      if(!p)continue;
+      ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();
+    }
+    pts.push(...seriesPts.filter(Boolean));
+  }
+
+  /* tooltip on hover */
+  canvas.onmousemove=e=>{
+    const cx=e.offsetX,cy=e.offsetY;
+    let closest=null,minD=Infinity;
+    for(const p of pts){const d=Math.hypot(p.x-cx,p.y-cy);if(d<minD&&d<30){minD=d;closest=p;}}
+    if(closest){
+      tip.style.display='block';
+      tip.textContent=`${closest.label}: ${closest.val.toFixed(3)}`;
+      tip.style.left=(closest.x+10)+'px';tip.style.top=(closest.y-10)+'px';
+    }else tip.style.display='none';
+  };
+  canvas.onmouseleave=()=>{tip.style.display='none';};
+}
+
+function drawAllCharts(){
+  const n=trend.scoresA.length;
+  const xLabels=Array.from({length:n},(_,i)=>`E${i+1}`);
+
+  drawLineChart('chart-scores','tip-scores',[
+    {data:trend.scoresA,color:'--ch-a',label:'Baseline'},
+    {data:trend.scoresB,color:'--ch-b',label:'Candidate'}
+  ],xLabels);
+
+  drawLineChart('chart-failures','tip-failures',[
+    {data:trend.failures,color:'--ch-d',label:'Failures'},
+    {data:trend.rca,color:'--ch-e',label:'RCA'}
+  ],xLabels);
+
+  drawLineChart('chart-prompts','tip-prompts',[
+    {data:trend.promptAccept,color:'--ch-b',label:'Accepted'},
+    {data:trend.promptReject,color:'--ch-d',label:'Rejected'},
+    {data:trend.promptScored,color:'--ch-c',label:'Scored'}
+  ],xLabels);
+
+  drawLineChart('chart-runtime','tip-runtime',[
+    {data:trend.rtPipeline,color:'--ch-a',label:'Pipeline'},
+    {data:trend.rtGrading,color:'--ch-c',label:'Grading'},
+    {data:trend.rtCase,color:'--ch-e',label:'Case'}
+  ],xLabels);
+}
+
+/* ─── Metric cards ─── */
+function setMetric(id,val,sub){
+  const el=document.getElementById(id);if(el)el.textContent=val;
+  const sel=document.getElementById(id+'-sub');if(sel&&sub!=null)sel.textContent=sub;
+}
+
+function updateMetrics(){
+  const sa=trend.scoresA,sb=trend.scoresB;
+  const lastA=sa.length?sa[sa.length-1]:null;
+  const lastB=sb.length?sb[sb.length-1]:null;
+  setMetric('m-avg-a',sf(mean(sa)),sa.length?`n=${sa.length}`:'');
+  setMetric('m-avg-b',sf(mean(sb)),sb.length?`n=${sb.length}`:'');
+  const d=lastA!=null&&lastB!=null?lastB-lastA:null;
+  setMetric('m-delta',d!=null?(d>0?'+':'')+d.toFixed(3):'—',d!=null?(d>0?'candidate ahead':'baseline ahead'):'');
+  const lastCase=diag.allCaseTimes.length?diag.allCaseTimes[diag.allCaseTimes.length-1]:null;
+  setMetric('m-latest',lastCase!=null?fmtDur(lastCase):'—','');
+  setMetric('m-fail',trend.failures.length?trend.failures[trend.failures.length-1]:0,'');
+  setMetric('m-rca',trend.rca.length?trend.rca[trend.rca.length-1]:0,'');
+
+  const elapsed=diag.runStartTs?((Date.now()-diag.runStartTs)/1000):null;
+  setMetric('m-elapsed',fmtDur(elapsed),'');
+  const phaseEl=diag.phaseStartTs?((Date.now()-diag.phaseStartTs)/1000):null;
+  setMetric('m-phase-el',fmtDur(phaseEl),diag.currentPhase||'');
+
+  const avgCase=mean(diag.allCaseTimes);
+  setMetric('m-avg-case',fmtDur(avgCase),diag.allCaseTimes.length?`n=${diag.allCaseTimes.length}`:'');
+  const p90Case=pct(diag.allCaseTimes,90);
+  setMetric('m-p90',fmtDur(p90Case),'');
+
+  const throughput=elapsed&&diag.allCaseTimes.length?(diag.allCaseTimes.length/(elapsed/60)):null;
+  setMetric('m-thru',throughput!=null?throughput.toFixed(1):'—','cases/min');
+}
+
+/* ─── ETA estimation ─── */
+function estimateEta(){
+  const runAvg=mean(diag.allCaseTimes);
+  const phase=diag.currentPhase||'';
+  const phaseTimes=diag.phaseCaseTimes[phase]||[];
+  const phaseAvg=mean(phaseTimes)||runAvg;
+  if(!phaseAvg){
+    diag.etaConfidence='low';
+    diag.etaVariance=null;
+    return{run:'—',phase:'—',case:'—',confidence:'low',variance:null};
+  }
+
+  const caseEta=fmtDur(phaseAvg);
+
+  const totalCasesInPhase=diag.caseTotals[phase]||0;
+  const doneCasesInPhase=diag.casesPerPhase[phase]||phaseTimes.length;
+  const remainingPhaseCases=totalCasesInPhase?Math.max(0,totalCasesInPhase-doneCasesInPhase):null;
+  const phaseEta=remainingPhaseCases!=null?fmtDur(remainingPhaseCases*phaseAvg):'—';
+
+  let runEta='—';
+  const observedCasesPerEpoch=Object.values(diag.casesPerEpoch).filter(v=>toNum(v)!=null&&v>0);
+  const avgCasesPerEpoch=observedCasesPerEpoch.length?mean(observedCasesPerEpoch):Math.max(...Object.values(diag.caseTotals),0);
+  const expectedTotalCases=(diag.totalEpochs&&avgCasesPerEpoch)?diag.totalEpochs*avgCasesPerEpoch:null;
+  if(expectedTotalCases&&runAvg){
+    const remainingCases=Math.max(0,expectedTotalCases-diag.allCaseTimes.length);
+    runEta=remainingCases>0?fmtDur(remainingCases*runAvg):'—';
+  }
+
+  if(runEta==='—'&&diag.runStartTs&&diag.totalEpochs){
+    const elapsed=(Date.now()-diag.runStartTs)/1000;
+    const phaseProgress=(totalCasesInPhase&&doneCasesInPhase)?Math.min(1,doneCasesInPhase/totalCasesInPhase):0;
+    const progress=((Math.max(0,diag.currentEpoch-1))+phaseProgress)/diag.totalEpochs;
+    if(progress>0&&elapsed>0){
+      runEta=fmtDur(Math.max(0,(elapsed/progress)-elapsed));
+    }
+  }
+
+  const source=phaseTimes.length>=3?phaseTimes:diag.allCaseTimes;
+  const spread=stddev(source);
+  const avg=mean(source);
+  const cv=(spread!=null&&avg&&avg>0)?spread/avg:null;
+  let confidence='low';
+  if(source.length>=8 && cv!=null && cv<0.25)confidence='high';
+  else if(source.length>=5 && cv!=null && cv<0.45)confidence='med';
+  diag.etaConfidence=confidence;
+  diag.etaVariance=cv;
+
+  return{run:runEta,phase:phaseEta,case:caseEta,confidence,variance:cv};
+}
+
+/* ─── Warnings ─── */
+function buildWarnings(){
+  const warns=[];
+  const avgCase=mean(diag.allCaseTimes);
+  const p90=pct(diag.allCaseTimes,90);
+  if(avgCase&&avgCase>120)warns.push({level:'warn',msg:`Avg case time ${fmtDur(avgCase)} exceeds 2min threshold.`});
+  if(p90&&p90>300)warns.push({level:'bad',msg:`P90 case time ${fmtDur(p90)} exceeds 5min threshold.`});
+  if(diag.lastEventTs&&(Date.now()-diag.lastEventTs)>600000)warns.push({level:'warn',msg:'No events received for 10+ minutes. Check pipeline/logs and consider intervention.'});
+  const elapsed=diag.runStartTs?(Date.now()-diag.runStartTs)/1000:0;
+  if(elapsed>3600&&diag.allCaseTimes.length<5)warns.push({level:'bad',msg:'Very low throughput: <5 cases in 1+ hour.'});
+  if(diag.etaConfidence==='low'&&diag.allCaseTimes.length>=3)warns.push({level:'warn',msg:'ETA confidence is low due to volatile case durations.'});
+  const py=diag.toolHealth['python_code_execution_tool_block'];
+  if(py&&py.invocations>0){
+    const rate=py.errors/py.invocations;
+    if(rate>=0.35)warns.push({level:'bad',msg:`Python tool error rate ${(rate*100).toFixed(1)}% is high. Consider intervention on prompt/contracts.`});
+  }
+  if(diag.latestGateDecision&&diag.latestGateDecision.changedCount>0&&Array.isArray(diag.latestGateDecision.failedGates)&&diag.latestGateDecision.failedGates.length){
+    warns.push({
+      level:'warn',
+      msg:`Candidate gate failures detected: ${diag.latestGateDecision.failedGates.join(', ')}.`,
+    });
+  }
+  const rej=diag.mutationRejectionBreakdown||{};
+  const contractRejects=toNum(rej.prompt_contract_violation)||toNum(rej.fallback_prompt_contract_violation)||0;
+  if(contractRejects>0){
+    warns.push({
+      level:'warn',
+      msg:`Mutation contract rejections detected (${contractRejects}). Review prompt contract compatibility.`,
+    });
+  }
+  return warns;
+}
+
+function renderWarnings(){
+  const warns=buildWarnings();
+  alertCount=warns.length;
+  chAlerts.textContent=`${alertCount} alert${alertCount===1?'':'s'}`;
+  chAlerts.className=`chip ${alertCount?'warn':''}`.trim();
+  alertBadge.textContent=alertCount;alertBadge.style.display=alertCount?'inline':'none';
+  if(!warns.length){alertList.innerHTML='<p style="color:var(--ink3);font-size:.82rem;font-style:italic;padding:8px">No intervention warnings.</p>';return;}
+  alertList.innerHTML=warns.map(w=>`<div class="alert-item ${w.level}"><span class="alert-icon">${w.level==='bad'?'🔴':'🟡'}</span>${esc(w.msg)}</div>`).join('');
+}
+
+/* ─── Phase stats table ─── */
+function renderPhaseStats(){
+  const tbody=document.getElementById('timing-tbody');
+  const phases=Object.keys(diag.phaseTimings);
+  if(!phases.length){tbody.innerHTML='<tr><td colspan="5" style="color:var(--ink3);font-style:italic">No timing data yet.</td></tr>';return;}
+  tbody.innerHTML=phases.map(ph=>{
+    const times=diag.phaseTimings[ph]||[];
+    const avg=mean(times);const p90v=pct(times,90);const latest=times.length?times[times.length-1]:null;
+    return`<tr><td>${esc(ph)}</td><td>${times.length}</td><td>${fmtDur(avg)}</td><td>${fmtDur(p90v)}</td><td>${fmtDur(latest)}</td></tr>`;
+  }).join('');
+}
+
+/* ─── Prompt score table ─── */
+let latestPromptSnapshot=null;
+function renderPromptScoreTable(data){
+  const tbody=document.getElementById('prompt-tbody');
+  const blocks=Array.isArray(data?.block_scores)
+    ? data.block_scores.map(item=>({
+        block:item.block_id,
+        baseline:item.baseline_total,
+        candidate:item.candidate_total,
+        delta:item.delta_total,
+        accepted:Boolean(item.accepted),
+        reason:item.decision_reason,
+      }))
+    : (Array.isArray(data?.blocks)?data.blocks:[]);
+  if(!blocks.length){tbody.innerHTML='<tr><td colspan="6" style="color:var(--ink3);font-style:italic">No prompt scoring data yet.</td></tr>';return;}
+  tbody.innerHTML=blocks.map(b=>{
+    const d=toNum(b.delta);
+    const color=d!=null?(d>0?'var(--ok)':d<0?'var(--bad)':''):'';
+    return`<tr>
+      <td>${esc(b.block||b.name||'—')}</td>
+      <td>${sf(b.baseline)}</td>
+      <td>${sf(b.candidate)}</td>
+      <td style="color:${color}">${d!=null?(d>0?'+':'')+d.toFixed(3):'—'}</td>
+      <td>${b.accepted?'✅':'❌'}</td>
+      <td>${esc(b.reason||'—')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function updateToolHealthFromPayload(payload){
+  const inv=payload&&typeof payload.tool_invocations==='object'?payload.tool_invocations:{};
+  const err=payload&&typeof payload.tool_errors==='object'?payload.tool_errors:{};
+  for(const [toolId,count] of Object.entries(inv||{})){
+    const n=toNum(count)||0;
+    if(!diag.toolHealth[toolId])diag.toolHealth[toolId]={invocations:0,errors:0,pythonAttempts:0,pythonFailures:0};
+    diag.toolHealth[toolId].invocations+=n;
+  }
+  for(const [toolId,count] of Object.entries(err||{})){
+    const n=toNum(count)||0;
+    if(!diag.toolHealth[toolId])diag.toolHealth[toolId]={invocations:0,errors:0,pythonAttempts:0,pythonFailures:0};
+    diag.toolHealth[toolId].errors+=n;
+  }
+  const pa=toNum(payload?.python_exec_attempts)||0;
+  const pf=toNum(payload?.python_exec_failures)||0;
+  if(pa||pf){
+    const key='python_code_execution_tool_block';
+    if(!diag.toolHealth[key])diag.toolHealth[key]={invocations:0,errors:0,pythonAttempts:0,pythonFailures:0};
+    diag.toolHealth[key].pythonAttempts+=pa;
+    diag.toolHealth[key].pythonFailures+=pf;
+  }
+}
+
+function addCaseRecord(event,payload){
+  const meta=event.current_case||{};
+  const rec={
+    epoch:event.epoch_current||diag.currentEpoch||0,
+    phase:event.phase||diag.currentPhase||'unknown',
+    id:meta.id||`case_${meta.index||diag.caseRecords.length+1}`,
+    score:toNum(payload?.aggregate_score),
+    runtime:toNum(payload?.timing_ms?.case_total!=null?payload.timing_ms.case_total/1000:null),
+    degraded:Boolean(payload?.degraded_mode_active),
+    toolFails:toNum(payload?.tool_failure_signals_count)||0,
+    pythonAttempts:toNum(payload?.python_exec_attempts)||0,
+    pythonFailures:toNum(payload?.python_exec_failures)||0,
+    citations:toNum(payload?.citation_count)||0,
+    coverage:toNum(payload?.step_coverage_ratio),
+    gradingMode:payload?.grading_mode||'—'
+  };
+  diag.caseRecords.push(rec);
+  if(diag.caseRecords.length>500)diag.caseRecords.shift();
+  const phaseKey=rec.phase==='phase_a_eval'?'phase_a_eval':(rec.phase==='phase_b_eval'?'phase_b_eval':null);
+  if(phaseKey&&rec.id)diag.caseByPhaseAndId[phaseKey][rec.id]=rec;
+}
+
+function renderDiagnostics(){
+  const eventLag=diag.lastEventTs?((Date.now()-diag.lastEventTs)/1000):null;
+  const degradedCount=diag.caseRecords.filter(r=>r.degraded).length;
+  const degradedRate=diag.caseRecords.length?(degradedCount/diag.caseRecords.length):0;
+  const avgToolFails=diag.caseRecords.length?diag.caseRecords.reduce((s,r)=>s+(r.toolFails||0),0)/diag.caseRecords.length:0;
+
+  $('rh-event-lag').textContent=eventLag!=null?fmtDur(eventLag):'—';
+  const active=diag.activeCall&&typeof diag.activeCall==='object'?diag.activeCall:null;
+  let activeText='—';
+  if(active){
+    const block=active.block_id||'call';
+    const attempt=active.attempt!=null?`#${active.attempt}`:'';
+    let elapsedSeconds=toNum(active.elapsed_call_seconds);
+    if(elapsedSeconds==null&&active.started_at_unix!=null){
+      const started=parseEventTimestamp(active.started_at_unix);
+      if(started)elapsedSeconds=Math.max(0,(Date.now()-started.getTime())/1000);
+    }
+    const elapsed=elapsedSeconds!=null?` (${fmtDur(elapsedSeconds)})`:'';
+    activeText=`${block}${attempt?` ${attempt}`:''}${elapsed}`;
+  }
+  $('rh-active-call').textContent=activeText;
+  $('rh-stall-count').textContent=String(diag.stalledWarningCount||0);
+  const conf=diag.etaConfidence||'low';
+  const confBadge=`<span class=\"badge ${conf}\">${conf.toUpperCase()}</span>`;
+  $('rh-eta-conf').innerHTML=confBadge;
+  $('rh-proj-var').textContent=diag.etaVariance!=null?diag.etaVariance.toFixed(3):'—';
+  $('rh-degraded-rate').textContent=`${(degradedRate*100).toFixed(1)}%`;
+  $('rh-tool-fails').textContent=avgToolFails.toFixed(2);
+
+  const latestPrompt=latestPromptSnapshot||{};
+  const latestVal=(arr)=>arr.length?arr[arr.length-1]:0;
+  $('pf-changed').textContent=String(toNum(latestPrompt.changed_count)||latestVal(trend.promptChanged)||0);
+  $('pf-scored').textContent=String(toNum(latestPrompt.scored_count)||latestVal(trend.promptScored)||0);
+  $('pf-accepted').textContent=String(toNum(latestPrompt.accepted_count)||latestVal(trend.promptAccept)||0);
+  $('pf-score-rej').textContent=String(toNum(latestPrompt.score_rejected_count)||latestVal(trend.promptScoreReject)||0);
+  $('pf-contract-rej').textContent=String(toNum(latestPrompt.contract_rejected_count)||latestVal(trend.promptContractReject)||0);
+
+  const gd=diag.latestGateDecision;
+  $('gd-winner').textContent=gd?.winner||'—';
+  $('gd-failed').textContent=(gd?.failedGates||[]).join(', ')||'—';
+  $('gd-runtime-ratio').textContent=gd?.meanRatio!=null?gd.meanRatio.toFixed(3):'—';
+  $('gd-p90-ratio').textContent=gd?.p90Ratio!=null?gd.p90Ratio.toFixed(3):'—';
+  $('gd-enabled').textContent=gd?.enabled==null?'—':(gd.enabled?'enabled':'disabled');
+
+  const caseBody=$('case-tbody');
+  if(!diag.caseRecords.length){
+    caseBody.innerHTML='<tr><td colspan=\"10\" style=\"color:var(--ink3);font-style:italic\">No case diagnostics yet.</td></tr>';
+  }else{
+    const rows=[...diag.caseRecords].slice(-60).reverse();
+    caseBody.innerHTML=rows.map(r=>`<tr>
+      <td>${r.epoch}</td>
+      <td>${esc(r.phase)}</td>
+      <td>${esc(r.id)}</td>
+      <td>${r.score!=null?r.score.toFixed(3):'—'}</td>
+      <td>${fmtDur(r.runtime)}</td>
+      <td>${r.degraded?'yes':'no'}</td>
+      <td>${r.toolFails}</td>
+      <td>${r.pythonAttempts}/${r.pythonFailures}</td>
+      <td>${r.citations}</td>
+      <td>${r.coverage!=null?(r.coverage*100).toFixed(1)+'%':'—'}</td>
+    </tr>`).join('');
+  }
+
+  const toolBody=$('tool-tbody');
+  const toolRows=Object.entries(diag.toolHealth).sort((a,b)=>(b[1].invocations||0)-(a[1].invocations||0));
+  if(!toolRows.length){
+    toolBody.innerHTML='<tr><td colspan=\"6\" style=\"color:var(--ink3);font-style:italic\">No tool telemetry yet.</td></tr>';
+  }else{
+    toolBody.innerHTML=toolRows.map(([tool,row])=>{
+      const inv=toNum(row.invocations)||0;
+      const err=toNum(row.errors)||0;
+      const rate=inv>0?(err/inv):0;
+      return `<tr>
+        <td>${esc(tool)}</td>
+        <td>${inv}</td>
+        <td>${err}</td>
+        <td>${(rate*100).toFixed(1)}%</td>
+        <td>${toNum(row.pythonAttempts)||0}</td>
+        <td>${toNum(row.pythonFailures)||0}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const diffBody=$('case-diff-tbody');
+  const ids=Object.keys(diag.caseByPhaseAndId.phase_a_eval||{}).filter(id=>diag.caseByPhaseAndId.phase_b_eval[id]);
+  if(!ids.length){
+    diffBody.innerHTML='<tr><td colspan=\"8\" style=\"color:var(--ink3);font-style:italic\">No matched A/B case pairs yet.</td></tr>';
+  }else{
+    diffBody.innerHTML=ids.slice(-80).reverse().map(id=>{
+      const a=diag.caseByPhaseAndId.phase_a_eval[id];
+      const b=diag.caseByPhaseAndId.phase_b_eval[id];
+      const ds=(a.score!=null&&b.score!=null)?(b.score-a.score):null;
+      const dr=(a.runtime!=null&&b.runtime!=null)?(b.runtime-a.runtime):null;
+      return `<tr>
+        <td>${esc(id)}</td>
+        <td>${a.score!=null?a.score.toFixed(3):'—'}</td>
+        <td>${b.score!=null?b.score.toFixed(3):'—'}</td>
+        <td>${ds!=null?(ds>0?'+':'')+ds.toFixed(3):'—'}</td>
+        <td>${fmtDur(a.runtime)}</td>
+        <td>${fmtDur(b.runtime)}</td>
+        <td>${dr!=null?((dr>0?'+':(dr<0?'-':''))+fmtDur(Math.abs(dr))): '—'}</td>
+        <td>${a.degraded?'Y':'N'} / ${b.degraded?'Y':'N'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const gateBody=$('gate-tbody');
+  if(!diag.gateDecisions.length){
+    gateBody.innerHTML='<tr><td colspan=\"6\" style=\"color:var(--ink3);font-style:italic\">No gate decisions yet.</td></tr>';
+  }else{
+    gateBody.innerHTML=[...diag.gateDecisions].slice(-40).reverse().map(g=>`<tr>
+      <td>${g.epoch||'—'}</td>
+      <td>${esc(g.winner||'—')}</td>
+      <td>${esc((g.failedGates||[]).join(', ')||'—')}</td>
+      <td>${g.meanRatio!=null?g.meanRatio.toFixed(3):'—'}</td>
+      <td>${g.p90Ratio!=null?g.p90Ratio.toFixed(3):'—'}</td>
+      <td>${g.promptDelta!=null?g.promptDelta.toFixed(3):'—'}</td>
+    </tr>`).join('');
+  }
+}
+
+/* ─── Event rendering ─── */
+function eventCls(ev){
+  const t=ev.event_type||'';
+  if(t.includes('error')||t.includes('fail'))return'bad-e';
+  if(t.includes('warn'))return'warn-e';
+  if(t.includes('complete')||t.includes('accepted'))return'ok-e';
+  return'';
+}
+
+function createEventNode(event){
+  const el=document.createElement('article');el.className=`event ${eventCls(event)}`.trim();
+  const hdr=document.createElement('div');hdr.className='event-header';
+  const ts=formatClockTime(event.timestamp??event.timestamp_unix);
+  hdr.innerHTML=`<span class="event-title">${esc(event.event_type||'event')}</span><span class="event-meta">${esc(event.phase||'')} ${ts}<span class="event-chevron">▸</span></span>`;
+  const body=document.createElement('div');body.className='event-body';
+  const pre=document.createElement('pre');
+  const payload={...event};delete payload.event_type;delete payload.timestamp;delete payload.timestamp_unix;
+  pre.textContent=fmtJson(payload);body.appendChild(pre);
+  hdr.addEventListener('click',()=>el.classList.toggle('open'));
+  el.appendChild(hdr);el.appendChild(body);
+  return el;
+}
+
+function appendEvent(event){
+  eventTotal++;
+  chEvents.textContent=`${eventTotal} events`;
+  eventBadge.textContent=eventTotal;eventBadge.style.display='inline';
+  const el=createEventNode(event);
+  eventList.appendChild(el);
+  const panel=$('event-panel');panel.scrollTop=panel.scrollHeight;
+}
+
+/* ─── Event ingestion ─── */
+const seenKeys=new Set();
+
+function eventKey(ev){
+  return `${ev.run_id||''}:${ev.seq||''}:${ev.event_type||''}:${ev.timestamp||ev.timestamp_unix||''}`;
+}
+
+function ingestEvent(event){
+  const key=eventKey(event);
+  if(seenKeys.has(key))return;
+  seenKeys.add(key);
+
+  const parsedTs=parseEventTimestamp(event.timestamp??event.timestamp_unix);
+  diag.lastEventTs=parsedTs?parsedTs.getTime():Date.now();
+  diag.eventCount++;
+  const et=event.event_type||'';
+  const p=event.payload||event;
+  if(event.active_call&&typeof event.active_call==='object')diag.activeCall=event.active_call;
+  if(p.active_call&&typeof p.active_call==='object')diag.activeCall=p.active_call;
+
+  if(et==='run_started'){
+    const d=parseEventTimestamp(event.timestamp??event.timestamp_unix);
+    diag.runStartTs=d?d.getTime():Date.now();
+    diag.currentEpoch=0;diag.totalEpochs=event.epochs_total||p.epochs_total||0;
+  }
+
+  if(event.epoch_current!=null)diag.currentEpoch=event.epoch_current;
+  if(event.epochs_total!=null)diag.totalEpochs=event.epochs_total;
+  if(event.phase)diag.currentPhase=event.phase;
+
+  if(et==='phase_started'){
+    diag.phaseStartTs=Date.now();
+  }
+
+  if(et==='case_started'){
+    diag.phaseStartTs=diag.phaseStartTs||Date.now();
+    const phase=event.phase||diag.currentPhase||'unknown';
+    const totalCases=toNum((event.current_case||p.current_case||{}).total);
+    if(totalCases!=null&&totalCases>0){
+      diag.caseTotals[phase]=Math.max(diag.caseTotals[phase]||0,totalCases);
+    }
+    if(!diag.phaseCaseTimes[phase])diag.phaseCaseTimes[phase]=[];
+    updatePromptDetail(event.current_case||p,null);
+    startCaseTimer();
+    pdScore.textContent='—';pdGrading.textContent='—';pdRespChars.textContent='—';
+  }
+
+  if(et==='case_completed'){
+    const dur=toNum(p.duration_seconds||p.elapsed_seconds||p.case_duration||(p.timing_ms?.case_total?p.timing_ms.case_total/1000:null));
+    if(dur!=null){
+      diag.caseTimes.push(dur);
+      diag.allCaseTimes.push(dur);
+    }
+    const phase=event.phase||diag.currentPhase||'unknown';
+    if(!diag.phaseTimings[phase])diag.phaseTimings[phase]=[];
+    if(dur!=null)diag.phaseTimings[phase].push(dur);
+    if(!diag.phaseCaseTimes[phase])diag.phaseCaseTimes[phase]=[];
+    if(dur!=null)diag.phaseCaseTimes[phase].push(dur);
+    diag.casesPerPhase[phase]=(diag.casesPerPhase[phase]||0)+1;
+    const totalCases=toNum((event.current_case||p.current_case||{}).total);
+    if(totalCases!=null&&totalCases>0){
+      diag.caseTotals[phase]=Math.max(diag.caseTotals[phase]||0,totalCases);
+    }
+
+    /* runtime breakdown */
+    const rtP=toNum(p.pipeline_seconds||(p.timing_ms?.pipeline_run?p.timing_ms.pipeline_run/1000:null));
+    const rtG=toNum(p.grading_seconds||(p.timing_ms?.grading?p.timing_ms.grading/1000:null));
+    if(rtP!=null){trend.rtPipeline.push(rtP);cap(trend.rtPipeline);}
+    if(rtG!=null){trend.rtGrading.push(rtG);cap(trend.rtGrading);}
+    if(dur!=null){trend.rtCase.push(dur);cap(trend.rtCase);}
+
+    updateToolHealthFromPayload(p);
+    addCaseRecord(event,p);
+
+    const epoch=diag.currentEpoch||0;
+    diag.casesPerEpoch[epoch]=(diag.casesPerEpoch[epoch]||0)+1;
+
+    /* update prompt detail with score + timing */
+    updatePromptDetail(event.current_case||currentCaseMeta,p);
+  }
+
+  if(et==='phase_completed'){
+    diag.phaseStartTs=null;
+    const phase=event.phase||p.phase||'';
+    const dur=toNum(p.duration_seconds||p.elapsed_seconds);
+    if(phase&&dur!=null){
+      if(!diag.phaseTimings[phase])diag.phaseTimings[phase]=[];
+      /* phase-level aggregate already tracked per case, skip double count */
+    }
+  }
+
+  if(et==='epoch_completed'){
+    const ep=diag.currentEpoch;
+    const sa=toNum(p.avg_score_a||p.baseline_avg);
+    const sb=toNum(p.avg_score_b||p.candidate_avg);
+    if(sa!=null){trend.scoresA.push(sa);cap(trend.scoresA);}
+    if(sb!=null){trend.scoresB.push(sb);cap(trend.scoresB);}
+    const d=sa!=null&&sb!=null?sb-sa:null;
+    if(d!=null){trend.deltas.push(d);cap(trend.deltas);}
+    const f=toNum(p.failures??p.fail_count??p.num_failures_in_a);
+    if(f!=null){trend.failures.push(f);cap(trend.failures);}
+    const r=toNum(p.rca_count??p.rca_items??p.num_rca_items);
+    if(r!=null){trend.rca.push(r);cap(trend.rca);}
+
+    diag.epochStartTs=Date.now();
+    diag.phaseStartTs=null;
+  }
+
+  if(et==='prompt_scoring_snapshot'){
+    const m=event.metrics||{};
+    const accept=toNum(m.prompt_accepted_blocks??p.accepted_count??p.accepted);
+    const reject=toNum(m.prompt_rejected_blocks??p.rejected_count??p.rejected);
+    const scored=toNum(m.prompt_scored_blocks??p.scored_count??p.scored);
+    const changed=toNum(m.prompt_changed_blocks??p.changed_count);
+    const contractReject=toNum(m.prompt_contract_rejected_blocks??p.contract_rejected_count);
+    const scoreReject=toNum(m.prompt_score_rejected_blocks??p.score_rejected_count);
+    if(accept!=null){trend.promptAccept.push(accept);cap(trend.promptAccept);}
+    if(reject!=null){trend.promptReject.push(reject);cap(trend.promptReject);}
+    if(scored!=null){trend.promptScored.push(scored);cap(trend.promptScored);}
+    if(changed!=null){trend.promptChanged.push(changed);cap(trend.promptChanged);}
+    if(contractReject!=null){trend.promptContractReject.push(contractReject);cap(trend.promptContractReject);}
+    if(scoreReject!=null){trend.promptScoreReject.push(scoreReject);cap(trend.promptScoreReject);}
+    latestPromptSnapshot={
+      ...p,
+      accepted_count:accept,
+      rejected_count:reject,
+      scored_count:scored,
+      changed_count:changed,
+      contract_rejected_count:contractReject,
+      score_rejected_count:scoreReject,
+    };
+  }
+
+  if(et==='mutation_rejection_breakdown'||et==='mutation_completed'){
+    if(p.mutation_rejection_breakdown&&typeof p.mutation_rejection_breakdown==='object'){
+      diag.mutationRejectionBreakdown=p.mutation_rejection_breakdown;
+    }
+    if(p.mutation_rejection_issue_matrix&&typeof p.mutation_rejection_issue_matrix==='object'){
+      diag.mutationRejectionIssueMatrix=p.mutation_rejection_issue_matrix;
+    }
+  }
+
+  if(et==='stalled_warning'){
+    diag.stalledWarningCount=(diag.stalledWarningCount||0)+1;
+    showToast('Stall warning: case progress appears blocked','warn');
+  }
+
+  if(et==='candidate_gate_decision'){
+    const gates=p.gate_results||{};
+    const ratios=gates.ratios||{};
+    const failed=Array.isArray(gates.failed_gates)?gates.failed_gates:[];
+    const gateRecord={
+      epoch:event.epoch_current||diag.currentEpoch||0,
+      winner:p.winner||'baseline',
+      enabled:Boolean(p.gates_enabled),
+      changedCount:toNum(p.changed_keys_count)||0,
+      failedGates:failed,
+      meanRatio:toNum(ratios.mean_case_time_ratio),
+      p90Ratio:toNum(ratios.p90_case_time_ratio),
+      promptDelta:toNum(p.prompt_delta_avg_total),
+    };
+    diag.gateDecisions.push(gateRecord);
+    if(diag.gateDecisions.length>100)diag.gateDecisions.shift();
+    diag.latestGateDecision=gateRecord;
+  }
+
+  if(et==='run_completed'||et==='run_error'){
+    if(et==='run_completed')showToast('Training run completed!','ok');
+    else showToast('Training run error!','bad');
+  }
+
+  appendEvent(event);
+}
+
+/* ─── Status rendering ─── */
+function renderStatus(data){
+  if(!data||!data.tracking)return;
+  if(data.feature_flags&&typeof data.feature_flags.ENABLE_MAX_DETAIL_UI_PANELS==='boolean'){
+    enableMaxDetailPanels=data.feature_flags.ENABLE_MAX_DETAIL_UI_PANELS;
+    const diagTabBtn=document.querySelector('.tab-btn[data-tab=\"diagnostics\"]');
+    if(diagTabBtn)diagTabBtn.style.display=enableMaxDetailPanels?'':'none';
+  }
+  const t=data.tracking;
+  if(t.active_call&&typeof t.active_call==='object')diag.activeCall=t.active_call;
+  if(t.stalled_warning_count!=null)diag.stalledWarningCount=toNum(t.stalled_warning_count)||0;
+  if(!diag.runStartTs&&t.started_at){
+    const d=parseEventTimestamp(t.started_at_unix??t.started_at);
+    if(d)diag.runStartTs=d.getTime();
+  }
+  const state=t.state||'unknown';
+  chState.textContent=state;
+  chState.className=`chip ${state==='running'?'ok':state==='completed'?'ok':state==='error'?'bad':''}`;
+  if(state==='running')chState.innerHTML=`<span class="pulse-dot"></span> ${state}`;
+
+  $('kv-run-id').textContent=t.run_id||'—';
+  $('kv-phase').textContent=t.phase||'—';
+  $('kv-step').textContent=t.step||'—';
+  $('kv-msg').textContent=t.message||'—';
+  if(t.phase&&t.phase_elapsed_seconds!=null){
+    const sec=toNum(t.phase_elapsed_seconds);
+    if(sec!=null&&sec>=0)diag.phaseStartTs=Date.now()-sec*1000;
+  }
+
+  /* update prompt detail panel from status */
+  if(t.current_case&&typeof t.current_case==='object'){
+    updatePromptDetail(t.current_case,null);
+    if(!caseTimerInterval)startCaseTimer();
+  }
+
+  const ec=t.epoch_current||0,et2=t.epochs_total||0;
+  if(et2)diag.totalEpochs=et2;
+  if(ec)diag.currentEpoch=ec;
+  const pctVal=et2?Math.round(ec/et2*100):0;
+  progLabel.textContent=`Epoch ${ec} / ${et2}`;
+  progPct.textContent=`${pctVal}%`;
+  progFill.style.width=`${pctVal}%`;
+
+  const etas=estimateEta();
+  $('kv-run-eta').textContent=etas.run;
+  $('kv-phase-eta').textContent=etas.phase;
+  chEta.textContent=etas.run==='—'?'—':`eta ${etas.run} (${(etas.confidence||'low').toUpperCase()})`;
+
+  const upd=t.updated_at??t.updated_at_unix??t.timestamp??t.timestamp_unix;
+  if(upd){
+    const ts=formatClockTime(upd);
+    $('kv-updated').textContent=ts||'—';
+  }
+}
+
+/* ─── Refresh cycle ─── */
+function refreshAll(){
+  updateMetrics();
+  renderPhaseStats();
+  renderWarnings();
+  drawAllCharts();
+  if(latestPromptSnapshot)renderPromptScoreTable(latestPromptSnapshot);
+  renderDiagnostics();
+}
+
+/* ─── SSE connection ─── */
+let evtSource=null;
+let sseReconnectDelay=1000;
+let pendingRefresh=false;
+let lastRefreshTs=0;
+const MIN_REFRESH_INTERVAL=250; /* throttle UI refreshes to max 4/s */
+
+function throttledRefresh(){
+  const now=Date.now();
+  if(now-lastRefreshTs<MIN_REFRESH_INTERVAL){
+    if(!pendingRefresh){
+      pendingRefresh=true;
+      setTimeout(()=>{pendingRefresh=false;lastRefreshTs=Date.now();refreshAll();},MIN_REFRESH_INTERVAL);
+    }
+    return;
+  }
+  lastRefreshTs=now;
+  refreshAll();
+}
+
+function connectStream(){
+  if(evtSource){evtSource.close();evtSource=null;}
+  evtSource=new EventSource('/training/stream?poll_ms=500');
+  chState.innerHTML='<span class="pulse-dot"></span> connecting';chState.className='chip ok';
+
+  evtSource.onmessage=e=>{
+    let data;try{data=JSON.parse(e.data);}catch{return;}
+    if(data.event_type==='heartbeat'){
+      renderStatus({tracking:data,feature_flags:data.feature_flags||{}});
+      throttledRefresh();
+      return;
+    }
+    ingestEvent(data);
+    throttledRefresh();
+  };
+
+  evtSource.onerror=()=>{
+    chState.textContent='disconnected';chState.className='chip bad';
+    if(evtSource)evtSource.close();evtSource=null;
+    setTimeout(()=>{connectStream();},sseReconnectDelay);
+    sseReconnectDelay=Math.min(sseReconnectDelay*1.5,10000);
+  };
+
+  evtSource.onopen=()=>{
+    sseReconnectDelay=1000;
+    showToast('Connected to training stream','ok');
+  };
+}
+
+/* ─── API fetches ─── */
+async function fetchStatus(){
+  try{const r=await fetch('/training/status');const d=await r.json();renderStatus(d);}
+  catch(e){console.warn('Status fetch failed',e);}
+}
+
+async function fetchRecentEvents(limit=200){
+  try{
+    const r=await fetch(`/training/events?limit=${limit}`);const d=await r.json();
+    if(d.events&&Array.isArray(d.events)){
+      for(const ev of d.events)ingestEvent(ev);
+      refreshAll();
+    }
+  }catch(e){console.warn('Events fetch failed',e);}
+}
+
+/* ─── Export ─── */
+function exportData(){
+  const data={trend,diagnostics:diag,eventCount:eventTotal,exported:new Date().toISOString()};
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');
+  a.href=url;a.download=`training_export_${Date.now()}.json`;a.click();URL.revokeObjectURL(url);
+  showToast('Training data exported','ok');
+}
+
+/* ─── Clear ─── */
+function clearAll(){
+  eventList.innerHTML='';eventTotal=0;alertCount=0;seenKeys.clear();
+  chEvents.textContent='0 events';eventBadge.style.display='none';
+  Object.keys(trend).forEach(k=>{trend[k]=[];});
+  diag.phaseTimings={};diag.caseTimes=[];diag.allCaseTimes=[];diag.phaseCaseTimes={};diag.lastEventTs=null;diag.eventCount=0;
+  diag.runStartTs=null;diag.epochStartTs=null;diag.phaseStartTs=null;
+  diag.currentEpoch=0;diag.totalEpochs=0;diag.currentPhase='';
+  diag.casesPerEpoch={};diag.casesPerPhase={};diag.caseTotals={};
+  diag.caseRecords=[];diag.toolHealth={};diag.gateDecisions=[];diag.latestGateDecision=null;
+  diag.activeCall=null;diag.stalledWarningCount=0;diag.mutationRejectionBreakdown={};diag.mutationRejectionIssueMatrix={};
+  diag.etaConfidence='low';diag.etaVariance=null;diag.caseByPhaseAndId={phase_a_eval:{},phase_b_eval:{}};
+  latestPromptSnapshot=null;
+  currentCaseMeta=null;caseStartedAt=null;lastCaseScore=null;
+  stopCaseTimer();pdPanel.style.display='none';
+  refreshAll();
+  showToast('Cleared all data','ok');
+}
+
+/* ─── Bindings ─── */
+$('btn-reconnect').addEventListener('click',()=>{connectStream();showToast('Reconnecting...','ok');});
+$('btn-refresh').addEventListener('click',()=>{fetchStatus();fetchRecentEvents();});
+$('btn-clear').addEventListener('click',clearAll);
+$('btn-export').addEventListener('click',exportData);
+
+/* ─── Init ─── */
+fetchStatus();
+fetchRecentEvents();
+connectStream();
+setInterval(()=>{updateMetrics();renderWarnings();renderDiagnostics();},2000);
+
+/* Responsive chart redraw */
+let resizeTimer;
+window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(drawAllCharts,200);});
+</script>
+</body>
+</html>

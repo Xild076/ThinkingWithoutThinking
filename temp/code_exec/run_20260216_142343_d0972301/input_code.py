@@ -1,0 +1,1 @@
+counter = 0\nfor x in range(1000):\n    if x % 2 == 0:\n        counter += 1\nresult = counter\nprint(result)

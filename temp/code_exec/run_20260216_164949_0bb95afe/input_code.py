@@ -1,0 +1,1 @@
+count_fizz = sum(1 for i in range(1, 101) if i % 3 == 0 and i % 5 != 0); count_buzz = sum(1 for i in range(1, 101) if i % 5 == 0 and i % 3 != 0); count_fizzbuzz = sum(1 for i in range(1, 101) if i % 15 == 0); result = f'From 1 to 100: {count_fizz} Fizz, {count_buzz} Buzz, {count_fizzbuzz} FizzBuzz.'; print(result)
