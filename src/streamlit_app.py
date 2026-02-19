@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from datetime import datetime
 from typing import Any
 
@@ -83,6 +84,42 @@ if "last_result" not in st.session_state:
     st.session_state.last_result = None
 if "last_events" not in st.session_state:
     st.session_state.last_events = []
+
+
+def _read_secret(name: str) -> str | None:
+    try:
+        value = st.secrets.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    except Exception:
+        pass
+
+    for section in ("api_keys", "api", "keys"):
+        try:
+            block = st.secrets.get(section)
+            if isinstance(block, dict):
+                nested = block.get(name)
+                if isinstance(nested, str) and nested.strip():
+                    return nested.strip()
+        except Exception:
+            continue
+    return None
+
+
+def _bootstrap_env_from_secrets() -> dict[str, bool]:
+    key_names = ["GOOGLE_API_KEY", "NVIDIA_API_KEY", "GROQ_API_KEY"]
+    loaded: dict[str, bool] = {}
+    for key_name in key_names:
+        secret_val = _read_secret(key_name)
+        if secret_val:
+            os.environ[key_name] = secret_val
+            loaded[key_name] = True
+        else:
+            loaded[key_name] = bool(os.getenv(key_name))
+    return loaded
+
+
+secrets_status = _bootstrap_env_from_secrets()
 
 pipeline = Pipeline()
 
@@ -180,6 +217,11 @@ with st.sidebar:
     )
     run_button = st.button("Run")
     clear_button = st.button("Clear")
+
+    missing = [name for name, ok in secrets_status.items() if not ok]
+    if missing:
+        st.caption("Missing secrets: " + ", ".join(missing))
+        st.caption("Add them to .streamlit/secrets.toml")
 
 if clear_button:
     st.session_state.last_result = None
