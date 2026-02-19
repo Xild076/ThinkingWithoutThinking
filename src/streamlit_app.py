@@ -10,7 +10,7 @@ import streamlit as st
 
 try:
     from pipeline import Pipeline
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     from src.pipeline import Pipeline
 
 
