@@ -1,0 +1,48 @@
+{
+  "run_id": "6c226dd1-3978-4059-8d9f-e7ecc7cf661f",
+  "state": "running",
+  "started_at": "2026-02-17T16:32:24+00:00",
+  "started_at_unix": 1771345944.769,
+  "updated_at": "2026-02-17T17:09:02+00:00",
+  "updated_at_unix": 1771348142.991,
+  "epoch_current": 1,
+  "epochs_total": 10,
+  "phase": "prompt_improvement",
+  "step": "generate_mutations",
+  "message": "Epoch 1: generating prompt mutations",
+  "events_count": 25,
+  "last_event_type": "mutation_started",
+  "current_case": null,
+  "active_call": {
+    "block_id": "prompt_improvements",
+    "attempt": null,
+    "metadata": {
+      "epoch": 1,
+      "rca_items": 13
+    },
+    "started_at": "2026-02-17T17:09:02+00:00",
+    "started_at_unix": 1771348142.991
+  },
+  "stalled_warning_count": 0,
+  "elapsed_seconds": 2198.226,
+  "phase_elapsed_seconds": 0.0,
+  "metrics": {
+    "generation": 0,
+    "latest_case_score": 6.243589743589744,
+    "avg_score_a": 6.67948717948718,
+    "phase_a_min_score": 6.243589743589744,
+    "phase_a_max_score": 8.128205128205126,
+    "phase_a_median_score": 6.3076923076923075,
+    "phase_a_mean_case_time_s": 424.9377882,
+    "phase_a_p90_case_time_s": 879.893963,
+    "phase_a_avg_tool_failure_signals": 1.4,
+    "phase_a_degraded_case_rate": 0.8,
+    "phase_a_avg_python_exec_attempts": 2.6,
+    "phase_a_avg_python_exec_failures": 0.6
+  },
+  "paths": {
+    "status_path": "data/training_status.json",
+    "events_path": "data/training_events.jsonl",
+    "log_path": "logs/prompt_training.log"
+  }
+}

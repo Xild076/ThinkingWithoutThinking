@@ -3,7 +3,6 @@
 .usage_data.json
 /writings
 /logs
-/data
 /temp
 src/__pycache__
 *.pyc
