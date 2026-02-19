@@ -29,7 +29,7 @@ try:
         _get_all_tool_classes,
     )
     from utility import logger
-except Exception:  # pragma: no cover - fallback for package import mode
+except ImportError:  # pragma: no cover - fallback for package import mode
     from src.pipeline_blocks import (
         CreativeIdeaGeneratorToolBlock,
         DeductiveReasoningToolBlock,

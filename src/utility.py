@@ -21,6 +21,7 @@ import time
 import random
 import re
 import logging
+from pathlib import Path
 try:
     from nltk import sent_tokenize, word_tokenize
 except Exception:  # pragma: no cover - optional dependency
@@ -320,6 +321,28 @@ LOADED_PROMPTS = {
     "content": {}
 }
 
+
+def _resolve_existing_path(path: str) -> Path:
+    candidate = Path(path)
+    if candidate.exists():
+        return candidate
+
+    root_dir = Path(__file__).resolve().parents[1]
+    search_candidates = [
+        root_dir / path,
+        Path.cwd() / path,
+        Path(__file__).resolve().parent / path,
+    ]
+
+    for resolved in search_candidates:
+        if resolved.exists():
+            return resolved
+
+    raise FileNotFoundError(
+        f"Prompt file not found: {path}. Checked: "
+        + ", ".join(str(p) for p in [candidate, *search_candidates])
+    )
+
 def load_prompts(path: str) -> dict:
     """Loads a prompt from a text file
 
@@ -330,10 +353,14 @@ def load_prompts(path: str) -> dict:
         dict: A dictionary containing the prompt ids (e.g., initial_plan_creation_block, sub_plan_creation_block, etc) as keys and the corresponding prompt content as values
     """
     global LOADED_PROMPTS
-    if LOADED_PROMPTS["path"] == path:
+    resolved_path = _resolve_existing_path(path)
+    resolved_path_str = str(resolved_path)
+    if LOADED_PROMPTS["path"] == resolved_path_str:
         return LOADED_PROMPTS
-    LOADED_PROMPTS['content'] = json.load(open(path, "r"))
-    LOADED_PROMPTS["path"] = path
+
+    with resolved_path.open("r", encoding="utf-8") as handle:
+        LOADED_PROMPTS['content'] = json.load(handle)
+    LOADED_PROMPTS["path"] = resolved_path_str
     return LOADED_PROMPTS
 
 def get_prompt(prompt_id: str) -> str:
