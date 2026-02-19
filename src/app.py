@@ -204,6 +204,8 @@ async def training_stream(poll_ms: int = Query(default=500, ge=200, le=5000)) ->
                     "message": status.get("message", ""),
                     "events_count": status.get("events_count", 0),
                     "current_case": status.get("current_case"),
+                    "active_call": status.get("active_call"),
+                    "stalled_warning_count": status.get("stalled_warning_count", 0),
                     "elapsed_seconds": status.get("elapsed_seconds", 0.0),
                     "phase_elapsed_seconds": status.get("phase_elapsed_seconds", 0.0),
                     "metrics": status.get("metrics", {}),

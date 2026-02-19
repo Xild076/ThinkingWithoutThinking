@@ -377,6 +377,8 @@ pre{margin:0;font-size:.72rem;line-height:1.35;font-family:var(--mono);white-spa
             <span class="k">Projection Variance</span><span class="v" id="rh-proj-var">—</span>
             <span class="k">Degraded Rate</span><span class="v" id="rh-degraded-rate">—</span>
             <span class="k">Tool Fail / Case</span><span class="v" id="rh-tool-fails">—</span>
+            <span class="k">Active Call</span><span class="v" id="rh-active-call">—</span>
+            <span class="k">Stall Warnings</span><span class="v" id="rh-stall-count">0</span>
           </div>
         </div>
         <div class="diag-card">
@@ -503,6 +505,10 @@ const diag={
   toolHealth:{},
   gateDecisions:[],
   latestGateDecision:null,
+  activeCall:null,
+  stalledWarningCount:0,
+  mutationRejectionBreakdown:{},
+  mutationRejectionIssueMatrix:{},
   etaConfidence:'low',
   etaVariance:null,
   caseByPhaseAndId:{phase_a_eval:{},phase_b_eval:{}}
@@ -883,6 +889,14 @@ function buildWarnings(){
       msg:`Candidate gate failures detected: ${diag.latestGateDecision.failedGates.join(', ')}.`,
     });
   }
+  const rej=diag.mutationRejectionBreakdown||{};
+  const contractRejects=toNum(rej.prompt_contract_violation)||toNum(rej.fallback_prompt_contract_violation)||0;
+  if(contractRejects>0){
+    warns.push({
+      level:'warn',
+      msg:`Mutation contract rejections detected (${contractRejects}). Review prompt contract compatibility.`,
+    });
+  }
   return warns;
 }
 
@@ -989,6 +1003,21 @@ function renderDiagnostics(){
   const avgToolFails=diag.caseRecords.length?diag.caseRecords.reduce((s,r)=>s+(r.toolFails||0),0)/diag.caseRecords.length:0;
 
   $('rh-event-lag').textContent=eventLag!=null?fmtDur(eventLag):'—';
+  const active=diag.activeCall&&typeof diag.activeCall==='object'?diag.activeCall:null;
+  let activeText='—';
+  if(active){
+    const block=active.block_id||'call';
+    const attempt=active.attempt!=null?`#${active.attempt}`:'';
+    let elapsedSeconds=toNum(active.elapsed_call_seconds);
+    if(elapsedSeconds==null&&active.started_at_unix!=null){
+      const started=parseEventTimestamp(active.started_at_unix);
+      if(started)elapsedSeconds=Math.max(0,(Date.now()-started.getTime())/1000);
+    }
+    const elapsed=elapsedSeconds!=null?` (${fmtDur(elapsedSeconds)})`:'';
+    activeText=`${block}${attempt?` ${attempt}`:''}${elapsed}`;
+  }
+  $('rh-active-call').textContent=activeText;
+  $('rh-stall-count').textContent=String(diag.stalledWarningCount||0);
   const conf=diag.etaConfidence||'low';
   const confBadge=`<span class=\"badge ${conf}\">${conf.toUpperCase()}</span>`;
   $('rh-eta-conf').innerHTML=confBadge;
@@ -1137,6 +1166,8 @@ function ingestEvent(event){
   diag.eventCount++;
   const et=event.event_type||'';
   const p=event.payload||event;
+  if(event.active_call&&typeof event.active_call==='object')diag.activeCall=event.active_call;
+  if(p.active_call&&typeof p.active_call==='object')diag.activeCall=p.active_call;
 
   if(et==='run_started'){
     const d=parseEventTimestamp(event.timestamp??event.timestamp_unix);
@@ -1251,6 +1282,20 @@ function ingestEvent(event){
     };
   }
 
+  if(et==='mutation_rejection_breakdown'||et==='mutation_completed'){
+    if(p.mutation_rejection_breakdown&&typeof p.mutation_rejection_breakdown==='object'){
+      diag.mutationRejectionBreakdown=p.mutation_rejection_breakdown;
+    }
+    if(p.mutation_rejection_issue_matrix&&typeof p.mutation_rejection_issue_matrix==='object'){
+      diag.mutationRejectionIssueMatrix=p.mutation_rejection_issue_matrix;
+    }
+  }
+
+  if(et==='stalled_warning'){
+    diag.stalledWarningCount=(diag.stalledWarningCount||0)+1;
+    showToast('Stall warning: case progress appears blocked','warn');
+  }
+
   if(et==='candidate_gate_decision'){
     const gates=p.gate_results||{};
     const ratios=gates.ratios||{};
@@ -1287,6 +1332,8 @@ function renderStatus(data){
     if(diagTabBtn)diagTabBtn.style.display=enableMaxDetailPanels?'':'none';
   }
   const t=data.tracking;
+  if(t.active_call&&typeof t.active_call==='object')diag.activeCall=t.active_call;
+  if(t.stalled_warning_count!=null)diag.stalledWarningCount=toNum(t.stalled_warning_count)||0;
   if(!diag.runStartTs&&t.started_at){
     const d=parseEventTimestamp(t.started_at_unix??t.started_at);
     if(d)diag.runStartTs=d.getTime();
@@ -1425,6 +1472,7 @@ function clearAll(){
   diag.currentEpoch=0;diag.totalEpochs=0;diag.currentPhase='';
   diag.casesPerEpoch={};diag.casesPerPhase={};diag.caseTotals={};
   diag.caseRecords=[];diag.toolHealth={};diag.gateDecisions=[];diag.latestGateDecision=null;
+  diag.activeCall=null;diag.stalledWarningCount=0;diag.mutationRejectionBreakdown={};diag.mutationRejectionIssueMatrix={};
   diag.etaConfidence='low';diag.etaVariance=null;diag.caseByPhaseAndId={phase_a_eval:{},phase_b_eval:{}};
   latestPromptSnapshot=null;
   currentCaseMeta=null;caseStartedAt=null;lastCaseScore=null;

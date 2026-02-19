@@ -1,6 +1,6 @@
 from math import floor
 from pydoc import text
-from typing import Any, Literal, Type, TypeVar, get_origin
+from typing import Any, Literal, Type, TypeVar, get_args, get_origin
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import PydanticUndefined
 try:
@@ -138,20 +138,91 @@ def _sanitize_control_char_artifacts(value: Any) -> Any:
     return value
 
 
+def _extract_numeric_constraints(field: Any) -> tuple[float | None, float | None, float | None, float | None]:
+    ge = gt = le = lt = None
+    for meta in getattr(field, "metadata", []) or []:
+        if ge is None and hasattr(meta, "ge"):
+            value = getattr(meta, "ge", None)
+            if isinstance(value, (int, float)):
+                ge = float(value)
+        if gt is None and hasattr(meta, "gt"):
+            value = getattr(meta, "gt", None)
+            if isinstance(value, (int, float)):
+                gt = float(value)
+        if le is None and hasattr(meta, "le"):
+            value = getattr(meta, "le", None)
+            if isinstance(value, (int, float)):
+                le = float(value)
+        if lt is None and hasattr(meta, "lt"):
+            value = getattr(meta, "lt", None)
+            if isinstance(value, (int, float)):
+                lt = float(value)
+    return ge, gt, le, lt
+
+
+def _fallback_int_for_field(field: Any) -> int:
+    ge, gt, le, lt = _extract_numeric_constraints(field)
+    value = 1
+
+    if ge is not None:
+        value = max(value, int(ge))
+    if gt is not None:
+        value = max(value, int(gt) + 1)
+    if le is not None:
+        value = min(value, int(le))
+    if lt is not None and value >= int(lt):
+        value = int(lt) - 1
+
+    if ge is not None and value < ge:
+        value = int(ge)
+    if gt is not None and value <= gt:
+        value = int(gt) + 1
+    return value
+
+
+def _fallback_float_for_field(field: Any) -> float:
+    ge, gt, le, lt = _extract_numeric_constraints(field)
+    epsilon = 0.01
+    value = 1.0
+
+    if ge is not None:
+        value = max(value, float(ge))
+    if gt is not None:
+        value = max(value, float(gt) + epsilon)
+    if le is not None:
+        value = min(value, float(le))
+    if lt is not None and value >= float(lt):
+        value = float(lt) - epsilon
+
+    if ge is not None and value < ge:
+        value = float(ge)
+    if gt is not None and value <= gt:
+        value = float(gt) + epsilon
+    return value
+
+
 def _graceful_schema_fallback(schema: Type[BaseModel], message: str) -> BaseModel | None:
     payload: dict[str, Any] = {}
     for field_name, field in schema.model_fields.items():
         annotation = field.annotation
         origin = get_origin(annotation)
+        args = get_args(annotation)
+
+        if origin is Literal and args:
+            payload[field_name] = args[0]
+            continue
 
         if annotation is str:
             payload[field_name] = message
         elif annotation is bool:
             payload[field_name] = False
         elif annotation is int:
-            payload[field_name] = 0
+            payload[field_name] = _fallback_int_for_field(field)
         elif annotation is float:
-            payload[field_name] = 0.0
+            payload[field_name] = _fallback_float_for_field(field)
+        elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            nested = _graceful_schema_fallback(annotation, message)
+            payload[field_name] = nested.model_dump() if nested is not None else {}
         elif annotation is dict or origin is dict:
             payload[field_name] = {}
         elif annotation is list or origin is list:
@@ -385,7 +456,9 @@ def generate_text(
                     raise RuntimeError("openai package is not installed")
                 client = OpenAI(
                     base_url="https://integrate.api.nvidia.com/v1",
-                    api_key=os.getenv("NVIDIA_API_KEY")
+                    api_key=os.getenv("NVIDIA_API_KEY"),
+                    timeout=request_timeout,
+                    max_retries=0,
                 )
 
                 response = client.chat.completions.create(
@@ -394,7 +467,6 @@ def generate_text(
                     temperature=temperature,
                     max_tokens=max_tokens,
                     stream=False,
-                    timeout=request_timeout,
                 )
                 text = response.choices[0].message.content
             elif model == 'oss120b':
@@ -402,7 +474,9 @@ def generate_text(
                     raise RuntimeError("openai package is not installed")
                 client = OpenAI(
                     base_url="https://api.groq.com/openai/v1",
-                    api_key=os.getenv("GROQ_API_KEY")
+                    api_key=os.getenv("GROQ_API_KEY"),
+                    timeout=request_timeout,
+                    max_retries=0,
                 )
 
                 response = client.chat.completions.create(
@@ -411,7 +485,6 @@ def generate_text(
                     temperature=temperature,
                     max_tokens=max_tokens,
                     stream=False,
-                    timeout=request_timeout,
                 )
                 text = response.choices[0].message.content
             else:

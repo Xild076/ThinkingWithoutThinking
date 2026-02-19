@@ -1,3 +1,10 @@
 .env
 .streamlit
 .usage_data.json
+/writings
+/logs
+/data
+/temp
+src/__pycache__
+*.pyc
+/__pycache__

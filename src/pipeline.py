@@ -452,6 +452,102 @@ class Pipeline:
         markers = " ".join(f"[{key}]" for key in ordered[:4])
         return response.rstrip() + f"\n\nCitations used: {markers}"
 
+    def _should_avoid_python_tool(self, objective: str, plan_text: str) -> tuple[bool, str]:
+        text = f"{objective or ''} {plan_text or ''}".lower()
+        compute_markers = (
+            "calculate",
+            "compute",
+            "simulation",
+            "simulate",
+            "optimiz",
+            "equation",
+            "matrix",
+            "regression",
+            "statistic",
+            "numerical",
+            "algorithm",
+            "modeling",
+            "dataframe",
+            "plot",
+            "chart",
+            "graph",
+        )
+        quote_or_citation_markers = (
+            "quote",
+            "citation",
+            "cite",
+            "source",
+            "reference",
+            "url",
+            "fact check",
+            "verify",
+            "page number",
+            "summarize",
+            "overview",
+            "explain",
+            "compare viewpoints",
+        )
+        compute_like = any(token in text for token in compute_markers)
+        citation_like = any(token in text for token in quote_or_citation_markers)
+        if citation_like and not compute_like:
+            return True, "python_route_guard_non_computational"
+        return False, ""
+
+    def _citation_fallback_tool_id(self) -> str | None:
+        if "web_search_tool_block" in self._tool_lookup:
+            return "web_search_tool_block"
+        if "wikipedia_search_tool_block" in self._tool_lookup:
+            return "wikipedia_search_tool_block"
+        return None
+
+    def _suppress_unbacked_citation_markers(self, response: str, citations: dict[str, str]) -> str:
+        if not response:
+            return response
+
+        def _replace(match: re.Match[str]) -> str:
+            key = str(match.group(1))
+            return match.group(0) if key in citations else ""
+
+        cleaned = re.sub(r"\[(\d+)\](?!\()", _replace, response)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
+
+    def _suppress_unbacked_image_markers(
+        self,
+        response: str,
+        image_embeddings: list[dict[str, Any]],
+    ) -> str:
+        if not response:
+            return response
+        if image_embeddings:
+            return response
+        cleaned = re.sub(r"\[image_\d+\]", "", response, flags=re.IGNORECASE)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
+
+    def _append_page_number_unavailable_note(
+        self,
+        prompt: str,
+        response: str,
+    ) -> str:
+        prompt_lower = (prompt or "").lower()
+        requests_page_numbers = any(
+            token in prompt_lower
+            for token in ("page number", "page numbers", "which page", "pages for", "page citation")
+        )
+        if not requests_page_numbers:
+            return response
+
+        if re.search(r"\bpage\s+\d+\b|\bp\.\s*\d+\b", response or "", flags=re.IGNORECASE):
+            return response
+
+        note = "Page numbers are unavailable in the provided sources."
+        if note.lower() in (response or "").lower():
+            return response
+        return str(response).rstrip() + f"\n\n{note}"
+
     def _is_math_prompt(self, prompt: str) -> bool:
         lowered = prompt.lower()
         return any(
@@ -655,6 +751,39 @@ class Pipeline:
                 logger.warning(f"Skipping unresolved route id: {requested_id} ({reason})")
                 continue
 
+            route_guard_applied = False
+            route_guard_reason = ""
+            if str(resolved_id) == "python_code_execution_tool_block":
+                avoid_python, avoid_reason = self._should_avoid_python_tool(objective, plan_text)
+                if avoid_python:
+                    fallback_tool_id = self._citation_fallback_tool_id()
+                    execution["skipped_routes"].append(
+                        {
+                            "requested_id": requested_id,
+                            "resolved_id": resolved_id,
+                            "reason": avoid_reason,
+                            "fallback_tool_id": fallback_tool_id,
+                        }
+                    )
+                    if not fallback_tool_id:
+                        logger.warning(
+                            "Route guard skipped python route with no citation fallback tool available"
+                        )
+                        continue
+                    logger.info(
+                        "Route guard replaced python tool with %s for objective '%s...'",
+                        fallback_tool_id,
+                        str(objective)[:70],
+                    )
+                    resolved_id = fallback_tool_id
+                    route_inputs = self._default_tool_inputs(
+                        tool_id=resolved_id,
+                        objective=objective,
+                        plan_text=plan_text,
+                    )
+                    route_guard_applied = True
+                    route_guard_reason = avoid_reason
+
             tool = self._tool_lookup[resolved_id]
             effective_inputs = dict(route_inputs)
             if (
@@ -676,6 +805,8 @@ class Pipeline:
                         "resolved_id": resolved_id,
                         "inputs": effective_inputs,
                         "inputs_backfilled": inputs_backfilled,
+                        "route_guard_applied": route_guard_applied,
+                        "route_guard_reason": route_guard_reason,
                         "output": output,
                         "error": None,
                     }
@@ -690,6 +821,8 @@ class Pipeline:
                         "resolved_id": resolved_id,
                         "inputs": effective_inputs,
                         "inputs_backfilled": inputs_backfilled,
+                        "route_guard_applied": route_guard_applied,
+                        "route_guard_reason": route_guard_reason,
                         "output": None,
                         "error": error_message,
                     }
@@ -1098,6 +1231,8 @@ class Pipeline:
         citations = self._collect_citation_links(tool_context)
         with_inline = self._embed_citations(response, citations)
         with_inline = self._linkify_citation_markers(with_inline, citations)
+        with_inline = self._suppress_unbacked_citation_markers(with_inline, citations)
+        with_inline = self._suppress_unbacked_image_markers(with_inline, image_embeddings)
         return self._append_reference_and_image_sections(with_inline, citations, image_embeddings)
 
     def _coverage_count(self, response: str, steps: list[str]) -> int:
@@ -1969,6 +2104,8 @@ class Pipeline:
             image_embeddings, image_embedding_issues = self._collect_image_embeddings(tool_context)
             final_response = self._enrich_response(final_response, tool_context, image_embeddings)
             assembly_trace["after_reference_enrichment"] = final_response
+            final_response = self._append_page_number_unavailable_note(prompt, final_response)
+            assembly_trace["after_page_note"] = final_response
 
             image_paths = self._collect_image_paths(tool_context)
             if image_embedding_issues:

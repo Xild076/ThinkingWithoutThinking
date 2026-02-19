@@ -6,11 +6,13 @@ import logging
 import os
 import random
 import re
+import signal
+import threading
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -54,8 +56,20 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return float(default)
+    try:
+        return float(raw)
+    except Exception:
+        return float(default)
+
+
 ENABLE_CANDIDATE_GATES = _env_flag("ENABLE_CANDIDATE_GATES", default=True)
 ENABLE_TOOL_PROMPT_TEMPLATES = _env_flag("ENABLE_TOOL_PROMPT_TEMPLATES", default=True)
+TRAINING_CASE_TIME_BUDGET_SECONDS = _env_float("TRAINING_CASE_TIME_BUDGET_SECONDS", 600.0)
+STALL_WARNING_THRESHOLD_SECONDS = _env_float("TRAINING_STALL_WARNING_SECONDS", 600.0)
 
 RUNTIME_GATE_MEAN_MAX_RATIO = 1.25
 RUNTIME_GATE_P90_MAX_RATIO = 1.35
@@ -190,6 +204,97 @@ def _extract_explicit_json_keys(prompt_text: str) -> set[str]:
     return set(re.findall(r'"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:', prompt_text or ""))
 
 
+HARD_CONTRACT_ISSUES: set[str] = {
+    "missing_json_output_instruction",
+    "conflicting_plain_text_instruction",
+    "explicit_json_keys_do_not_match_schema",
+    "self_critique_missing_required_keys",
+    "self_critique_schema_drift",
+    "sub_plan_missing_required_keys",
+    "sub_plan_schema_drift",
+    "router_missing_required_keys",
+    "router_route_list_shape_unspecified",
+    "router_single_route_schema_drift",
+    "python_tool_prompt_missing_repair_or_schema_markers",
+    "long_response_conflicting_output_contract",
+}
+
+
+def _normalize_contract_text(text: str) -> str:
+    normalized = (text or "").lower()
+    normalized = normalized.replace("\u2011", "-")
+    normalized = re.sub(r"[^a-z0-9_\-\[\]`]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip()
+
+
+def _contains_any_marker(text: str, markers: tuple[str, ...]) -> bool:
+    return any(marker in text for marker in markers)
+
+
+def _contains_marker_groups(text: str, groups: tuple[tuple[str, ...], ...]) -> bool:
+    return all(_contains_any_marker(text, group) for group in groups)
+
+
+def _split_contract_issues(issues: list[str]) -> tuple[list[str], list[str]]:
+    hard = [issue for issue in issues if issue in HARD_CONTRACT_ISSUES]
+    soft = [issue for issue in issues if issue not in HARD_CONTRACT_ISSUES]
+    return hard, soft
+
+
+def _auto_repair_contract_issues(
+    block_id: str,
+    prompt_text: str,
+    soft_issues: list[str],
+) -> tuple[str, list[str]]:
+    if not soft_issues:
+        return prompt_text, []
+
+    append_lines: list[str] = []
+    applied: list[str] = []
+    soft_set = set(soft_issues)
+
+    if "tool_prompt_missing_contract_sections" in soft_set:
+        append_lines.extend(
+            [
+                "Objective: restate the task objective exactly.",
+                "Hard constraints: obey schema, avoid unsupported claims, and keep output bounded.",
+                "Output contract: return strict JSON matching the schema keys.",
+                "Uncertainty behavior: when evidence is weak or missing, state uncertainty directly.",
+            ]
+        )
+        applied.append("tool_prompt_missing_contract_sections")
+
+    if block_id == "web_search_tool_block" and "web_search_prompt_missing_evidence_constraints" in soft_set:
+        append_lines.extend(
+            [
+                "Evidence constraint: cite only supplied reference IDs and do not invent references.",
+                "If evidence is insufficient, state limitations plainly instead of extrapolating.",
+            ]
+        )
+        applied.append("web_search_prompt_missing_evidence_constraints")
+
+    if block_id == "wikipedia_search_tool_block" and "wikipedia_prompt_missing_insufficient_relevance_fallback" in soft_set:
+        append_lines.append(
+            'If relevance is weak, explicitly include the phrase "insufficient relevance" and provide nearest relevant context.'
+        )
+        applied.append("wikipedia_prompt_missing_insufficient_relevance_fallback")
+
+    if block_id == "creative_idea_generator_tool_block" and "creative_prompt_missing_feasibility_tagging" in soft_set:
+        append_lines.append("Each idea must include a feasibility tag: [feasibility: high|medium|low].")
+        applied.append("creative_prompt_missing_feasibility_tagging")
+
+    if block_id.startswith("deductive_reasoning_") and "deductive_prompt_missing_validation_dependency" in soft_set:
+        append_lines.append("Use only validated premises for downstream deductions and validity checks.")
+        applied.append("deductive_prompt_missing_validation_dependency")
+
+    if not append_lines:
+        return prompt_text, []
+
+    repaired = prompt_text.rstrip() + "\n\nContract Repair Addendum:\n- " + "\n- ".join(append_lines)
+    return repaired, applied
+
+
 def _validate_prompt_contract(
     block_id: str,
     prompt_text: str,
@@ -201,17 +306,18 @@ def _validate_prompt_contract(
         return issues
 
     prompt_lower = (prompt_text or "").lower()
+    prompt_norm = _normalize_contract_text(prompt_text or "")
     requires_json = len(schema.model_fields) > 0
     required_fields = set(schema.model_fields.keys())
 
-    if requires_json and "json" not in prompt_lower:
+    if requires_json and not _contains_any_marker(prompt_norm, ("json", "strict json", "valid json")):
         issues.append("missing_json_output_instruction")
 
     if requires_json and (
-        "plain text" in prompt_lower
-        or "no json" in prompt_lower
-        or "no json or markup" in prompt_lower
-        or "no json or markdown" in prompt_lower
+        "plain text" in prompt_norm
+        or "no json" in prompt_norm
+        or "no json or markup" in prompt_norm
+        or "no json or markdown" in prompt_norm
     ):
         issues.append("conflicting_plain_text_instruction")
 
@@ -243,7 +349,7 @@ def _validate_prompt_contract(
             "each issue must be a string",
             "plain strings only",
         )
-        if not any(marker in prompt_lower for marker in string_list_markers):
+        if not any(marker in prompt_norm for marker in string_list_markers):
             issues.append("self_critique_issue_item_type_unspecified")
 
     if block_id == "long_response_synthesis_block":
@@ -263,13 +369,11 @@ def _validate_prompt_contract(
         if not all(token in prompt_lower for token in required_tokens):
             issues.append("router_missing_required_keys")
 
-        route_list_markers = (
-            "array of routes",
-            "list of routes",
-            "\"routes\": [",
-            "`routes`",
+        route_list_groups = (
+            ("routes", "`routes`", "\"routes\""),
+            ("array", "list", "[]"),
         )
-        if not any(marker in prompt_lower for marker in route_list_markers):
+        if not _contains_marker_groups(prompt_norm, route_list_groups):
             issues.append("router_route_list_shape_unspecified")
 
         if explicit_keys and "id" in explicit_keys and "routes" not in explicit_keys:
@@ -286,40 +390,39 @@ def _validate_prompt_contract(
         "deductive_reasoning_conclusion_confirmation_tool_block",
     }
     if block_id in tool_prompt_ids:
-        contract_markers = (
-            "objective",
-            "hard constraints",
-            "output contract",
-            "uncertainty",
+        contract_groups = (
+            ("objective", "goal"),
+            ("hard constraints", "constraints", "non negotiable constraints"),
+            ("output contract", "schema", "return strict json"),
+            ("uncertainty behavior", "if uncertain", "state uncertainty"),
         )
-        missing_markers = [marker for marker in contract_markers if marker not in prompt_lower]
-        if missing_markers:
+        if not _contains_marker_groups(prompt_norm, contract_groups):
             issues.append("tool_prompt_missing_contract_sections")
 
     if block_id == "python_code_execution_tool_block":
-        required_markers = (
-            "code_to_run",
-            "packages_needed",
-            "disallow",
-            "previous error",
+        required_groups = (
+            ("code_to_run",),
+            ("packages_needed",),
+            ("disallow", "forbid", "ban"),
+            ("previous error", "retry repair", "previous_code", "fix root cause"),
         )
-        if not all(marker in prompt_lower for marker in required_markers):
+        if not _contains_marker_groups(prompt_norm, required_groups):
             issues.append("python_tool_prompt_missing_repair_or_schema_markers")
 
     if block_id == "web_search_tool_block":
-        required_markers = (
-            "reference id",
-            "do not invent",
+        required_groups = (
+            ("reference id", "reference ids", "citation"),
+            ("do not invent", "do not fabricate", "no fabricated", "use only information present"),
         )
-        if not all(marker in prompt_lower for marker in required_markers):
+        if not _contains_marker_groups(prompt_norm, required_groups):
             issues.append("web_search_prompt_missing_evidence_constraints")
 
     if block_id == "wikipedia_search_tool_block":
-        if "insufficient relevance" not in prompt_lower:
+        if not _contains_any_marker(prompt_norm, ("insufficient relevance", "weak relevance", "loosely relevant")):
             issues.append("wikipedia_prompt_missing_insufficient_relevance_fallback")
 
     if block_id == "creative_idea_generator_tool_block":
-        if "feasibility" not in prompt_lower:
+        if not _contains_any_marker(prompt_norm, ("feasibility", "feasible", "high medium low")):
             issues.append("creative_prompt_missing_feasibility_tagging")
 
     deductive_prompt_ids = {
@@ -328,7 +431,10 @@ def _validate_prompt_contract(
         "deductive_reasoning_conclusion_tool_block",
         "deductive_reasoning_conclusion_confirmation_tool_block",
     }
-    if block_id in deductive_prompt_ids and "validated premises" not in prompt_lower:
+    if block_id in deductive_prompt_ids and not _contains_any_marker(
+        prompt_norm,
+        ("validated premises", "premise validation", "valid premises"),
+    ):
         issues.append("deductive_prompt_missing_validation_dependency")
 
     return issues
@@ -501,6 +607,34 @@ def _safe_ratio(numerator: float | None, denominator: float | None) -> float | N
     if numerator is None or denominator is None or denominator <= 0:
         return None
     return float(numerator / denominator)
+
+
+@contextmanager
+def _time_limit(seconds: float | None):
+    if not seconds or seconds <= 0:
+        yield
+        return
+
+    if (
+        not hasattr(signal, "SIGALRM")
+        or threading.current_thread() is not threading.main_thread()
+    ):
+        yield
+        return
+
+    timer_seconds = float(seconds)
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def _raise_timeout(signum, frame):  # type: ignore[unused-argument]
+        raise TimeoutError(f"Case time budget exceeded ({timer_seconds:.1f}s)")
+
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, timer_seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 def _iter_tool_execution_results(tool_context: dict[str, Any]) -> list[dict[str, Any]]:
@@ -804,6 +938,52 @@ def _contains_degraded_marker(value: Any) -> bool:
     return False
 
 
+def _coerce_schema_result(
+    value: Any,
+    schema: type[BaseModel],
+    *,
+    model_name: str,
+) -> BaseModel:
+    if isinstance(value, schema):
+        return value
+
+    if isinstance(value, BaseModel):
+        try:
+            return schema.model_validate(value.model_dump())
+        except Exception:
+            pass
+
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw:
+            try:
+                return schema.model_validate_json(raw)
+            except Exception:
+                pass
+            json_match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+            if json_match:
+                try:
+                    return schema.model_validate_json(json_match.group(0))
+                except Exception:
+                    pass
+
+    fallback_builder = getattr(utility_module, "_graceful_schema_fallback", None)
+    if callable(fallback_builder):
+        fallback = fallback_builder(
+            schema,
+            f"[Graceful degradation] Invalid structured output from model={model_name}.",
+        )
+        if isinstance(fallback, schema):
+            return fallback
+        if isinstance(fallback, BaseModel):
+            try:
+                return schema.model_validate(fallback.model_dump())
+            except Exception:
+                pass
+
+    raise TypeError(f"Unable to coerce output into schema {schema.__name__}")
+
+
 def _generate_with_oss_fallback(
     prompt: str,
     schema: type[BaseModel],
@@ -818,7 +998,7 @@ def _generate_with_oss_fallback(
     for model in model_order:
         retries = 2 if model == "oss120b" else 5
         max_retry_wait = 8.0 if model == "oss120b" else 30.0
-        output = generate_text(
+        output_raw = generate_text(
             prompt=prompt,
             model=model,
             schema=schema,
@@ -826,9 +1006,27 @@ def _generate_with_oss_fallback(
             retries=retries,
             max_total_retry_wait=max_retry_wait,
         )
+        try:
+            output = _coerce_schema_result(output_raw, schema, model_name=model)
+        except Exception as exc:
+            logger.warning(
+                "Schema coercion failed for model=%s schema=%s: %s",
+                model,
+                schema.__name__,
+                exc,
+            )
+            continue
         attempts.append((model, output))
         if not _contains_degraded_marker(output):
             return output, model
+
+    if not attempts:
+        fallback = _coerce_schema_result(
+            "[Graceful degradation] All schema coercions failed across fallback models.",
+            schema,
+            model_name="fallback",
+        )
+        return fallback, "fallback"
 
     fallback_model, fallback_output = attempts[-1]
     return fallback_output, fallback_model
@@ -953,6 +1151,9 @@ class TrainingProgressTracker:
         self.run_id = run_id
         self.epochs_total = int(max(0, epochs_total))
         self.seq = 0
+        self._last_case_activity_unix: float | None = None
+        self._last_stalled_warning_unix: float = 0.0
+        self.stalled_warning_threshold_seconds = max(60.0, float(STALL_WARNING_THRESHOLD_SECONDS))
         self._run_started_perf = time.perf_counter()
         self._phase_started_perf = self._run_started_perf
         self._last_phase = "init"
@@ -973,6 +1174,8 @@ class TrainingProgressTracker:
             "events_count": 0,
             "last_event_type": None,
             "current_case": None,
+            "active_call": None,
+            "stalled_warning_count": 0,
             "elapsed_seconds": 0.0,
             "phase_elapsed_seconds": 0.0,
             "metrics": {},
@@ -1004,6 +1207,121 @@ class TrainingProgressTracker:
             return
         with self.events_path.open("a") as handle:
             handle.write(json.dumps(event) + "\n")
+
+    def _active_call_snapshot(self, now_unix: float | None = None) -> dict[str, Any] | None:
+        active_call = self.status.get("active_call")
+        if not isinstance(active_call, dict):
+            return None
+
+        snapshot = dict(active_call)
+        start_unix = snapshot.get("started_at_unix")
+        if isinstance(start_unix, (int, float)):
+            current = float(now_unix if now_unix is not None else time.time())
+            snapshot["elapsed_call_seconds"] = round(max(0.0, current - float(start_unix)), 3)
+        return snapshot
+
+    def set_active_call(
+        self,
+        block_id: str,
+        *,
+        attempt: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if not self.enabled:
+            return
+        now_iso = _iso_now()
+        now_unix = round(time.time(), 3)
+        active_call = {
+            "block_id": str(block_id),
+            "attempt": int(attempt) if isinstance(attempt, int) else None,
+            "metadata": metadata or {},
+            "started_at": now_iso,
+            "started_at_unix": now_unix,
+        }
+        self.status["active_call"] = active_call
+        self.status["updated_at"] = now_iso
+        self.status["updated_at_unix"] = now_unix
+        self._write_status()
+
+    def clear_active_call(self) -> None:
+        if not self.enabled:
+            return
+        if self.status.get("active_call") is None:
+            return
+        self.status["active_call"] = None
+        self.status["updated_at"] = _iso_now()
+        self.status["updated_at_unix"] = round(time.time(), 3)
+        self._write_status()
+
+    @contextmanager
+    def active_call(
+        self,
+        block_id: str,
+        *,
+        attempt: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ):
+        self.set_active_call(block_id, attempt=attempt, metadata=metadata)
+        try:
+            yield
+        finally:
+            self.clear_active_call()
+
+    def _emit_stalled_warning_if_needed(
+        self,
+        *,
+        now_unix: float,
+        phase: str,
+        epoch_current: int,
+    ) -> None:
+        if not self.enabled:
+            return
+        if self._last_case_activity_unix is None:
+            return
+        stall_seconds = float(now_unix - self._last_case_activity_unix)
+        if stall_seconds < self.stalled_warning_threshold_seconds:
+            return
+        if (
+            self._last_stalled_warning_unix
+            and (now_unix - self._last_stalled_warning_unix) < self.stalled_warning_threshold_seconds
+        ):
+            return
+
+        self.seq += 1
+        warning_event = {
+            "run_id": self.run_id,
+            "seq": self.seq,
+            "timestamp": _iso_now(),
+            "timestamp_unix": round(now_unix, 3),
+            "event_type": "stalled_warning",
+            "phase": phase,
+            "step": "watchdog",
+            "message": (
+                f"No case completion activity for {int(stall_seconds)}s; intervention may be required."
+            ),
+            "epoch_current": int(epoch_current),
+            "epochs_total": self.epochs_total,
+            "elapsed_seconds": round(max(0.0, time.perf_counter() - self._run_started_perf), 3),
+            "phase_elapsed_seconds": round(max(0.0, time.perf_counter() - self._phase_started_perf), 3),
+            "payload": {
+                "threshold_seconds": int(self.stalled_warning_threshold_seconds),
+                "stalled_seconds": int(stall_seconds),
+                "active_call": self._active_call_snapshot(now_unix),
+            },
+            "current_case": self.status.get("current_case"),
+            "metrics": {},
+            "active_call": self._active_call_snapshot(now_unix),
+        }
+        self._append_event(warning_event)
+        self._last_stalled_warning_unix = now_unix
+        self.status["events_count"] = self.seq
+        self.status["last_event_type"] = "stalled_warning"
+        self.status["stalled_warning_count"] = int(self.status.get("stalled_warning_count", 0)) + 1
+        self._write_status()
+        logger.warning(
+            f"[training:stalled_warning] epoch={epoch_current}/{self.epochs_total} "
+            f"phase={phase} stalled_seconds={int(stall_seconds)}"
+        )
 
     def emit(
         self,
@@ -1041,6 +1359,7 @@ class TrainingProgressTracker:
             "payload": payload or {},
             "current_case": current_case,
             "metrics": metrics or {},
+            "active_call": self._active_call_snapshot(timestamp_unix),
         }
 
         self.status["updated_at"] = timestamp
@@ -1050,6 +1369,7 @@ class TrainingProgressTracker:
         self.status["message"] = message
         self.status["events_count"] = self.seq
         self.status["last_event_type"] = event_type
+        self.status["active_call"] = self._active_call_snapshot(timestamp_unix)
         self.status["elapsed_seconds"] = round(elapsed_seconds, 3)
         self.status["phase_elapsed_seconds"] = round(phase_elapsed_seconds, 3)
         if epoch_current is not None:
@@ -1069,14 +1389,24 @@ class TrainingProgressTracker:
         elif event_type == "run_error":
             self.status["state"] = "error"
 
+        if event_type in {"case_started", "case_completed"}:
+            self._last_case_activity_unix = timestamp_unix
+
         self._write_status()
         self._append_event(event)
+        if self.status.get("state") == "running" and event_type not in {"stalled_warning", "run_completed", "run_error"}:
+            self._emit_stalled_warning_if_needed(
+                now_unix=timestamp_unix,
+                phase=phase,
+                epoch_current=int(event.get("epoch_current") or 0),
+            )
         logger.info(
             f"[training:{event_type}] epoch={event.get('epoch_current')}/{self.epochs_total} "
             f"phase={phase} step={step} msg={message}"
         )
 
     def complete(self, metrics: dict[str, Any] | None = None) -> None:
+        self.clear_active_call()
         self.emit(
             "run_completed",
             phase="complete",
@@ -1088,6 +1418,7 @@ class TrainingProgressTracker:
         )
 
     def fail(self, error_message: str, epoch_current: int | None = None) -> None:
+        self.clear_active_call()
         self.emit(
             "run_error",
             phase="error",
@@ -1254,7 +1585,82 @@ def score_prompt_against_criteria(
         schema=PromptCriteriaScoreSchema,
         temperature=0.1,
     )
+    if not isinstance(result, PromptCriteriaScoreSchema):
+        logger.warning(
+            "Unexpected scorer result type for block=%s: %s; applying conservative fallback score",
+            block_id,
+            type(result).__name__,
+        )
+        result = PromptCriteriaScoreSchema(
+            generic_quality_score=1,
+            criteria_alignment_score=1,
+            anti_overfit_score=1,
+            notes="[Graceful degradation] scorer returned non-schema output.",
+        )
     return result, used_model
+
+
+def _select_fallback_block_id(
+    grouped: dict[str, list[BlockAnalysisSchema]],
+    current_prompts: dict[str, str],
+) -> str | None:
+    ranked: list[tuple[int, float, str]] = []
+    for block_id, analyses in grouped.items():
+        if block_id not in current_prompts:
+            continue
+        if not analyses:
+            continue
+        issue_weight = sum(
+            float(item.generic_issue_score) + float(item.criteria_misalignment_score)
+            for item in analyses
+        )
+        ranked.append((len(analyses), issue_weight, block_id))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return ranked[0][2]
+
+
+def _deterministic_fallback_addendum(block_id: str) -> str:
+    by_block: dict[str, str] = {
+        "sub_plan_creation_block": (
+            "Reliability addendum:\n"
+            "- Return strict JSON with keys `sub_plan`, `steps`, and `tool_uses`.\n"
+            "- `sub_plan` must be a string only, and `steps`/`tool_uses` must be arrays of strings."
+        ),
+        "self_critique_block": (
+            "Reliability addendum:\n"
+            "- Return strict JSON keys `given_item`, `general_critique`, and `list_of_issues`.\n"
+            "- `list_of_issues` must contain plain strings only."
+        ),
+        "primary_tool_router_block": (
+            "Reliability addendum:\n"
+            "- Always return top-level `routes` as an array and `continuity` as a boolean.\n"
+            "- Never return top-level `id`/`inputs` without wrapping them in `routes`."
+        ),
+        "secondary_tool_router_block": (
+            "Reliability addendum:\n"
+            "- Always return top-level `routes` as an array and `continuity` as a boolean.\n"
+            "- Never return top-level `id`/`inputs` without wrapping them in `routes`."
+        ),
+        "python_code_execution_tool_block": (
+            "Reliability addendum:\n"
+            "- Preserve strict schema keys `code_to_run` and `packages_needed`.\n"
+            "- Include direct repair behavior using `previous_error` and `previous_code`."
+        ),
+        "web_search_tool_block": (
+            "Reliability addendum:\n"
+            "- Cite only supplied reference IDs and remove unsupported claims.\n"
+            "- If evidence is weak, state uncertainty plainly."
+        ),
+    }
+    return by_block.get(
+        block_id,
+        (
+            "Reliability addendum:\n"
+            "- Keep output strictly aligned to schema keys and avoid unsupported assumptions."
+        ),
+    )
 
 
 def prompt_improvements(
@@ -1316,15 +1722,21 @@ def prompt_improvements(
         )
 
         improve_prompt = (
-            "You are an expert prompt engineer. Improve this block prompt.\n"
-            "Use both generic quality and the block's prompt_creation_parameters.\n"
+            "You are an expert prompt engineer. Improve this block prompt using a structured edit.\n"
+            "Preserve baseline section scaffolding and placeholders unless explicitly required to fix schema fidelity.\n"
             "Do not insert specific training-case facts, numbers, or direct answer fragments.\n\n"
             f"Block ID: {block_id}\n\n"
             f"Current prompt:\n{current_prompt}\n\n"
             f"RCA analyses:\n{analyses_text}\n\n"
             f"Prompt creation parameters:\n{_safe_json_dumps(criteria, max_chars=2500)}\n\n"
             f"Required placeholders to preserve: {required_placeholders}\n"
-            "Return a revised prompt that remains generalizable."
+            "Editing protocol:\n"
+            "- Keep existing section headings and ordering where possible.\n"
+            "- Modify only sections necessary to address RCA findings.\n"
+            "- Do not remove output schema instructions or contract sections.\n"
+            "- Keep wording concise and generalizable.\n"
+            "- Preserve strict JSON/output contract language for schema-based blocks.\n"
+            "Return only the revised prompt text in `prompt`."
         )
 
         mutation, used_model = _generate_with_oss_fallback(
@@ -1386,9 +1798,22 @@ def prompt_improvements(
             continue
 
         contract_issues = _validate_prompt_contract(block_id, candidate_prompt, details)
-        if contract_issues:
+        contract_hard_issues, contract_soft_issues = _split_contract_issues(contract_issues)
+        auto_repair_applied: list[str] = []
+        if contract_soft_issues and not contract_hard_issues:
+            repaired_prompt, auto_repair_applied = _auto_repair_contract_issues(
+                block_id,
+                candidate_prompt,
+                contract_soft_issues,
+            )
+            if repaired_prompt != candidate_prompt:
+                candidate_prompt = repaired_prompt
+                contract_issues = _validate_prompt_contract(block_id, candidate_prompt, details)
+                contract_hard_issues, contract_soft_issues = _split_contract_issues(contract_issues)
+
+        if contract_hard_issues:
             logger.warning(
-                f"Prompt mutation for {block_id} violated prompt contract {contract_issues}; keeping baseline"
+                f"Prompt mutation for {block_id} violated hard prompt contract {contract_hard_issues}; keeping baseline"
             )
             improvements[block_id] = current_prompt
             diagnostics.append(
@@ -1400,6 +1825,9 @@ def prompt_improvements(
                     "accepted": False,
                     "decision_reason": "prompt_contract_violation",
                     "contract_issues": contract_issues,
+                    "contract_hard_issues": contract_hard_issues,
+                    "contract_soft_issues": contract_soft_issues,
+                    "contract_auto_repair_applied": auto_repair_applied,
                     "required_placeholders_count": len(required_placeholders),
                     "missing_placeholders": [],
                     "baseline_total": None,
@@ -1447,6 +1875,10 @@ def prompt_improvements(
                 "changed": True,
                 "accepted": accepted,
                 "decision_reason": decision_reason,
+                "contract_issues": contract_issues,
+                "contract_hard_issues": contract_hard_issues,
+                "contract_soft_issues": contract_soft_issues,
+                "contract_auto_repair_applied": auto_repair_applied,
                 "required_placeholders_count": len(required_placeholders),
                 "missing_placeholders": [],
                 "baseline_total": baseline_total,
@@ -1461,6 +1893,125 @@ def prompt_improvements(
                 "candidate_prompt_preview": candidate_prompt[:240],
             }
         )
+
+    accepted_any = any(bool(item.get("accepted")) for item in diagnostics if item.get("changed"))
+    if not accepted_any:
+        fallback_block_id = _select_fallback_block_id(grouped, current_prompts)
+        if fallback_block_id:
+            base_prompt = current_prompts.get(fallback_block_id, "")
+            fallback_addendum = _deterministic_fallback_addendum(fallback_block_id).strip()
+            normalized_base = _normalize_contract_text(base_prompt)
+            normalized_addendum = _normalize_contract_text(fallback_addendum)
+
+            if fallback_addendum and normalized_addendum not in normalized_base:
+                fallback_prompt = base_prompt.rstrip() + "\n\n" + fallback_addendum
+                fallback_details = block_details_map.get(fallback_block_id, {})
+                fallback_issues = _validate_prompt_contract(
+                    fallback_block_id,
+                    fallback_prompt,
+                    fallback_details,
+                )
+                fallback_hard, fallback_soft = _split_contract_issues(fallback_issues)
+                fallback_repair_applied: list[str] = []
+                if fallback_soft and not fallback_hard:
+                    repaired_prompt, fallback_repair_applied = _auto_repair_contract_issues(
+                        fallback_block_id,
+                        fallback_prompt,
+                        fallback_soft,
+                    )
+                    if repaired_prompt != fallback_prompt:
+                        fallback_prompt = repaired_prompt
+                        fallback_issues = _validate_prompt_contract(
+                            fallback_block_id,
+                            fallback_prompt,
+                            fallback_details,
+                        )
+                        fallback_hard, fallback_soft = _split_contract_issues(fallback_issues)
+
+                if not fallback_hard:
+                    baseline_score, baseline_score_model = _score_cached(
+                        fallback_block_id,
+                        base_prompt,
+                        fallback_details,
+                    )
+                    candidate_score, candidate_score_model = _score_cached(
+                        fallback_block_id,
+                        fallback_prompt,
+                        fallback_details,
+                    )
+
+                    baseline_total = (
+                        baseline_score.generic_quality_score
+                        + baseline_score.criteria_alignment_score
+                        + baseline_score.anti_overfit_score
+                    )
+                    candidate_total = (
+                        candidate_score.generic_quality_score
+                        + candidate_score.criteria_alignment_score
+                        + candidate_score.anti_overfit_score
+                    )
+                    delta_total = candidate_total - baseline_total
+                    acceptance_floor = baseline_total / PROMPT_SCORE_ACCEPTANCE_RATIO
+                    fallback_accepted = candidate_total >= acceptance_floor
+                    if fallback_accepted:
+                        improvements[fallback_block_id] = fallback_prompt
+
+                    diagnostics.append(
+                        {
+                            "block_id": fallback_block_id,
+                            "analysis_count": len(grouped.get(fallback_block_id, [])),
+                            "mutation_model": "deterministic_fallback",
+                            "changed": True,
+                            "accepted": fallback_accepted,
+                            "decision_reason": (
+                                "fallback_candidate_score_ge_baseline"
+                                if fallback_accepted and candidate_total >= baseline_total
+                                else "fallback_candidate_score_within_tolerance"
+                                if fallback_accepted
+                                else "fallback_candidate_score_lt_tolerance"
+                            ),
+                            "contract_issues": fallback_issues,
+                            "contract_hard_issues": fallback_hard,
+                            "contract_soft_issues": fallback_soft,
+                            "contract_auto_repair_applied": fallback_repair_applied,
+                            "required_placeholders_count": len(_placeholder_tokens(base_prompt)),
+                            "missing_placeholders": [],
+                            "baseline_total": baseline_total,
+                            "candidate_total": candidate_total,
+                            "delta_total": delta_total,
+                            "baseline_scores": baseline_score.model_dump(),
+                            "candidate_scores": candidate_score.model_dump(),
+                            "score_models": {
+                                "baseline": baseline_score_model,
+                                "candidate": candidate_score_model,
+                            },
+                            "candidate_prompt_preview": fallback_prompt[:240],
+                        }
+                    )
+                else:
+                    diagnostics.append(
+                        {
+                            "block_id": fallback_block_id,
+                            "analysis_count": len(grouped.get(fallback_block_id, [])),
+                            "mutation_model": "deterministic_fallback",
+                            "changed": True,
+                            "accepted": False,
+                            "decision_reason": "fallback_prompt_contract_violation",
+                            "contract_issues": fallback_issues,
+                            "contract_hard_issues": fallback_hard,
+                            "contract_soft_issues": fallback_soft,
+                            "contract_auto_repair_applied": fallback_repair_applied,
+                            "required_placeholders_count": len(_placeholder_tokens(base_prompt)),
+                            "missing_placeholders": [],
+                            "baseline_total": None,
+                            "candidate_total": None,
+                            "delta_total": 0.0,
+                            "baseline_scores": {},
+                            "candidate_scores": {},
+                            "score_models": {},
+                            "candidate_prompt_preview": fallback_prompt[:240],
+                        }
+                    )
 
     return improvements, diagnostics
 
@@ -1523,6 +2074,7 @@ def evaluate_suite(
 ) -> tuple[list[dict[str, Any]], list[float]]:
     results: list[dict[str, Any]] = []
     scores: list[float] = []
+    case_time_budget_seconds = max(0.0, float(TRAINING_CASE_TIME_BUDGET_SECONDS))
 
     total_cases = len(selected_cases)
     with prompt_override_context(prompt_suite):
@@ -1555,23 +2107,52 @@ def evaluate_suite(
                 )
 
             case_started_perf = time.perf_counter()
+            run_elapsed_ms = 0.0
+            grading_elapsed_ms = 0.0
             try:
-                run_started_perf = time.perf_counter()
-                run_output = pipeline.run(
-                    prompt=case_prompt,
-                    thinking_level=thinking_level,
-                    include_events=False,
-                )
-                run_elapsed_ms = (time.perf_counter() - run_started_perf) * 1000.0
+                with _time_limit(case_time_budget_seconds):
+                    run_started_perf = time.perf_counter()
+                    if progress_tracker:
+                        with progress_tracker.active_call(
+                            "pipeline.run",
+                            metadata={
+                                "phase": phase,
+                                "case_index": index,
+                                "case_id": case.get("id"),
+                            },
+                        ):
+                            run_output = pipeline.run(
+                                prompt=case_prompt,
+                                thinking_level=thinking_level,
+                                include_events=False,
+                            )
+                    else:
+                        run_output = pipeline.run(
+                            prompt=case_prompt,
+                            thinking_level=thinking_level,
+                            include_events=False,
+                        )
+                    run_elapsed_ms = (time.perf_counter() - run_started_perf) * 1000.0
 
-                if _should_short_circuit_grading(run_output):
-                    grade_started_perf = time.perf_counter()
-                    grade = _short_circuit_grade(run_output)
-                    grading_elapsed_ms = (time.perf_counter() - grade_started_perf) * 1000.0
-                else:
-                    grade_started_perf = time.perf_counter()
-                    grade = grade_result(case_prompt, run_output, validation)
-                    grading_elapsed_ms = (time.perf_counter() - grade_started_perf) * 1000.0
+                    if _should_short_circuit_grading(run_output):
+                        grade_started_perf = time.perf_counter()
+                        grade = _short_circuit_grade(run_output)
+                        grading_elapsed_ms = (time.perf_counter() - grade_started_perf) * 1000.0
+                    else:
+                        grade_started_perf = time.perf_counter()
+                        if progress_tracker:
+                            with progress_tracker.active_call(
+                                "grading.llm",
+                                metadata={
+                                    "phase": phase,
+                                    "case_index": index,
+                                    "case_id": case.get("id"),
+                                },
+                            ):
+                                grade = grade_result(case_prompt, run_output, validation)
+                        else:
+                            grade = grade_result(case_prompt, run_output, validation)
+                        grading_elapsed_ms = (time.perf_counter() - grade_started_perf) * 1000.0
 
                 case_elapsed_ms = (time.perf_counter() - case_started_perf) * 1000.0
 
@@ -1589,6 +2170,8 @@ def evaluate_suite(
                     "python_exec_failures": int(tool_metrics.get("python_exec_failures", 0)),
                     "tool_invocations": tool_metrics.get("tool_invocations", {}),
                     "tool_errors": tool_metrics.get("tool_errors", {}),
+                    "timed_out": False,
+                    "case_time_budget_seconds": case_time_budget_seconds,
                 }
                 results.append(
                     {
@@ -1599,6 +2182,63 @@ def evaluate_suite(
                         "case_stats": case_stats,
                     }
                 )
+            except TimeoutError as exc:
+                case_elapsed_ms = (time.perf_counter() - case_started_perf) * 1000.0
+                case_stats = {
+                    "case_total_seconds": round(case_elapsed_ms / 1000.0, 6),
+                    "pipeline_run_seconds": None,
+                    "grading_seconds": None,
+                    "tool_failure_signals_count": 1,
+                    "degraded_mode_active": True,
+                    "python_exec_attempts": 0,
+                    "python_exec_failures": 0,
+                    "tool_invocations": {},
+                    "tool_errors": {},
+                    "timed_out": True,
+                    "case_time_budget_seconds": case_time_budget_seconds,
+                }
+                results.append(
+                    {
+                        "prompt": case_prompt,
+                        "validation": validation,
+                        "run_output": {
+                            "response": "",
+                            "degraded_mode_active": True,
+                            "degraded_notes": [f"Case timeout: {exc}"],
+                        },
+                        "grade": {
+                            "aggregate_score": 0.0,
+                            "major_issues": f"Case timed out: {exc}",
+                            "strengths": "",
+                            "grading_mode": "case_timeout",
+                        },
+                        "case_stats": case_stats,
+                    }
+                )
+                scores.append(0.0)
+                if progress_tracker:
+                    progress_tracker.emit(
+                        event_type="case_completed",
+                        phase=phase,
+                        step="case_timeout",
+                        message=f"Case {index}/{total_cases} timed out",
+                        epoch_current=epoch_current,
+                        current_case=case_meta,
+                        payload={
+                            "error": str(exc),
+                            "degraded_mode_active": True,
+                            "tool_failure_signals_count": 1,
+                            "python_exec_attempts": 0,
+                            "python_exec_failures": 0,
+                            "timed_out": True,
+                            "case_time_budget_seconds": case_time_budget_seconds,
+                            "timing_ms": {
+                                "case_total": round(case_elapsed_ms, 2),
+                            },
+                        },
+                        metrics={"latest_case_score": 0.0},
+                    )
+                continue
             except Exception as exc:
                 case_elapsed_ms = (time.perf_counter() - case_started_perf) * 1000.0
                 case_stats = {
@@ -1611,6 +2251,8 @@ def evaluate_suite(
                     "python_exec_failures": 0,
                     "tool_invocations": {},
                     "tool_errors": {},
+                    "timed_out": False,
+                    "case_time_budget_seconds": case_time_budget_seconds,
                 }
                 results.append(
                     {
@@ -1644,6 +2286,8 @@ def evaluate_suite(
                             "tool_failure_signals_count": 1,
                             "python_exec_attempts": 0,
                             "python_exec_failures": 0,
+                            "timed_out": False,
+                            "case_time_budget_seconds": case_time_budget_seconds,
                             "timing_ms": {
                                 "case_total": round(case_elapsed_ms, 2),
                             },
@@ -1701,6 +2345,8 @@ def evaluate_suite(
                         "citation_count": len(citation_links) if isinstance(citation_links, dict) else 0,
                         "image_path_count": len(image_paths) if isinstance(image_paths, list) else 0,
                         "embedded_image_count": len(image_embeddings) if isinstance(image_embeddings, list) else 0,
+                        "timed_out": False,
+                        "case_time_budget_seconds": case_time_budget_seconds,
                     },
                     metrics={"latest_case_score": scores[-1]},
                 )
@@ -1761,6 +2407,8 @@ def train_ab_loop(
             "feature_flags": {
                 "ENABLE_CANDIDATE_GATES": ENABLE_CANDIDATE_GATES,
                 "ENABLE_TOOL_PROMPT_TEMPLATES": ENABLE_TOOL_PROMPT_TEMPLATES,
+                "TRAINING_CASE_TIME_BUDGET_SECONDS": TRAINING_CASE_TIME_BUDGET_SECONDS,
+                "STALL_WARNING_THRESHOLD_SECONDS": STALL_WARNING_THRESHOLD_SECONDS,
             },
         },
     )
@@ -1873,14 +2521,33 @@ def train_ab_loop(
                         "prompt_preview": prompt_preview,
                     },
                 )
-                analyses = root_cause_analysis(
-                    prompt=failed_case["prompt"],
-                    run_output=failed_case["run_output"],
-                    major_issues=str(failed_case["grade"].get("major_issues", "")),
-                    valid_blocks=valid_block_ids,
-                    block_details_map=block_details_map,
-                    criteria_context_text=criteria_context_text,
-                )
+                analyses: list[BlockAnalysisSchema]
+                if tracker is not None:
+                    with tracker.active_call(
+                        "rca.llm",
+                        metadata={
+                            "epoch": epoch_current,
+                            "failed_index": failed_index,
+                            "failed_total": len(failed),
+                        },
+                    ):
+                        analyses = root_cause_analysis(
+                            prompt=failed_case["prompt"],
+                            run_output=failed_case["run_output"],
+                            major_issues=str(failed_case["grade"].get("major_issues", "")),
+                            valid_blocks=valid_block_ids,
+                            block_details_map=block_details_map,
+                            criteria_context_text=criteria_context_text,
+                        )
+                else:
+                    analyses = root_cause_analysis(
+                        prompt=failed_case["prompt"],
+                        run_output=failed_case["run_output"],
+                        major_issues=str(failed_case["grade"].get("major_issues", "")),
+                        valid_blocks=valid_block_ids,
+                        block_details_map=block_details_map,
+                        criteria_context_text=criteria_context_text,
+                    )
                 all_analyses.extend(analyses)
                 tracker.emit(
                     event_type="rca_completed",
@@ -1900,11 +2567,22 @@ def train_ab_loop(
                 epoch_current=epoch_current,
                 payload={"rca_items": len(all_analyses)},
             )
-            improvements, prompt_scoring = prompt_improvements(
-                current_prompts=current_prompts,
-                block_analyses=all_analyses,
-                block_details_map=block_details_map,
-            )
+            if tracker is not None:
+                with tracker.active_call(
+                    "prompt_improvements",
+                    metadata={"epoch": epoch_current, "rca_items": len(all_analyses)},
+                ):
+                    improvements, prompt_scoring = prompt_improvements(
+                        current_prompts=current_prompts,
+                        block_analyses=all_analyses,
+                        block_details_map=block_details_map,
+                    )
+            else:
+                improvements, prompt_scoring = prompt_improvements(
+                    current_prompts=current_prompts,
+                    block_analyses=all_analyses,
+                    block_details_map=block_details_map,
+                )
             candidate_prompts.update(improvements)
 
             changed_keys = [
@@ -1920,13 +2598,37 @@ def train_ab_loop(
             accepted_blocks = [item for item in scored_blocks if item.get("accepted")]
             rejected_blocks = [item for item in changed_blocks if not item.get("accepted")]
             contract_rejected_blocks = [
-                item for item in changed_blocks if item.get("decision_reason") == "prompt_contract_violation"
+                item
+                for item in changed_blocks
+                if str(item.get("decision_reason", "")).endswith("prompt_contract_violation")
+                or str(item.get("decision_reason", "")) == "prompt_contract_violation"
             ]
             score_rejected_blocks = [
                 item
                 for item in changed_blocks
-                if item.get("decision_reason") in {"candidate_score_lt_baseline", "candidate_score_lt_tolerance"}
+                if item.get("decision_reason")
+                in {
+                    "candidate_score_lt_baseline",
+                    "candidate_score_lt_tolerance",
+                    "fallback_candidate_score_lt_tolerance",
+                }
             ]
+            rejection_breakdown: dict[str, int] = {}
+            rejection_issue_matrix: dict[str, dict[str, int]] = {}
+            for item in rejected_blocks:
+                reason = str(item.get("decision_reason") or "unknown_rejection")
+                rejection_breakdown[reason] = rejection_breakdown.get(reason, 0) + 1
+                block_id = str(item.get("block_id") or "unknown_block")
+                issue_bucket = rejection_issue_matrix.setdefault(block_id, {})
+                issues = item.get("contract_hard_issues") or item.get("contract_issues") or []
+                if not isinstance(issues, list):
+                    issues = []
+                if not issues:
+                    issue_bucket["no_contract_issue"] = issue_bucket.get("no_contract_issue", 0) + 1
+                else:
+                    for issue in issues:
+                        issue_key = str(issue)
+                        issue_bucket[issue_key] = issue_bucket.get(issue_key, 0) + 1
             baseline_totals = [
                 float(item.get("baseline_total"))
                 for item in scored_blocks
@@ -1959,6 +2661,8 @@ def train_ab_loop(
                     "changed_count": len(changed_blocks),
                     "contract_rejected_count": len(contract_rejected_blocks),
                     "score_rejected_count": len(score_rejected_blocks),
+                    "mutation_rejection_breakdown": rejection_breakdown,
+                    "mutation_rejection_issue_matrix": rejection_issue_matrix,
                 },
                 metrics={
                     "prompt_scored_blocks": len(scored_blocks),
@@ -1986,6 +2690,19 @@ def train_ab_loop(
                     "prompt_changed_blocks": len(changed_blocks),
                     "prompt_contract_rejected_blocks": len(contract_rejected_blocks),
                     "prompt_score_rejected_blocks": len(score_rejected_blocks),
+                    "mutation_rejection_breakdown": rejection_breakdown,
+                    "mutation_rejection_issue_matrix": rejection_issue_matrix,
+                },
+            )
+            tracker.emit(
+                event_type="mutation_rejection_breakdown",
+                phase="prompt_improvement",
+                step="rejection_breakdown",
+                message=f"Epoch {epoch_current}: mutation rejection breakdown",
+                epoch_current=epoch_current,
+                payload={
+                    "mutation_rejection_breakdown": rejection_breakdown,
+                    "mutation_rejection_issue_matrix": rejection_issue_matrix,
                 },
             )
 
@@ -1998,7 +2715,14 @@ def train_ab_loop(
                     message=f"Epoch {epoch_current}: running generalizer check",
                     epoch_current=epoch_current,
                 )
-                generalizer = generalizer_check(candidate_prompts, selected)
+                if tracker is not None:
+                    with tracker.active_call(
+                        "generalizer_check",
+                        metadata={"epoch": epoch_current},
+                    ):
+                        generalizer = generalizer_check(candidate_prompts, selected)
+                else:
+                    generalizer = generalizer_check(candidate_prompts, selected)
                 tracker.emit(
                     event_type="generalizer_completed",
                     phase="generalizer_check",
@@ -2151,6 +2875,8 @@ def train_ab_loop(
                 "candidate_gate_results": gate_results,
                 "candidate_gate_failure_reasons": gate_failure_reasons,
                 "prompt_scoring": prompt_scoring,
+                "mutation_rejection_breakdown": rejection_breakdown,
+                "mutation_rejection_issue_matrix": rejection_issue_matrix,
                 "prompt_scoring_summary": {
                     "changed_blocks": len(changed_blocks),
                     "scored_blocks": len(scored_blocks),

@@ -1449,7 +1449,10 @@ class PythonCodeExecutionToolBlock(ToolBlock):
                 prompt=prompt,
                 model=self.details['model'],
                 schema=self.details['schema'],
-                temperature=self.details['creativity_level']
+                temperature=self.details['creativity_level'],
+                retries=3,
+                retry_delay=0.8,
+                max_total_retry_wait=12.0,
             )
             logger.debug(f"Code generated: {generated_plan.code_to_run[:50]}...")
 
