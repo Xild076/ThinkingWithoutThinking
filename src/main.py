@@ -124,7 +124,13 @@ def cmd_train(args: argparse.Namespace) -> int:
         output_path=args.output,
         test_cases_path=args.dataset,
         epochs=args.epochs,
-        num_test_cases_per_trial=args.sample_size,
+        num_test_cases_per_trial=args.train_sample_size,
+        holdout_sample_size=args.holdout_sample_size,
+        rca_case_budget=args.rca_case_budget,
+        mutation_block_budget=args.mutation_block_budget,
+        generalizer_cadence=args.generalizer_cadence,
+        bootstrap_resamples=args.bootstrap_resamples,
+        holdout_split_ratio=args.holdout_split_ratio,
         random_seed=args.seed,
         thinking_level=args.thinking,
         progress_status_path=args.progress_status,
@@ -204,7 +210,14 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--output", type=str, default="data/prompt_suite_generations.json")
     train_p.add_argument("--dataset", type=str, default="data/prompt_train_cases.json")
     train_p.add_argument("--epochs", type=int, default=10)
-    train_p.add_argument("--sample-size", type=int, default=5)
+    train_p.add_argument("--train-sample-size", type=int, default=6)
+    train_p.add_argument("--sample-size", dest="train_sample_size", type=int, help=argparse.SUPPRESS)
+    train_p.add_argument("--holdout-sample-size", type=int, default=6)
+    train_p.add_argument("--rca-case-budget", type=int, default=3)
+    train_p.add_argument("--mutation-block-budget", type=int, default=3)
+    train_p.add_argument("--generalizer-cadence", type=int, default=3)
+    train_p.add_argument("--bootstrap-resamples", type=int, default=1000)
+    train_p.add_argument("--holdout-split-ratio", type=float, default=0.2)
     train_p.add_argument("--seed", type=int, default=42)
     train_p.add_argument("--progress-status", type=str, default="data/training_status.json")
     train_p.add_argument("--progress-events", type=str, default="data/training_events.jsonl")

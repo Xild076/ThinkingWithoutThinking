@@ -9,6 +9,8 @@ This project, called Thinking Without Thinking (TWT) is a project that attempts 
 1. Create an informal "system 2 thinking" pipeline (like o1, o3, and R1) using prompt engineering and small models (~sub 40B)
 2. Optimize the prompt engineering to see if small models can outperform baseline large models with such good prompting and a pipeline
 
+**Hypothesis:** small models can somewhat match large model performance through pipeline structure and prompt engineering.
+
 **Inspiration:** The inspiration for this project came from some random guy I saw at my school back when 3.5 was still a new thing using prompt engineering. I remembered that image randomly recently and thought I might try to formalize it, hence TWT became a thing.
 
 ## Part 1: System 2 Thinking
@@ -120,6 +122,8 @@ Essentially, the training goes as such:
 
 This skips over a bunch of safety and parsing stuff, but it covers the core of the system.
 
+The theory behind this is that: more moving components (pipeline blocks) = more nuance and more adjustability, and prompt optimization capitalizes on that.
+
 ## Issues
 
 Currently, there are a few issues, some small scale, some large scale:
@@ -141,5 +145,4 @@ I'm going to be honest, I'm not particularily sure where to take the project nex
 
 This is going to be a rather lazy conclusion, but in my opinion, what makes this system interesting is that it combines two things: more moving components and prompt optimization. 
 
-Neither of the two are that unique individually, but considering moving components = more nuance, it can theoretically enhance what prompt optimization can do.
-
+I think it does have some potential to bring small models up to the quality of larger models, but the kinks in training logic still need to be ironed out for it to really work properly.

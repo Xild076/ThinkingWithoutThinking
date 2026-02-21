@@ -6840,6 +6840,1101 @@
         "run_id": "6c226dd1-3978-4059-8d9f-e7ecc7cf661f"
       },
       "timestamp": 1771345944.7650461
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n- Return strict JSON with keys `sub_plan`, `steps`, and `tool_uses`.\n- `sub_plan` must be a string.\n- `steps` must be an array of strings.\n- `tool_uses` must be an array of strings.\n- Do not return `sub_plan` as an object or array.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n- Return strict JSON with keys: `given_item`, `general_critique`, `list_of_issues`.\n- `list_of_issues` must be an array of plain strings only (no objects, no nested structures).\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n- If page numbers are requested but not present in provided evidence, state that page numbers are unavailable in the provided sources.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- If page numbers are requested but not present in provided evidence, state that page numbers are unavailable in the provided sources.\n- Do not expose internal pipeline mechanics.\n- Return JSON only with key `synthesis`.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n- For quote extraction, citation verification, or source-grounded explanation tasks, prefer web/wiki tools over python.\n- Use python routing only when quantitative computation, simulation, or structured data transformation is explicitly required.\n- Return strict JSON with top-level keys `routes` and `continuity`.\n- `routes` must always be an array, even when there is only one route.\n- Each route must be an object with keys `id` and `inputs`.\n- Never return top-level `id`/`inputs` without `routes`.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n- For quote extraction, citation verification, or source-grounded explanation tasks, prefer web/wiki tools over python.\n- Use python routing only when quantitative computation, simulation, or structured data transformation is explicitly required.\n- Return strict JSON with top-level keys `routes` and `continuity`.\n- `routes` must always be an array, even when there is only one route.\n- Each route must be an object with keys `id` and `inputs`.\n- Never return top-level `id`/`inputs` without `routes`.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema.",
+        "web_search_tool_block": "You are the Web Search synthesis tool.\n\nObjective:\nSummarize evidence for query `{{{query}}}` using only the provided source blocks and reference IDs.\n\nHard constraints:\n- Use only information present in provided source blocks.\n- Do not invent facts, references, or claims.\n- Cite evidence inline as [Reference ID] using the supplied reference id values.\n- Prefer strongest evidence first and compress redundant points.\n\nOutput contract:\n{{{output_contract}}}\n- Return strict JSON only.\n- `summary` must be a single string.\n\nUncertainty behavior:\n- If evidence is partial, conflicting, or low-confidence, state uncertainty plainly in the summary.\n- If relevance is weak, include closest relevant information with caveats.\n\nRetry repair guidance:\n- If prior output failed schema or evidence checks, repair by tightening citation discipline and removing unsupported claims.\n\nReturn strict JSON.",
+        "wikipedia_search_tool_block": "You are the Wikipedia summarization tool.\n\nObjective:\nSummarize Wikipedia content for query `{{{query}}}` in mode `{{{mode}}}`.\n\nHard constraints:\n- Use only the supplied content.\n- Do not invent facts beyond supplied text.\n- Keep the answer concise and query-aligned.\n\nOutput contract:\n{{{output_contract}}}\n- Return strict JSON only with key `summary`.\n\nInput content:\n{{{content}}}\n\nUncertainty behavior:\n- If the content is only loosely relevant, explicitly say insufficient relevance and provide nearest relevant context.\n- Include the phrase \"insufficient relevance\" when relevance is weak.\n\nRetry repair guidance:\n- If prior output was off-topic, tighten focus to query terms and remove generic filler.\n\nReturn strict JSON.",
+        "python_code_execution_tool_block": "You are the Python code generation tool.\n\nObjective:\nWrite Python to satisfy this objective: {{{objective}}}\n\nHard constraints:\n- Output must follow schema exactly with keys `code_to_run` and `packages_needed`.\n- `code_to_run` must contain executable Python statements only (no markdown, no prose).\n- Ensure code stores final answer in variable `result` and executes `print(result)`.\n- Keep runtime bounded and avoid computationally explosive operations.\n- Disallow plotting imports and plotting calls when `visuals_needed` is false.\n- Use minimal package set required for correctness.\n\nOutput contract:\n{{{output_contract}}}\n\nInputs:\n- visuals_needed: {{{visuals_needed}}}\n- package_hints: {{{package_hints}}}\n\nUncertainty behavior:\n- If objective is ambiguous, choose the safest deterministic interpretation and keep implementation conservative.\n\nRetry repair guidance:\n- Previous error: {{{previous_error}}}\n- Previous code: {{{previous_code}}}\n- If previous error exists, fix root cause directly; do not repeat failing pattern.\n\nReturn strict JSON only.",
+        "creative_idea_generator_tool_block": "You are the creative ideation tool.\n\nObjective:\nGenerate ideas for: {{{objective}}}\n\nHard constraints:\n- Return diverse ideas across practical, hybrid, and highly novel directions.\n- Avoid duplicates and vague one-liners.\n- Each idea must include a short feasibility tag such as [feasibility: high|medium|low].\n\nOutput contract:\n{{{output_contract}}}\n- Return strict JSON only with `ideas` as an array of strings.\n\nUncertainty behavior:\n- If objective scope is unclear, include one clarifying assumption in the first idea.\n\nRetry repair guidance:\n- If prior output was repetitive, increase diversity across mediums, audiences, and constraints.\n\nReturn strict JSON.",
+        "deductive_reasoning_premise_tool_block": "You are the deductive reasoning premise generator.\n\nObjective:\nProduce 3-7 explicit premises for objective: {{{objective}}}\n\nHard constraints:\n- Premises must be checkable, non-redundant, and concise.\n- Do not include conclusions disguised as premises.\n- Keep reasoning trace brief and auditable.\n\nOutput contract:\n{{{output_contract}}}\n\nUncertainty behavior:\n- If the objective has ambiguous assumptions, note uncertainty in `reasoning` and keep premises conservative.\n\nRetry repair guidance:\n- If prior premises were weak, tighten logical specificity and remove overlap.\n\nValidated premises dependency:\n- Downstream steps must rely only on validated premises.\n\nReturn strict JSON.",
+        "deductive_reasoning_confirm_premise_tool_block": "You are the deductive premise validator.\n\nObjective:\nValidate premises against objective: {{{objective}}}\n\nPremises:\n{{{premises}}}\n\nHard constraints:\n- Return boolean validations aligned by premise index.\n- Use objective-grounded checks only.\n- Do not rewrite premises inside output.\n\nOutput contract:\n{{{output_contract}}}\n\nUncertainty behavior:\n- If a premise is underspecified, mark it false and explain briefly in `reasoning`.\n\nRetry repair guidance:\n- If previous validation output had shape mismatch, ensure exact length alignment.\n\nValidated premises rule:\n{{{validated_premises_instruction}}}\n\nReturn strict JSON.",
+        "deductive_reasoning_conclusion_tool_block": "You are the deductive conclusion generator.\n\nObjective:\nGenerate a conclusion for objective: {{{objective}}}\n\nValidated premises:\n{{{valid_premises}}}\n\nHard constraints:\n- Conclusion must depend only on validated premises.\n- Do not introduce external assumptions.\n- Keep reasoning concise and explicit.\n\nOutput contract:\n{{{output_contract}}}\n\nUncertainty behavior:\n- If validated premises are insufficient, state that limitation in reasoning and provide the strongest defensible conclusion.\n\nRetry repair guidance:\n- If prior conclusion overreached, narrow claims to premise-supported statements.\n\nValidated premises rule:\n{{{validated_premises_instruction}}}\n\nReturn strict JSON.",
+        "deductive_reasoning_conclusion_confirmation_tool_block": "You are the deductive conclusion validator.\n\nObjective:\nValidate the proposed conclusion for objective: {{{objective}}}\n\nConclusion:\n{{{conclusion}}}\n\nHard constraints:\n- Judge validity strictly against validated premises.\n- Return boolean `conclusion_valid` and concise `reasoning`.\n\nOutput contract:\n{{{output_contract}}}\n\nUncertainty behavior:\n- If evidence is mixed, default `conclusion_valid` to false and explain what is missing.\n\nRetry repair guidance:\n- If prior validation was inconsistent, enforce deterministic pass/fail rationale.\n\nValidated premises rule:\n{{{validated_premises_instruction}}}\n\nReturn strict JSON."
+      },
+      "metadata": {
+        "note": "initial",
+        "run_id": "fb3508b4-f701-49bf-a800-ab62d8ba642e",
+        "train_split": {
+          "size": 64,
+          "case_ids": [
+            "coding-05",
+            "citation-trap-01",
+            "interdisciplinary-02",
+            "math-08",
+            "math-07",
+            "econ-03",
+            "science-02",
+            "math-10",
+            "coding-06",
+            "coding-10",
+            "math-03",
+            "engineering-02",
+            "lit-06",
+            "econ-01",
+            "math-11",
+            "philo-01",
+            "math-strict-01",
+            "math-06",
+            "lit-03",
+            "science-strict-01",
+            "science-03",
+            "selfconsistency-02",
+            "selfconsistency-01",
+            "coding-03",
+            "math-strict-02",
+            "lit-04",
+            "coding-strict-01",
+            "citation-trap-02",
+            "math-02",
+            "philo-02",
+            "interdisciplinary-03",
+            "engineering-06",
+            "reasoning-trap-01",
+            "math-14",
+            "reasoning-trap-02",
+            "adversarial-01",
+            "math-09",
+            "conciseness-02",
+            "math-04",
+            "philo-03",
+            "math-12",
+            "adversarial-05",
+            "math-01",
+            "adversarial-04",
+            "science-06",
+            "conciseness-03",
+            "engineering-07",
+            "science-01",
+            "coding-01",
+            "engineering-05",
+            "math-05",
+            "lit-02",
+            "econ-02",
+            "engineering-01",
+            "coding-strict-02",
+            "science-07",
+            "adversarial-03",
+            "coding-02",
+            "econ-05",
+            "philo-04",
+            "conciseness-01",
+            "math-16",
+            "coding-04",
+            "coding-07"
+          ]
+        },
+        "holdout_split": {
+          "size": 14,
+          "case_ids": [
+            "engineering-03",
+            "adversarial-02",
+            "lit-05",
+            "math-15",
+            "engineering-04",
+            "science-05",
+            "interdisciplinary-01",
+            "science-04",
+            "math-13",
+            "coding-08",
+            "coding-09",
+            "lit-01",
+            "adversarial-06",
+            "econ-04"
+          ],
+          "ratio": 0.2
+        }
+      },
+      "timestamp": 1771560280.392475
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n- Return strict JSON with keys `sub_plan`, `steps`, and `tool_uses`.\n- `sub_plan` must be a string.\n- `steps` must be an array of strings.\n- `tool_uses` must be an array of strings.\n- Do not return `sub_plan` as an object or array.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n- Return strict JSON with keys: `given_item`, `general_critique`, `list_of_issues`.\n- `list_of_issues` must be an array of plain strings only (no objects, no nested structures).\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n- If page numbers are requested but not present in provided evidence, state that page numbers are unavailable in the provided sources.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- If page numbers are requested but not present in provided evidence, state that page numbers are unavailable in the provided sources.\n- Do not expose internal pipeline mechanics.\n- Return JSON only with key `synthesis`.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n- For quote extraction, citation verification, or source-grounded explanation tasks, prefer web/wiki tools over python.\n- Use python routing only when quantitative computation, simulation, or structured data transformation is explicitly required.\n- Return strict JSON with top-level keys `routes` and `continuity`.\n- `routes` must always be an array, even when there is only one route.\n- Each route must be an object with keys `id` and `inputs`.\n- Never return top-level `id`/`inputs` without `routes`.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n- For quote extraction, citation verification, or source-grounded explanation tasks, prefer web/wiki tools over python.\n- Use python routing only when quantitative computation, simulation, or structured data transformation is explicitly required.\n- Return strict JSON with top-level keys `routes` and `continuity`.\n- `routes` must always be an array, even when there is only one route.\n- Each route must be an object with keys `id` and `inputs`.\n- Never return top-level `id`/`inputs` without `routes`.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema.",
+        "web_search_tool_block": "You are the Web Search synthesis tool.\n\nObjective:\nSummarize evidence for query `{{{query}}}` using only the provided source blocks and reference IDs.\n\nHard constraints:\n- Use only information present in provided source blocks.\n- Do not invent facts, references, or claims.\n- Cite evidence inline as [Reference ID] using the supplied reference id values.\n- Prefer strongest evidence first and compress redundant points.\n\nOutput contract:\n{{{output_contract}}}\n- Return strict JSON only.\n- `summary` must be a single string.\n\nUncertainty behavior:\n- If evidence is partial, conflicting, or low-confidence, state uncertainty plainly in the summary.\n- If relevance is weak, include closest relevant information with caveats.\n\nRetry repair guidance:\n- If prior output failed schema or evidence checks, repair by tightening citation discipline and removing unsupported claims.\n\nReturn strict JSON.",
+        "wikipedia_search_tool_block": "You are the Wikipedia summarization tool.\n\nObjective:\nSummarize Wikipedia content for query `{{{query}}}` in mode `{{{mode}}}`.\n\nHard constraints:\n- Use only the supplied content.\n- Do not invent facts beyond supplied text.\n- Keep the answer concise and query-aligned.\n\nOutput contract:\n{{{output_contract}}}\n- Return strict JSON only with key `summary`.\n\nInput content:\n{{{content}}}\n\nUncertainty behavior:\n- If the content is only loosely relevant, explicitly say insufficient relevance and provide nearest relevant context.\n- Include the phrase \"insufficient relevance\" when relevance is weak.\n\nRetry repair guidance:\n- If prior output was off-topic, tighten focus to query terms and remove generic filler.\n\nReturn strict JSON.",
+        "python_code_execution_tool_block": "You are the Python code generation tool.\n\nObjective:\nWrite Python to satisfy this objective: {{{objective}}}\n\nHard constraints:\n- Output must follow schema exactly with keys `code_to_run` and `packages_needed`.\n- `code_to_run` must contain executable Python statements only (no markdown, no prose).\n- Ensure code stores final answer in variable `result` and executes `print(result)`.\n- Keep runtime bounded and avoid computationally explosive operations.\n- Disallow plotting imports and plotting calls when `visuals_needed` is false.\n- Use minimal package set required for correctness.\n\nOutput contract:\n{{{output_contract}}}\n\nInputs:\n- visuals_needed: {{{visuals_needed}}}\n- package_hints: {{{package_hints}}}\n\nUncertainty behavior:\n- If objective is ambiguous, choose the safest deterministic interpretation and keep implementation conservative.\n\nRetry repair guidance:\n- Previous error: {{{previous_error}}}\n- Previous code: {{{previous_code}}}\n- If previous error exists, fix root cause directly; do not repeat failing pattern.\n\nReturn strict JSON only.",
+        "creative_idea_generator_tool_block": "You are the creative ideation tool.\n\nObjective:\nGenerate ideas for: {{{objective}}}\n\nHard constraints:\n- Return diverse ideas across practical, hybrid, and highly novel directions.\n- Avoid duplicates and vague one-liners.\n- Each idea must include a short feasibility tag such as [feasibility: high|medium|low].\n\nOutput contract:\n{{{output_contract}}}\n- Return strict JSON only with `ideas` as an array of strings.\n\nUncertainty behavior:\n- If objective scope is unclear, include one clarifying assumption in the first idea.\n\nRetry repair guidance:\n- If prior output was repetitive, increase diversity across mediums, audiences, and constraints.\n\nReturn strict JSON.",
+        "deductive_reasoning_premise_tool_block": "You are the deductive reasoning premise generator.\n\nObjective:\nProduce 3-7 explicit premises for objective: {{{objective}}}\n\nHard constraints:\n- Premises must be checkable, non-redundant, and concise.\n- Do not include conclusions disguised as premises.\n- Keep reasoning trace brief and auditable.\n\nOutput contract:\n{{{output_contract}}}\n\nUncertainty behavior:\n- If the objective has ambiguous assumptions, note uncertainty in `reasoning` and keep premises conservative.\n\nRetry repair guidance:\n- If prior premises were weak, tighten logical specificity and remove overlap.\n\nValidated premises dependency:\n- Downstream steps must rely only on validated premises.\n\nReturn strict JSON.",
+        "deductive_reasoning_confirm_premise_tool_block": "You are the deductive premise validator.\n\nObjective:\nValidate premises against objective: {{{objective}}}\n\nPremises:\n{{{premises}}}\n\nHard constraints:\n- Return boolean validations aligned by premise index.\n- Use objective-grounded checks only.\n- Do not rewrite premises inside output.\n\nOutput contract:\n{{{output_contract}}}\n\nUncertainty behavior:\n- If a premise is underspecified, mark it false and explain briefly in `reasoning`.\n\nRetry repair guidance:\n- If previous validation output had shape mismatch, ensure exact length alignment.\n\nValidated premises rule:\n{{{validated_premises_instruction}}}\n\nReturn strict JSON.",
+        "deductive_reasoning_conclusion_tool_block": "You are the deductive conclusion generator.\n\nObjective:\nGenerate a conclusion for objective: {{{objective}}}\n\nValidated premises:\n{{{valid_premises}}}\n\nHard constraints:\n- Conclusion must depend only on validated premises.\n- Do not introduce external assumptions.\n- Keep reasoning concise and explicit.\n\nOutput contract:\n{{{output_contract}}}\n\nUncertainty behavior:\n- If validated premises are insufficient, state that limitation in reasoning and provide the strongest defensible conclusion.\n\nRetry repair guidance:\n- If prior conclusion overreached, narrow claims to premise-supported statements.\n\nValidated premises rule:\n{{{validated_premises_instruction}}}\n\nReturn strict JSON.",
+        "deductive_reasoning_conclusion_confirmation_tool_block": "You are the deductive conclusion validator.\n\nObjective:\nValidate the proposed conclusion for objective: {{{objective}}}\n\nConclusion:\n{{{conclusion}}}\n\nHard constraints:\n- Judge validity strictly against validated premises.\n- Return boolean `conclusion_valid` and concise `reasoning`.\n\nOutput contract:\n{{{output_contract}}}\n\nUncertainty behavior:\n- If evidence is mixed, default `conclusion_valid` to false and explain what is missing.\n\nRetry repair guidance:\n- If prior validation was inconsistent, enforce deterministic pass/fail rationale.\n\nValidated premises rule:\n{{{validated_premises_instruction}}}\n\nReturn strict JSON."
+      },
+      "metadata": {
+        "epoch": 0,
+        "run_id": "fb3508b4-f701-49bf-a800-ab62d8ba642e",
+        "avg_score_a": 5.360897400000001,
+        "avg_score_b": 5.3923074,
+        "improvement_delta": 0.03141000000000007,
+        "mean_delta": 0.03141000000000007,
+        "delta_ci": {
+          "ci_lower": -0.7133333999999996,
+          "ci_upper": 0.7761533999999998
+        },
+        "winner": "baseline",
+        "changed_keys": [],
+        "mutated_block_ids": [
+          "improvement_block",
+          "synthesis_block"
+        ],
+        "scores_a": [
+          4.384615,
+          4.166667,
+          3.075641,
+          9.086538,
+          6.091026
+        ],
+        "scores_b": [
+          2.935897,
+          4.974359,
+          3.310256,
+          8.634615,
+          7.10641
+        ],
+        "thinking_level": "med-synth",
+        "num_failures_in_a": 3,
+        "num_rca_items": 14,
+        "generalizer": null,
+        "phase_a_eval_summary": {
+          "case_count": 5,
+          "mean_case_time_s": 357.52386779999995,
+          "p90_case_time_s": 719.490643,
+          "avg_tool_failure_signals": 1.2,
+          "degraded_case_rate": 0.4,
+          "degraded_case_count": 2,
+          "avg_python_exec_attempts": 5.0,
+          "avg_python_exec_failures": 1.8,
+          "tool_invocation_totals": {
+            "web_search_tool_block": 4,
+            "deductive_reasoning_premise_tool_block": 3,
+            "python_code_execution_tool_block": 12,
+            "creative_idea_generator_tool_block": 2
+          },
+          "tool_error_totals": {}
+        },
+        "phase_b_eval_summary": {
+          "case_count": 5,
+          "mean_case_time_s": 250.8740248,
+          "p90_case_time_s": 660.344919,
+          "avg_tool_failure_signals": 1.4,
+          "degraded_case_rate": 0.4,
+          "degraded_case_count": 2,
+          "avg_python_exec_attempts": 2.8,
+          "avg_python_exec_failures": 0.0,
+          "tool_invocation_totals": {
+            "web_search_tool_block": 8,
+            "wikipedia_search_tool_block": 3,
+            "deductive_reasoning_premise_tool_block": 3,
+            "python_code_execution_tool_block": 8,
+            "creative_idea_generator_tool_block": 1
+          },
+          "tool_error_totals": {}
+        },
+        "phase_a_eval_meta": {
+          "case_count_requested": 5,
+          "case_count_evaluated": 5,
+          "timeout_enforcement_mode": "signal_alarm",
+          "early_stop": {
+            "triggered": false,
+            "pair_count": 0,
+            "running_mean_delta": 0.0,
+            "threshold": -0.35
+          }
+        },
+        "phase_b_eval_meta": {
+          "case_count_requested": 5,
+          "case_count_evaluated": 5,
+          "timeout_enforcement_mode": "signal_alarm",
+          "early_stop": {
+            "triggered": false,
+            "pair_count": 0,
+            "running_mean_delta": 0.0,
+            "threshold": -0.35
+          }
+        },
+        "holdout_phase_a_eval_summary": null,
+        "holdout_phase_b_eval_summary": null,
+        "holdout_phase_a_eval_meta": null,
+        "holdout_phase_b_eval_meta": null,
+        "candidate_gate_results": {
+          "enabled": true,
+          "all_passed": false,
+          "failed_gates": [
+            "quality_gate"
+          ],
+          "gates": {
+            "quality_gate": {
+              "name": "quality_gate",
+              "passed": false,
+              "mean_delta": 0.03141000000000007,
+              "ci_lower": -0.7133333999999996,
+              "ci_upper": 0.7761533999999998,
+              "rule": "mean_delta >= 0.1 and ci_lower > -0.05"
+            },
+            "runtime_gate": {
+              "name": "runtime_gate",
+              "passed": true,
+              "baseline_mean_case_time_s": 357.52386779999995,
+              "candidate_mean_case_time_s": 250.8740248,
+              "baseline_p90_case_time_s": 719.490643,
+              "candidate_p90_case_time_s": 660.344919,
+              "mean_ratio_b_over_a": 0.7016986763533778,
+              "p90_ratio_b_over_a": 0.9177950059873121,
+              "mean_delta_seconds_b_minus_a": -106.64984299999995,
+              "passed_abs_mean_delta": true,
+              "rule": "mean_ratio <= 1.2, p90_ratio <= 1.3, and mean_delta_seconds <= 45.0"
+            },
+            "stability_gate": {
+              "name": "stability_gate",
+              "passed": true,
+              "baseline_avg_tool_failure_signals": 1.2,
+              "candidate_avg_tool_failure_signals": 1.4,
+              "tool_failure_delta_b_minus_a": 0.19999999999999996,
+              "baseline_degraded_case_rate": 0.4,
+              "candidate_degraded_case_rate": 0.4,
+              "degraded_rate_delta_b_minus_a": 0.0,
+              "rule": "tool_failure_delta <= 0.2 and degraded_rate_delta <= 0.05"
+            }
+          },
+          "ratios": {
+            "mean_case_time_ratio": 0.7016986763533778,
+            "p90_case_time_ratio": 0.9177950059873121
+          },
+          "delta_stats": {
+            "mean_delta": 0.03141000000000007,
+            "ci_lower": -0.7133333999999996,
+            "ci_upper": 0.7761533999999998
+          },
+          "deltas": {
+            "tool_failure_delta": 0.19999999999999996,
+            "degraded_rate_delta": 0.0,
+            "mean_case_time_delta_seconds": -106.64984299999995
+          }
+        },
+        "candidate_gate_failure_reasons": [
+          "quality_gate"
+        ],
+        "prompt_scoring": [
+          {
+            "block_id": "deductive_reasoning_premise_tool_block",
+            "analysis_count": 2,
+            "mutation_model": null,
+            "changed": false,
+            "accepted": false,
+            "decision_reason": "skipped_by_mutation_budget",
+            "required_placeholders_count": 2,
+            "missing_placeholders": [],
+            "baseline_total": null,
+            "candidate_total": null,
+            "delta_total": 0.0,
+            "baseline_scores": {},
+            "candidate_scores": {},
+            "score_models": {},
+            "candidate_prompt_preview": ""
+          },
+          {
+            "block_id": "python_code_execution_tool_block",
+            "analysis_count": 1,
+            "mutation_model": null,
+            "changed": false,
+            "accepted": false,
+            "decision_reason": "skipped_by_mutation_budget",
+            "required_placeholders_count": 6,
+            "missing_placeholders": [],
+            "baseline_total": null,
+            "candidate_total": null,
+            "delta_total": 0.0,
+            "baseline_scores": {},
+            "candidate_scores": {},
+            "score_models": {},
+            "candidate_prompt_preview": ""
+          },
+          {
+            "block_id": "self_critique_block",
+            "analysis_count": 1,
+            "mutation_model": null,
+            "changed": false,
+            "accepted": false,
+            "decision_reason": "skipped_by_mutation_budget",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": null,
+            "candidate_total": null,
+            "delta_total": 0.0,
+            "baseline_scores": {},
+            "candidate_scores": {},
+            "score_models": {},
+            "candidate_prompt_preview": ""
+          },
+          {
+            "block_id": "improvement_block",
+            "analysis_count": 2,
+            "mutation_model": "nemotron",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "contract_issues": [],
+            "contract_hard_issues": [],
+            "contract_soft_issues": [],
+            "contract_auto_repair_applied": [],
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 25,
+            "candidate_total": 26,
+            "delta_total": 1,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well-structured, and provides comprehensive instructions with placeholders for dynamic content. It aligns closely with the intended improvement block criteria, specifying schema fidelity and handling of specific target schemas. The use of generic placeholders reduces overfitting risk, though the prompt could be slightly more concise and could clarify edge cases for ambiguous schemas."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, detailed, and uses placeholders making it broadly applicable. It aligns well with the creation criteria by specifying objectives, success rubric, and concrete requirements. Minor ambiguity around the exact JSON schema to return prevents a perfect score, but overall it avoids over\u2011specificity."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique p"
+          },
+          {
+            "block_id": "synthesis_block",
+            "analysis_count": 2,
+            "mutation_model": "nemotron",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_ge_baseline",
+            "contract_issues": [],
+            "contract_hard_issues": [],
+            "contract_soft_issues": [],
+            "contract_auto_repair_applied": [],
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": 24,
+            "candidate_total": 25,
+            "delta_total": 1,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 7,
+              "notes": "The prompt is clear, well-structured, and provides comprehensive instructions for generating a synthesis, aligning closely with the specified creation criteria and success rubric. It balances specificity with flexibility, avoiding overly narrow constraints, though some phrasing is tailored to this particular block, which slightly reduces the anti\u2011overfit rating."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well-structured, and provides comprehensive instructions, including placeholders, evidence usage, and formatting rules. It aligns closely with the synthesis criteria (natural prose, evidence integration, visual markers) and includes a success rubric. The use of generic placeholders and broad guidelines helps prevent overfitting to particular cases, though the requirement to include exactly three quotes with page numbers could be slightly restrictive."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are generating the final synthesis for a non-long-response path.\n\n{{{prompt}}} \n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Align with plan steps and"
+          },
+          {
+            "block_id": "web_search_tool_block",
+            "analysis_count": 2,
+            "mutation_model": "nemotron",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "prompt_contract_violation",
+            "contract_issues": [
+              "explicit_json_keys_do_not_match_schema"
+            ],
+            "contract_hard_issues": [
+              "explicit_json_keys_do_not_match_schema"
+            ],
+            "contract_soft_issues": [],
+            "contract_auto_repair_applied": [],
+            "required_placeholders_count": 2,
+            "missing_placeholders": [],
+            "baseline_total": null,
+            "candidate_total": null,
+            "delta_total": 0.0,
+            "baseline_scores": {},
+            "candidate_scores": {},
+            "score_models": {},
+            "candidate_prompt_preview": "You are the Web Search synthesis tool.\n\nObjective:\nSummarize evidence for query `{{{query}}}` using only the provided source blocks and reference IDs.\n\nHard constraints:\n- Use only information present in provided source blocks.\n- Do not inv"
+          }
+        ],
+        "mutation_rejection_breakdown": {
+          "prompt_contract_violation": 1
+        },
+        "mutation_rejection_issue_matrix": {
+          "web_search_tool_block": {
+            "explicit_json_keys_do_not_match_schema": 1
+          }
+        },
+        "sample_strategy": "stratified_rotating_unseen_first",
+        "train_case_ids": [
+          "citation-trap-01",
+          "citation-trap-02",
+          "coding-06",
+          "coding-strict-02",
+          "coding-07"
+        ],
+        "holdout_case_ids": [],
+        "rca_case_ids": [
+          "coding-06",
+          "coding-07",
+          "citation-trap-02"
+        ],
+        "selection_stats": {
+          "train_delta_stats": {
+            "pair_count": 5,
+            "mean_delta": 0.03141000000000007,
+            "ci_lower": -0.7133333999999996,
+            "ci_upper": 0.7761533999999998,
+            "deltas": [
+              -1.448718,
+              0.8076919999999994,
+              0.2346149999999998,
+              -0.45192299999999896,
+              1.015384
+            ]
+          },
+          "holdout_delta_stats": null,
+          "holdout_confirmation": null,
+          "early_stop_triggered": false,
+          "prompt_delta_avg_total": 1.0
+        },
+        "train_split": {
+          "size": 64,
+          "case_ids": [
+            "coding-05",
+            "citation-trap-01",
+            "interdisciplinary-02",
+            "math-08",
+            "math-07",
+            "econ-03",
+            "science-02",
+            "math-10",
+            "coding-06",
+            "coding-10",
+            "math-03",
+            "engineering-02",
+            "lit-06",
+            "econ-01",
+            "math-11",
+            "philo-01",
+            "math-strict-01",
+            "math-06",
+            "lit-03",
+            "science-strict-01",
+            "science-03",
+            "selfconsistency-02",
+            "selfconsistency-01",
+            "coding-03",
+            "math-strict-02",
+            "lit-04",
+            "coding-strict-01",
+            "citation-trap-02",
+            "math-02",
+            "philo-02",
+            "interdisciplinary-03",
+            "engineering-06",
+            "reasoning-trap-01",
+            "math-14",
+            "reasoning-trap-02",
+            "adversarial-01",
+            "math-09",
+            "conciseness-02",
+            "math-04",
+            "philo-03",
+            "math-12",
+            "adversarial-05",
+            "math-01",
+            "adversarial-04",
+            "science-06",
+            "conciseness-03",
+            "engineering-07",
+            "science-01",
+            "coding-01",
+            "engineering-05",
+            "math-05",
+            "lit-02",
+            "econ-02",
+            "engineering-01",
+            "coding-strict-02",
+            "science-07",
+            "adversarial-03",
+            "coding-02",
+            "econ-05",
+            "philo-04",
+            "conciseness-01",
+            "math-16",
+            "coding-04",
+            "coding-07"
+          ]
+        },
+        "holdout_split": {
+          "size": 14,
+          "case_ids": [
+            "engineering-03",
+            "adversarial-02",
+            "lit-05",
+            "math-15",
+            "engineering-04",
+            "science-05",
+            "interdisciplinary-01",
+            "science-04",
+            "math-13",
+            "coding-08",
+            "coding-09",
+            "lit-01",
+            "adversarial-06",
+            "econ-04"
+          ],
+          "ratio": 0.2
+        },
+        "early_stop": {
+          "triggered": false,
+          "pair_count": 0,
+          "running_mean_delta": 0.0,
+          "threshold": -0.35
+        },
+        "prompt_scoring_summary": {
+          "changed_blocks": 3,
+          "scored_blocks": 2,
+          "accepted_blocks": 2,
+          "rejected_blocks": 1,
+          "contract_rejected_blocks": 1,
+          "score_rejected_blocks": 0,
+          "baseline_avg_total": 24.5,
+          "candidate_avg_total": 25.5,
+          "delta_avg_total": 1.0
+        }
+      },
+      "timestamp": 1771565721.27634
+    },
+    {
+      "generation": 0,
+      "prompts": {
+        "initial_plan_creation_block": "You are the planning lead for a multi-stage reasoning pipeline. Create a rigorous plan for the user objective.\n\nUser prompt:\n{{{prompt}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRequirements:\n- Produce a plan with non-overlapping ordered steps.\n- Set complex_response=true only if per-step subplanning is warranted.\n- Set long_response=true only when final synthesis should be split into multiple parts.\n- Steps must be specific enough to route tools against them.\n- Populate response_criteria with concrete success checks.\n- Include at least one response_criteria item for natural, audience-appropriate prose (not robotic or meta-pipeline language).\n- Keep audience fields internally consistent: assumed_audience (who), assumed_audience_knowledge_level (subject familiarity), assumed_audience_reading_level (reading complexity).\n\nReturn strict JSON for the schema.",
+        "sub_plan_creation_block": "You are creating a subplan for one step in a larger plan.\n\nMain plan:\n{{{plan}}}\n\nStep objective:\n{{{objective}}}\n\nContext from previous execution (may include compressed summaries):\n{{{context}}}\n\nRequirements:\n- Generate a focused sub_plan aligned to the step objective.\n- Keep subplan steps non-redundant with prior completed work in context.\n- Include likely tool_uses only when they add real value.\n- Respect continuity: if context already resolved a point, avoid repeating it.\n- Return strict JSON with keys `sub_plan`, `steps`, and `tool_uses`.\n- `sub_plan` must be a string.\n- `steps` must be an array of strings.\n- `tool_uses` must be an array of strings.\n- Do not return `sub_plan` as an object or array.\n\nReturn strict JSON for the schema.",
+        "self_critique_block": "You are an internal reviewer. Critique the item against the objective and context.\n\nItem:\n{{{item}}}\n\nObjective:\n{{{objective}}}\n\nContext:\n{{{context}}}\n\nRequirements:\n- Identify concrete weaknesses and missing coverage.\n- Distinguish major issues from minor refinements.\n- Keep critique actionable for direct improvement.\n- Return strict JSON with keys: `given_item`, `general_critique`, `list_of_issues`.\n- `list_of_issues` must be an array of plain strings only (no objects, no nested structures).\n\nReturn strict JSON for the schema.",
+        "improvement_block": "You are improving content based on critique.\n\nOriginal item:\n{{{item}}}\n\nCritique:\n{{{critique}}}\n\nObjective:\n{{{objective}}}\n\nTarget schema:\n{{{target_schema}}}\n\nRequirements:\n- Produce an improved version that directly resolves critique points.\n- Preserve schema fidelity for the target type.\n- If target_schema=plan, preserve consistency between steps, complex_response, long_response, and response_criteria.\n- If target_schema=synthesis, preserve coherence, factual caution, and natural human prose.\n\nReturn strict JSON for the schema.",
+        "synthesis_block": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned with plan steps and response criteria.\n- Write natural, direct prose for the target audience; avoid robotic checklist style unless the user explicitly requested it.\n- If visual output is available, place image markers inline at the natural point of discussion (for example [image_1], [image_2]) immediately after the sentence discussing that visual.\n- Do not place image markers in a separate trailing image list unless explicitly requested.\n- Do not mention internal mechanics such as plan routing, response criteria, critique loops, or tool orchestration.\n- Avoid repeating prior points verbatim.\n- If evidence is uncertain, state uncertainty explicitly in plain language.\n- If page numbers are requested but not present in provided evidence, state that page numbers are unavailable in the provided sources.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "long_response_synthesis_block": "You are writing one part of a long-form response.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nSpecific part outline:\n{{{specific_part_outline}}}\n\nRequirements:\n- Write only this part and add net-new value.\n- Use natural, audience-appropriate prose and avoid robotic checklist language unless explicitly requested.\n- If this part discusses a visual, place image markers inline where relevant (for example [image_1]) rather than in a trailing image block.\n- Avoid repeating content already covered in prior parts from the outline context.\n- Keep style and audience alignment consistent across parts.\n- If page numbers are requested but not present in provided evidence, state that page numbers are unavailable in the provided sources.\n- Do not expose internal pipeline mechanics.\n- Return JSON only with key `synthesis`.\n\nReturn strict JSON for the schema with key `synthesis`.",
+        "primary_tool_router_block": "You are the primary tool router.\n\nObjective:\n{{{objective}}}\n\nPlan/subplan text:\n{{{plan}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Provide complete `inputs` for each route.\n- Set continuity=true when downstream subrouting could benefit from outputs of the first routing pass.\n- Prefer minimal sufficient tool set over unnecessary tool fan-out.\n- For quote extraction, citation verification, or source-grounded explanation tasks, prefer web/wiki tools over python.\n- Use python routing only when quantitative computation, simulation, or structured data transformation is explicitly required.\n- Return strict JSON with top-level keys `routes` and `continuity`.\n- `routes` must always be an array, even when there is only one route.\n- Each route must be an object with keys `id` and `inputs`.\n- Never return top-level `id`/`inputs` without `routes`.\n\nReturn strict JSON for router schema.",
+        "secondary_tool_router_block": "You are the continuity subrouter.\n\nObjective:\n{{{objective}}}\n\nPlan/context object:\n{{{plan}}}\n\nTool output summary from previous routing:\n{{{tool_output}}}\n\nAvailable tools:\n{{{available_tools}}}\n\nRouting rules:\n- Route `id` must exactly match one Tool ID from available tools.\n- Use continuity only for unresolved gaps, verification, enrichment, or conflict resolution.\n- Avoid repeating the same tool call unless inputs materially change.\n- Set continuity true only if another subrouting pass is justified.\n- For quote extraction, citation verification, or source-grounded explanation tasks, prefer web/wiki tools over python.\n- Use python routing only when quantitative computation, simulation, or structured data transformation is explicitly required.\n- Return strict JSON with top-level keys `routes` and `continuity`.\n- `routes` must always be an array, even when there is only one route.\n- Each route must be an object with keys `id` and `inputs`.\n- Never return top-level `id`/`inputs` without `routes`.\n\nReturn strict JSON for router schema.",
+        "large_response_router_block": "You are splitting a long response into high-quality synthesis parts.\n\nObjective:\n{{{objective}}}\n\nPlan metadata:\n{{{plan}}}\n\nResponse criteria:\n{{{response_criteria}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Return ordered response_parts.\n- Parts must be mutually exclusive and collectively comprehensive.\n- Avoid generic filler parts and avoid duplicated scopes.\n- Each part should be specific enough for focused synthesis.\n\nReturn strict JSON for the schema.",
+        "web_search_tool_block": "You are the Web Search synthesis tool.\n\nObjective:\nSummarize evidence for query `{{{query}}}` using only the provided source blocks and reference IDs.\n\nHard constraints:\n- Use only information present in provided source blocks.\n- Do not invent facts, references, or claims.\n- Cite evidence inline as [Reference ID] using the supplied reference id values.\n- Prefer strongest evidence first and compress redundant points.\n\nOutput contract:\n{{{output_contract}}}\n- Return strict JSON only.\n- `summary` must be a single string.\n\nUncertainty behavior:\n- If evidence is partial, conflicting, or low-confidence, state uncertainty plainly in the summary.\n- If relevance is weak, include closest relevant information with caveats.\n\nRetry repair guidance:\n- If prior output failed schema or evidence checks, repair by tightening citation discipline and removing unsupported claims.\n\nReturn strict JSON.",
+        "wikipedia_search_tool_block": "You are the Wikipedia summarization tool.\n\nObjective:\nSummarize Wikipedia content for query `{{{query}}}` in mode `{{{mode}}}`.\n\nHard constraints:\n- Use only the supplied content.\n- Do not invent facts beyond supplied text.\n- Keep the answer concise and query-aligned.\n\nOutput contract:\n{{{output_contract}}}\n- Return strict JSON only with key `summary`.\n\nInput content:\n{{{content}}}\n\nUncertainty behavior:\n- If the content is only loosely relevant, explicitly say insufficient relevance and provide nearest relevant context.\n- Include the phrase \"insufficient relevance\" when relevance is weak.\n\nRetry repair guidance:\n- If prior output was off-topic, tighten focus to query terms and remove generic filler.\n\nReturn strict JSON.",
+        "python_code_execution_tool_block": "You are the Python code generation tool.\n\nObjective:\nWrite Python to satisfy this objective: {{{objective}}}\n\nHard constraints:\n- Output must follow schema exactly with keys `code_to_run` and `packages_needed`.\n- `code_to_run` must contain executable Python statements only (no markdown, no prose).\n- Ensure code stores final answer in variable `result` and executes `print(result)`.\n- Keep runtime bounded and avoid computationally explosive operations.\n- Disallow plotting imports and plotting calls when `visuals_needed` is false.\n- Use minimal package set required for correctness.\n\nOutput contract:\n{{{output_contract}}}\n\nInputs:\n- visuals_needed: {{{visuals_needed}}}\n- package_hints: {{{package_hints}}}\n\nUncertainty behavior:\n- If objective is ambiguous, choose the safest deterministic interpretation and keep implementation conservative.\n\nRetry repair guidance:\n- Previous error: {{{previous_error}}}\n- Previous code: {{{previous_code}}}\n- If previous error exists, fix root cause directly; do not repeat failing pattern.\n\nReturn strict JSON only.",
+        "creative_idea_generator_tool_block": "You are the creative ideation tool.\n\nObjective:\nGenerate ideas for: {{{objective}}}\n\nHard constraints:\n- Return diverse ideas across practical, hybrid, and highly novel directions.\n- Avoid duplicates and vague one-liners.\n- Each idea must include a short feasibility tag such as [feasibility: high|medium|low].\n\nOutput contract:\n{{{output_contract}}}\n- Return strict JSON only with `ideas` as an array of strings.\n\nUncertainty behavior:\n- If objective scope is unclear, include one clarifying assumption in the first idea.\n\nRetry repair guidance:\n- If prior output was repetitive, increase diversity across mediums, audiences, and constraints.\n\nReturn strict JSON.",
+        "deductive_reasoning_premise_tool_block": "You are the deductive reasoning premise generator.\n\nObjective:\nProduce 3-7 explicit premises for objective: {{{objective}}}\n\nHard constraints:\n- Premises must be checkable, non-redundant, and concise.\n- Do not include conclusions disguised as premises.\n- Keep reasoning trace brief and auditable.\n\nOutput contract:\n{{{output_contract}}}\n\nUncertainty behavior:\n- If the objective has ambiguous assumptions, note uncertainty in `reasoning` and keep premises conservative.\n\nRetry repair guidance:\n- If prior premises were weak, tighten logical specificity and remove overlap.\n\nValidated premises dependency:\n- Downstream steps must rely only on validated premises.\n\nReturn strict JSON.",
+        "deductive_reasoning_confirm_premise_tool_block": "You are the deductive premise validator.\n\nObjective:\nValidate premises against objective: {{{objective}}}\n\nPremises:\n{{{premises}}}\n\nHard constraints:\n- Return boolean validations aligned by premise index.\n- Use objective-grounded checks only.\n- Do not rewrite premises inside output.\n\nOutput contract:\n{{{output_contract}}}\n\nUncertainty behavior:\n- If a premise is underspecified, mark it false and explain briefly in `reasoning`.\n\nRetry repair guidance:\n- If previous validation output had shape mismatch, ensure exact length alignment.\n\nValidated premises rule:\n{{{validated_premises_instruction}}}\n\nReturn strict JSON.",
+        "deductive_reasoning_conclusion_tool_block": "You are the deductive conclusion generator.\n\nObjective:\nGenerate a conclusion for objective: {{{objective}}}\n\nValidated premises:\n{{{valid_premises}}}\n\nHard constraints:\n- Conclusion must depend only on validated premises.\n- Do not introduce external assumptions.\n- Keep reasoning concise and explicit.\n\nOutput contract:\n{{{output_contract}}}\n\nUncertainty behavior:\n- If validated premises are insufficient, state that limitation in reasoning and provide the strongest defensible conclusion.\n\nRetry repair guidance:\n- If prior conclusion overreached, narrow claims to premise-supported statements.\n\nValidated premises rule:\n{{{validated_premises_instruction}}}\n\nReturn strict JSON.",
+        "deductive_reasoning_conclusion_confirmation_tool_block": "You are the deductive conclusion validator.\n\nObjective:\nValidate the proposed conclusion for objective: {{{objective}}}\n\nConclusion:\n{{{conclusion}}}\n\nHard constraints:\n- Judge validity strictly against validated premises.\n- Return boolean `conclusion_valid` and concise `reasoning`.\n\nOutput contract:\n{{{output_contract}}}\n\nUncertainty behavior:\n- If evidence is mixed, default `conclusion_valid` to false and explain what is missing.\n\nRetry repair guidance:\n- If prior validation was inconsistent, enforce deterministic pass/fail rationale.\n\nValidated premises rule:\n{{{validated_premises_instruction}}}\n\nReturn strict JSON."
+      },
+      "metadata": {
+        "epoch": 1,
+        "run_id": "fb3508b4-f701-49bf-a800-ab62d8ba642e",
+        "avg_score_a": 6.2494872,
+        "avg_score_b": 8.020641000000001,
+        "improvement_delta": 1.7711537999999998,
+        "mean_delta": 1.7711537999999998,
+        "delta_ci": {
+          "ci_lower": 0.5033331999999996,
+          "ci_upper": 3.0389744
+        },
+        "winner": "baseline",
+        "changed_keys": [],
+        "mutated_block_ids": [
+          "web_search_tool_block"
+        ],
+        "scores_a": [
+          8.25,
+          4.923077,
+          4.215385,
+          7.410256,
+          6.448718
+        ],
+        "scores_b": [
+          8.432692,
+          8.230769,
+          6.615385,
+          7.285897,
+          9.538462
+        ],
+        "thinking_level": "med-synth",
+        "num_failures_in_a": 3,
+        "num_rca_items": 14,
+        "generalizer": null,
+        "phase_a_eval_summary": {
+          "case_count": 5,
+          "mean_case_time_s": 112.185014,
+          "p90_case_time_s": 280.079171,
+          "avg_tool_failure_signals": 0.6,
+          "degraded_case_rate": 0.6,
+          "degraded_case_count": 3,
+          "avg_python_exec_attempts": 1.0,
+          "avg_python_exec_failures": 0.6,
+          "tool_invocation_totals": {
+            "python_code_execution_tool_block": 3,
+            "deductive_reasoning_premise_tool_block": 1,
+            "web_search_tool_block": 3,
+            "creative_idea_generator_tool_block": 1,
+            "wikipedia_search_tool_block": 2
+          },
+          "tool_error_totals": {}
+        },
+        "phase_b_eval_summary": {
+          "case_count": 5,
+          "mean_case_time_s": 147.5286692,
+          "p90_case_time_s": 384.851587,
+          "avg_tool_failure_signals": 0.4,
+          "degraded_case_rate": 0.2,
+          "degraded_case_count": 1,
+          "avg_python_exec_attempts": 2.2,
+          "avg_python_exec_failures": 0.0,
+          "tool_invocation_totals": {
+            "python_code_execution_tool_block": 7,
+            "web_search_tool_block": 5,
+            "deductive_reasoning_premise_tool_block": 2,
+            "wikipedia_search_tool_block": 1
+          },
+          "tool_error_totals": {}
+        },
+        "phase_a_eval_meta": {
+          "case_count_requested": 5,
+          "case_count_evaluated": 5,
+          "timeout_enforcement_mode": "signal_alarm",
+          "early_stop": {
+            "triggered": false,
+            "pair_count": 0,
+            "running_mean_delta": 0.0,
+            "threshold": -0.35
+          }
+        },
+        "phase_b_eval_meta": {
+          "case_count_requested": 5,
+          "case_count_evaluated": 5,
+          "timeout_enforcement_mode": "signal_alarm",
+          "early_stop": {
+            "triggered": false,
+            "pair_count": 0,
+            "running_mean_delta": 0.0,
+            "threshold": -0.35
+          }
+        },
+        "holdout_phase_a_eval_summary": null,
+        "holdout_phase_b_eval_summary": null,
+        "holdout_phase_a_eval_meta": null,
+        "holdout_phase_b_eval_meta": null,
+        "candidate_gate_results": {
+          "enabled": true,
+          "all_passed": false,
+          "failed_gates": [
+            "runtime_gate"
+          ],
+          "gates": {
+            "quality_gate": {
+              "name": "quality_gate",
+              "passed": true,
+              "mean_delta": 1.7711537999999998,
+              "ci_lower": 0.5033331999999996,
+              "ci_upper": 3.0389744,
+              "rule": "mean_delta >= 0.1 and ci_lower > -0.05"
+            },
+            "runtime_gate": {
+              "name": "runtime_gate",
+              "passed": false,
+              "baseline_mean_case_time_s": 112.185014,
+              "candidate_mean_case_time_s": 147.5286692,
+              "baseline_p90_case_time_s": 280.079171,
+              "candidate_p90_case_time_s": 384.851587,
+              "mean_ratio_b_over_a": 1.3150479189671447,
+              "p90_ratio_b_over_a": 1.374081427140471,
+              "mean_delta_seconds_b_minus_a": 35.3436552,
+              "passed_abs_mean_delta": true,
+              "rule": "mean_ratio <= 1.2, p90_ratio <= 1.3, and mean_delta_seconds <= 45.0"
+            },
+            "stability_gate": {
+              "name": "stability_gate",
+              "passed": true,
+              "baseline_avg_tool_failure_signals": 0.6,
+              "candidate_avg_tool_failure_signals": 0.4,
+              "tool_failure_delta_b_minus_a": -0.19999999999999996,
+              "baseline_degraded_case_rate": 0.6,
+              "candidate_degraded_case_rate": 0.2,
+              "degraded_rate_delta_b_minus_a": -0.39999999999999997,
+              "rule": "tool_failure_delta <= 0.2 and degraded_rate_delta <= 0.05"
+            }
+          },
+          "ratios": {
+            "mean_case_time_ratio": 1.3150479189671447,
+            "p90_case_time_ratio": 1.374081427140471
+          },
+          "delta_stats": {
+            "mean_delta": 1.7711537999999998,
+            "ci_lower": 0.5033331999999996,
+            "ci_upper": 3.0389744
+          },
+          "deltas": {
+            "tool_failure_delta": -0.19999999999999996,
+            "degraded_rate_delta": -0.39999999999999997,
+            "mean_case_time_delta_seconds": 35.3436552
+          }
+        },
+        "candidate_gate_failure_reasons": [
+          "runtime_gate"
+        ],
+        "prompt_scoring": [
+          {
+            "block_id": "self_critique_block",
+            "analysis_count": 1,
+            "mutation_model": null,
+            "changed": false,
+            "accepted": false,
+            "decision_reason": "skipped_by_mutation_budget",
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": null,
+            "candidate_total": null,
+            "delta_total": 0.0,
+            "baseline_scores": {},
+            "candidate_scores": {},
+            "score_models": {},
+            "candidate_prompt_preview": ""
+          },
+          {
+            "block_id": "python_code_execution_tool_block",
+            "analysis_count": 1,
+            "mutation_model": null,
+            "changed": false,
+            "accepted": false,
+            "decision_reason": "skipped_by_mutation_budget",
+            "required_placeholders_count": 6,
+            "missing_placeholders": [],
+            "baseline_total": null,
+            "candidate_total": null,
+            "delta_total": 0.0,
+            "baseline_scores": {},
+            "candidate_scores": {},
+            "score_models": {},
+            "candidate_prompt_preview": ""
+          },
+          {
+            "block_id": "wikipedia_search_tool_block",
+            "analysis_count": 2,
+            "mutation_model": null,
+            "changed": false,
+            "accepted": false,
+            "decision_reason": "skipped_by_mutation_budget",
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": null,
+            "candidate_total": null,
+            "delta_total": 0.0,
+            "baseline_scores": {},
+            "candidate_scores": {},
+            "score_models": {},
+            "candidate_prompt_preview": ""
+          },
+          {
+            "block_id": "deductive_reasoning_premise_tool_block",
+            "analysis_count": 1,
+            "mutation_model": null,
+            "changed": false,
+            "accepted": false,
+            "decision_reason": "skipped_by_mutation_budget",
+            "required_placeholders_count": 2,
+            "missing_placeholders": [],
+            "baseline_total": null,
+            "candidate_total": null,
+            "delta_total": 0.0,
+            "baseline_scores": {},
+            "candidate_scores": {},
+            "score_models": {},
+            "candidate_prompt_preview": ""
+          },
+          {
+            "block_id": "creative_idea_generator_tool_block",
+            "analysis_count": 1,
+            "mutation_model": null,
+            "changed": false,
+            "accepted": false,
+            "decision_reason": "skipped_by_mutation_budget",
+            "required_placeholders_count": 2,
+            "missing_placeholders": [],
+            "baseline_total": null,
+            "candidate_total": null,
+            "delta_total": 0.0,
+            "baseline_scores": {},
+            "candidate_scores": {},
+            "score_models": {},
+            "candidate_prompt_preview": ""
+          },
+          {
+            "block_id": "web_search_tool_block",
+            "analysis_count": 3,
+            "mutation_model": "nemotron",
+            "changed": true,
+            "accepted": true,
+            "decision_reason": "candidate_score_within_tolerance",
+            "contract_issues": [],
+            "contract_hard_issues": [],
+            "contract_soft_issues": [],
+            "contract_auto_repair_applied": [],
+            "required_placeholders_count": 2,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 25,
+            "delta_total": -1,
+            "baseline_scores": {
+              "generic_quality_score": 9,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 8,
+              "notes": "The prompt is clear, well\u2011structured, and enforces strict evidence\u2011based synthesis with citation rules and uncertainty handling. It aligns closely with the rubric\u2019s evidence fidelity, relevance, and clarity criteria, and uses placeholders making it reusable across queries, indicating low risk of over\u2011fitting."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is well\u2011structured, clearly defines objectives, hard constraints, output contract, and uncertainty handling. It aligns closely with the success rubric by emphasizing evidence fidelity, relevance, and clarity. Placeholders make it reusable across queries, reducing over\u2011fitting. Minor improvements could include explicit length limits for the summary to further guide conciseness."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "You are the Web Search synthesis tool.\n\nObjective:\nSummarize evidence for query `{{{query}}}` using only the provided source blocks and reference IDs.\n\nHard constraints:\n- Use only information present in provided source blocks.\n- Do not inv"
+          },
+          {
+            "block_id": "improvement_block",
+            "analysis_count": 2,
+            "mutation_model": "nemotron",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "candidate_score_lt_tolerance",
+            "contract_issues": [],
+            "contract_hard_issues": [],
+            "contract_soft_issues": [],
+            "contract_auto_repair_applied": [],
+            "required_placeholders_count": 4,
+            "missing_placeholders": [],
+            "baseline_total": 26,
+            "candidate_total": 23,
+            "delta_total": -3,
+            "baseline_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 9,
+              "anti_overfit_score": 9,
+              "notes": "The prompt is clear, well-structured, and includes comprehensive requirements and a success rubric, aligning closely with the creation criteria. It uses generic placeholders, making it broadly applicable and not overfitted to a specific scenario."
+            },
+            "candidate_scores": {
+              "generic_quality_score": 8,
+              "criteria_alignment_score": 8,
+              "anti_overfit_score": 7,
+              "notes": "The prompt is clear, comprehensive, and well-structured, covering required placeholders, editing protocol, and success rubric. It aligns well with the improvement block criteria, though its length could be trimmed slightly. It remains sufficiently generic to avoid overfitting to a single use case."
+            },
+            "score_models": {
+              "baseline": "oss120b",
+              "candidate": "oss120b"
+            },
+            "candidate_prompt_preview": "Current prompt:\\nYou are improving content based on critique.\\n\\nOriginal item:\\n{{{item}}}\\n\\nCritique:\\n{{{critique}}}\\n\\nObjective:\\n{{{objective}}}\\n\\nTarget schema:\\n{{{target_schema}}}\\n\\nRequirements:\\n- Produce an improved version t"
+          },
+          {
+            "block_id": "synthesis_block",
+            "analysis_count": 2,
+            "mutation_model": "oss120b",
+            "changed": true,
+            "accepted": false,
+            "decision_reason": "prompt_contract_violation",
+            "contract_issues": [
+              "explicit_json_keys_do_not_match_schema"
+            ],
+            "contract_hard_issues": [
+              "explicit_json_keys_do_not_match_schema"
+            ],
+            "contract_soft_issues": [],
+            "contract_auto_repair_applied": [],
+            "required_placeholders_count": 3,
+            "missing_placeholders": [],
+            "baseline_total": null,
+            "candidate_total": null,
+            "delta_total": 0.0,
+            "baseline_scores": {},
+            "candidate_scores": {},
+            "score_models": {},
+            "candidate_prompt_preview": "You are generating the final synthesis for a non-long-response path.\n\nUser prompt:\n{{{prompt}}}\n\nPlan metadata:\n{{{plan}}}\n\nTool/context evidence:\n{{{tool_context}}}\n\nRequirements:\n- Use tool/context evidence where relevant.\n- Stay aligned "
+          }
+        ],
+        "mutation_rejection_breakdown": {
+          "candidate_score_lt_tolerance": 1,
+          "prompt_contract_violation": 1
+        },
+        "mutation_rejection_issue_matrix": {
+          "improvement_block": {
+            "no_contract_issue": 1
+          },
+          "synthesis_block": {
+            "explicit_json_keys_do_not_match_schema": 1
+          }
+        },
+        "sample_strategy": "stratified_rotating_unseen_first",
+        "train_case_ids": [
+          "adversarial-05",
+          "coding-strict-01",
+          "coding-10",
+          "conciseness-03",
+          "conciseness-01"
+        ],
+        "holdout_case_ids": [],
+        "rca_case_ids": [
+          "coding-10",
+          "conciseness-01",
+          "conciseness-03"
+        ],
+        "selection_stats": {
+          "train_delta_stats": {
+            "pair_count": 5,
+            "mean_delta": 1.7711537999999998,
+            "ci_lower": 0.5033331999999996,
+            "ci_upper": 3.0389744,
+            "deltas": [
+              0.1826919999999994,
+              3.3076920000000003,
+              2.3999999999999995,
+              -0.12435900000000011,
+              3.0897440000000005
+            ]
+          },
+          "holdout_delta_stats": null,
+          "holdout_confirmation": null,
+          "early_stop_triggered": false,
+          "prompt_delta_avg_total": -2.0
+        },
+        "train_split": {
+          "size": 64,
+          "case_ids": [
+            "coding-05",
+            "citation-trap-01",
+            "interdisciplinary-02",
+            "math-08",
+            "math-07",
+            "econ-03",
+            "science-02",
+            "math-10",
+            "coding-06",
+            "coding-10",
+            "math-03",
+            "engineering-02",
+            "lit-06",
+            "econ-01",
+            "math-11",
+            "philo-01",
+            "math-strict-01",
+            "math-06",
+            "lit-03",
+            "science-strict-01",
+            "science-03",
+            "selfconsistency-02",
+            "selfconsistency-01",
+            "coding-03",
+            "math-strict-02",
+            "lit-04",
+            "coding-strict-01",
+            "citation-trap-02",
+            "math-02",
+            "philo-02",
+            "interdisciplinary-03",
+            "engineering-06",
+            "reasoning-trap-01",
+            "math-14",
+            "reasoning-trap-02",
+            "adversarial-01",
+            "math-09",
+            "conciseness-02",
+            "math-04",
+            "philo-03",
+            "math-12",
+            "adversarial-05",
+            "math-01",
+            "adversarial-04",
+            "science-06",
+            "conciseness-03",
+            "engineering-07",
+            "science-01",
+            "coding-01",
+            "engineering-05",
+            "math-05",
+            "lit-02",
+            "econ-02",
+            "engineering-01",
+            "coding-strict-02",
+            "science-07",
+            "adversarial-03",
+            "coding-02",
+            "econ-05",
+            "philo-04",
+            "conciseness-01",
+            "math-16",
+            "coding-04",
+            "coding-07"
+          ]
+        },
+        "holdout_split": {
+          "size": 14,
+          "case_ids": [
+            "engineering-03",
+            "adversarial-02",
+            "lit-05",
+            "math-15",
+            "engineering-04",
+            "science-05",
+            "interdisciplinary-01",
+            "science-04",
+            "math-13",
+            "coding-08",
+            "coding-09",
+            "lit-01",
+            "adversarial-06",
+            "econ-04"
+          ],
+          "ratio": 0.2
+        },
+        "early_stop": {
+          "triggered": false,
+          "pair_count": 0,
+          "running_mean_delta": 0.0,
+          "threshold": -0.35
+        },
+        "prompt_scoring_summary": {
+          "changed_blocks": 3,
+          "scored_blocks": 2,
+          "accepted_blocks": 1,
+          "rejected_blocks": 2,
+          "contract_rejected_blocks": 1,
+          "score_rejected_blocks": 1,
+          "baseline_avg_total": 26.0,
+          "candidate_avg_total": 24.0,
+          "delta_avg_total": -2.0
+        }
+      },
+      "timestamp": 1771567093.690773
     }
   ]
 }
