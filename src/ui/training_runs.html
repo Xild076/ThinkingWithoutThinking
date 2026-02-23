@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Training Runs Explorer</title>
+  <style>
+    :root {
+      --bg: #0f1218;
+      --panel: #141a23;
+      --panel-2: #1a2230;
+      --text: #e8edf6;
+      --muted: #9aa6bb;
+      --accent: #6bb8ff;
+      --ok: #44c17c;
+      --bad: #ff7b7b;
+      --warn: #ffcf66;
+      --border: #2a3342;
+    }
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top right, #1a2534 0, var(--bg) 40%);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    h1, h2 {
+      margin: 0 0 10px 0;
+      letter-spacing: 0.02em;
+    }
+    .muted { color: var(--muted); }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .panel {
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    tr:hover td {
+      background: rgba(255,255,255,0.03);
+    }
+    button {
+      border: 1px solid #325072;
+      color: #d8ecff;
+      background: #1d3a59;
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    button:hover { background: #24507c; }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      border: 1px solid var(--border);
+      margin-right: 6px;
+    }
+    .ok { color: var(--ok); }
+    .bad { color: var(--bad); }
+    .warn { color: var(--warn); }
+    pre {
+      background: #0e131c;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      overflow: auto;
+      font-size: 12px;
+      max-height: 360px;
+    }
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Training Runs Explorer</h1>
+    <p class="muted">Trace causality across runs: sampling -> RCA -> mutation -> gates -> acceptance.</p>
+
+    <div class="panel">
+      <h2>Runs</h2>
+      <p class="muted" id="runs-meta">Loading...</p>
+      <table id="runs-table">
+        <thead>
+          <tr>
+            <th>Run ID</th>
+            <th>Epochs</th>
+            <th>Latest Winner</th>
+            <th>Latest Delta</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <h2>Run Summary</h2>
+        <div id="run-summary" class="muted">Select a run.</div>
+      </div>
+      <div class="panel">
+        <h2>Epochs</h2>
+        <table id="epochs-table">
+          <thead>
+            <tr>
+              <th>Epoch</th>
+              <th>Winner</th>
+              <th>Δ</th>
+              <th>Gate Failures</th>
+              <th>Cases</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top: 14px;">
+      <h2>Epoch Case Deltas</h2>
+      <div id="cases-meta" class="muted">Select an epoch.</div>
+      <pre id="cases-json">No epoch selected.</pre>
+    </div>
+  </div>
+
+  <script>
+    const runsTbody = document.querySelector('#runs-table tbody');
+    const runsMeta = document.getElementById('runs-meta');
+    const runSummary = document.getElementById('run-summary');
+    const epochsTbody = document.querySelector('#epochs-table tbody');
+    const casesMeta = document.getElementById('cases-meta');
+    const casesJson = document.getElementById('cases-json');
+
+    let currentRunId = null;
+
+    function fmtNumber(value, digits = 3) {
+      if (value === null || value === undefined || Number.isNaN(Number(value))) return 'n/a';
+      return Number(value).toFixed(digits);
+    }
+
+    function winnerClass(winner) {
+      if (winner === 'candidate') return 'ok';
+      if (winner === 'baseline') return 'bad';
+      return 'warn';
+    }
+
+    async function fetchJSON(url) {
+      const res = await fetch(url);
+      return await res.json();
+    }
+
+    async function loadRuns() {
+      const payload = await fetchJSON('/training/runs');
+      const runs = payload.runs || [];
+      runsMeta.textContent = `${runs.length} runs found`;
+      runsTbody.innerHTML = '';
+      for (const run of runs) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><code>${run.run_id}</code></td>
+          <td>${run.epochs_count}</td>
+          <td><span class="pill ${winnerClass(run.latest_winner)}">${run.latest_winner || 'n/a'}</span></td>
+          <td>${fmtNumber(run.latest_improvement_delta)}</td>
+          <td><button data-run="${run.run_id}">Open</button></td>
+        `;
+        runsTbody.appendChild(tr);
+      }
+      runsTbody.querySelectorAll('button[data-run]').forEach((btn) => {
+        btn.addEventListener('click', () => loadRun(btn.getAttribute('data-run')));
+      });
+      if (runs.length) {
+        loadRun(runs[0].run_id);
+      }
+    }
+
+    async function loadRun(runId) {
+      currentRunId = runId;
+      const [summaryPayload, epochsPayload] = await Promise.all([
+        fetchJSON(`/training/runs/${runId}/summary`),
+        fetchJSON(`/training/runs/${runId}/epochs`),
+      ]);
+
+      if (summaryPayload.status !== 'ok') {
+        runSummary.textContent = summaryPayload.message || 'Failed to load summary.';
+        return;
+      }
+
+      runSummary.innerHTML = `
+        <p><span class="pill">Run</span> <code>${summaryPayload.run_id}</code></p>
+        <p><span class="pill">Epochs</span> ${summaryPayload.epochs_count}</p>
+        <p><span class="pill">Accepted Epochs</span> ${summaryPayload.accepted_epochs}</p>
+        <p><span class="pill">Improved Epochs</span> ${summaryPayload.improved_epochs}</p>
+        <p><span class="pill">Net Delta</span> ${fmtNumber(summaryPayload.net_improvement_delta)}</p>
+        <p><span class="pill">Latest Winner</span> <span class="${winnerClass(summaryPayload.latest_winner)}">${summaryPayload.latest_winner}</span></p>
+        <p class="muted">Events archive: <code>${summaryPayload.events_archive_path || 'n/a'}</code></p>
+      `;
+
+      epochsTbody.innerHTML = '';
+      const epochs = epochsPayload.epochs || [];
+      for (const epochRow of epochs) {
+        const failures = (epochRow.candidate_gate_failure_reasons || []).join(', ') || 'none';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${epochRow.epoch}</td>
+          <td><span class="pill ${winnerClass(epochRow.winner)}">${epochRow.winner}</span></td>
+          <td>${fmtNumber(epochRow.improvement_delta)}</td>
+          <td>${failures}</td>
+          <td><button data-epoch="${epochRow.epoch}">Cases</button></td>
+        `;
+        epochsTbody.appendChild(tr);
+      }
+
+      epochsTbody.querySelectorAll('button[data-epoch]').forEach((btn) => {
+        btn.addEventListener('click', () => loadEpochCases(runId, btn.getAttribute('data-epoch')));
+      });
+    }
+
+    async function loadEpochCases(runId, epoch) {
+      const payload = await fetchJSON(`/training/runs/${runId}/epoch/${epoch}/cases`);
+      if (payload.status !== 'ok') {
+        casesMeta.textContent = payload.message || 'Failed to load cases.';
+        return;
+      }
+      const deltas = (payload.cases || []).map((item) => Number(item.delta || 0));
+      const meanDelta = deltas.length ? deltas.reduce((a, b) => a + b, 0) / deltas.length : 0;
+      casesMeta.textContent = `Run ${runId} | Epoch ${epoch} | paired cases: ${payload.pair_count} | mean delta: ${fmtNumber(meanDelta)}`;
+      casesJson.textContent = JSON.stringify(payload.cases, null, 2);
+    }
+
+    loadRuns().catch((err) => {
+      runsMeta.textContent = `Failed to load runs: ${err}`;
+    });
+  </script>
+</body>
+</html>

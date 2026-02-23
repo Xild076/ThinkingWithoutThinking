@@ -68,6 +68,7 @@ def _env_float(name: str, default: float) -> float:
 
 ENABLE_CANDIDATE_GATES = _env_flag("ENABLE_CANDIDATE_GATES", default=True)
 ENABLE_TOOL_PROMPT_TEMPLATES = _env_flag("ENABLE_TOOL_PROMPT_TEMPLATES", default=True)
+ENABLE_MUTATION_RETRY_V2 = _env_flag("ENABLE_MUTATION_RETRY_V2", default=True)
 TRAINING_CASE_TIME_BUDGET_SECONDS = _env_float("TRAINING_CASE_TIME_BUDGET_SECONDS", 600.0)
 STALL_WARNING_THRESHOLD_SECONDS = _env_float("TRAINING_STALL_WARNING_SECONDS", 600.0)
 
@@ -84,6 +85,10 @@ HOLDOUT_GATE_MIN_CI_LOWER = -0.10
 EARLY_STOP_MIN_CASES = 4
 EARLY_STOP_MEAN_DELTA_THRESHOLD = -0.35
 DEFAULT_HOLDOUT_SPLIT_RATIO = 0.2
+DEFAULT_MUTATION_MAX_RETRIES = 3
+MUTATION_RETRY_TEMPERATURE_SCHEDULE = [0.45, 0.30, 0.20, 0.10]
+GENERALIZER_RISK_REJECT_THRESHOLD = 8
+GENERALIZER_SUSPICIOUS_DELTA_THRESHOLD = 3
 
 _TIME_LIMIT_MODE_WARNINGS: set[str] = set()
 
@@ -1056,6 +1061,53 @@ def _summarize_eval_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _extract_case_id_from_result(result: dict[str, Any]) -> str:
+    case_payload = result.get("case")
+    if isinstance(case_payload, dict):
+        return _case_identifier(case_payload)
+    return str(result.get("prompt", ""))[:160]
+
+
+def _paired_eval_summaries(
+    phase_a_results: list[dict[str, Any]],
+    phase_b_results: list[dict[str, Any]],
+) -> tuple[list[str], dict[str, Any], dict[str, Any]]:
+    pair_count = min(len(phase_a_results), len(phase_b_results))
+    if pair_count <= 0:
+        return [], _summarize_eval_results([]), _summarize_eval_results([])
+
+    paired_ids: list[str] = []
+    paired_a: list[dict[str, Any]] = []
+    paired_b: list[dict[str, Any]] = []
+    for idx in range(pair_count):
+        a_item = phase_a_results[idx]
+        b_item = phase_b_results[idx]
+        paired_ids.append(_extract_case_id_from_result(b_item))
+        paired_a.append(a_item)
+        paired_b.append(b_item)
+    return paired_ids, _summarize_eval_results(paired_a), _summarize_eval_results(paired_b)
+
+
+def _timeout_stats(results: list[dict[str, Any]]) -> dict[str, Any]:
+    total_cases = len(results)
+    timeout_count = 0
+    mode_counts: dict[str, int] = {}
+    for item in results:
+        case_stats = item.get("case_stats", {})
+        if not isinstance(case_stats, dict):
+            continue
+        timeout_mode = str(case_stats.get("timeout_enforcement_mode") or "unknown")
+        mode_counts[timeout_mode] = mode_counts.get(timeout_mode, 0) + 1
+        if bool(case_stats.get("timed_out")):
+            timeout_count += 1
+    return {
+        "timeout_count": timeout_count,
+        "total_cases": total_cases,
+        "timeout_rate": (float(timeout_count) / total_cases) if total_cases else 0.0,
+        "timeout_enforcement_mode_counts": mode_counts,
+    }
+
+
 def _evaluate_candidate_gates(
     *,
     delta_stats: dict[str, Any],
@@ -1216,6 +1268,9 @@ class BlockAnalysisSchema(BaseModel):
     need_fix: bool
     analysis: str
     what_to_fix: str
+    failure_mode: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    evidence: str | None = None
 
 
 class PipelineAnalysisReportSchema(BaseModel):
@@ -1458,6 +1513,7 @@ class TrainingProgressTracker:
         self,
         status_path: str,
         events_path: str,
+        events_archive_path: str | None,
         run_id: str,
         epochs_total: int,
         enabled: bool = True,
@@ -1474,6 +1530,7 @@ class TrainingProgressTracker:
         self._last_phase = "init"
         self.status_path = Path(status_path)
         self.events_path = Path(events_path)
+        self.events_archive_path = Path(events_archive_path) if events_archive_path else None
         self.status: dict[str, Any] = {
             "run_id": run_id,
             "state": "idle",
@@ -1497,6 +1554,7 @@ class TrainingProgressTracker:
             "paths": {
                 "status_path": str(self.status_path),
                 "events_path": str(self.events_path),
+                "events_archive_path": str(self.events_archive_path) if self.events_archive_path else None,
                 "log_path": str(Path("logs/prompt_training.log")),
             },
         }
@@ -1506,8 +1564,12 @@ class TrainingProgressTracker:
 
         self.status_path.parent.mkdir(parents=True, exist_ok=True)
         self.events_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.events_archive_path is not None:
+            self.events_archive_path.parent.mkdir(parents=True, exist_ok=True)
         # Start each run with a fresh event log for clean streaming.
         self.events_path.write_text("")
+        if self.events_archive_path is not None:
+            self.events_archive_path.write_text("")
         self._write_status()
 
     def _write_status(self) -> None:
@@ -1522,6 +1584,9 @@ class TrainingProgressTracker:
             return
         with self.events_path.open("a") as handle:
             handle.write(json.dumps(event) + "\n")
+        if self.events_archive_path is not None:
+            with self.events_archive_path.open("a") as handle:
+                handle.write(json.dumps(event) + "\n")
 
     def _active_call_snapshot(self, now_unix: float | None = None) -> dict[str, Any] | None:
         active_call = self.status.get("active_call")
@@ -1953,6 +2018,74 @@ def grade_result(
     return payload
 
 
+def _build_rca_evidence_bundle(run_output: dict[str, Any], case_context: dict[str, Any] | None) -> dict[str, Any]:
+    compact_run_output = _compact_run_output_for_storage(run_output)
+    tool_metrics = _extract_case_tool_metrics(run_output)
+    step_coverage = run_output.get("step_coverage")
+    summarized_tool_invocations = sorted(
+        (
+            {"block_id": str(block_id), "count": int(count)}
+            for block_id, count in tool_metrics.get("tool_invocations", {}).items()
+            if isinstance(count, (int, float))
+        ),
+        key=lambda item: item["count"],
+        reverse=True,
+    )[:12]
+    summarized_tool_errors = sorted(
+        (
+            {"block_id": str(block_id), "count": int(count)}
+            for block_id, count in tool_metrics.get("tool_errors", {}).items()
+            if isinstance(count, (int, float))
+        ),
+        key=lambda item: item["count"],
+        reverse=True,
+    )[:12]
+    return {
+        "case_metadata": {
+            "id": (case_context or {}).get("id"),
+            "category": (case_context or {}).get("category"),
+            "difficulty": (case_context or {}).get("difficulty"),
+            "aggregate_score": (case_context or {}).get("aggregate_score"),
+            "degraded_mode_active": bool((case_context or {}).get("degraded_mode_active")),
+            "timed_out": bool((case_context or {}).get("timed_out")),
+        },
+        "step_coverage": _prune_for_rca(step_coverage, max_depth=5, max_items=18, max_text_chars=500),
+        "tool_failure_signals": _prune_for_rca(run_output.get("tool_failure_signals"), max_depth=4, max_items=12, max_text_chars=260),
+        "tool_invocations_summary": summarized_tool_invocations,
+        "tool_errors_summary": summarized_tool_errors,
+        "degraded_notes": _prune_for_rca(run_output.get("degraded_notes"), max_depth=4, max_items=8, max_text_chars=260),
+        "run_output_compact": compact_run_output,
+    }
+
+
+def _build_rca_prompt_v2(
+    *,
+    prompt: str,
+    major_issues: str,
+    valid_blocks: list[str],
+    criteria_context_text: str,
+    evidence_json: str,
+) -> str:
+    return (
+        "You are an expert pipeline RCA analyst.\n"
+        "Diagnose why the case failed and map findings to block-level fixes.\n"
+        "You MUST only reference block IDs from the valid block list.\n"
+        "Use evidence from tool execution, degraded markers, and step coverage.\n"
+        "Do not overfit to this one case; avoid proposing case-specific facts or answer fragments.\n"
+        "Each suggested fix must preserve output schema/contract safety.\n\n"
+        f"Valid blocks:\n{', '.join(valid_blocks)}\n\n"
+        f"User prompt:\n{prompt}\n\n"
+        f"Major issues from grading:\n{major_issues}\n\n"
+        f"Evidence bundle:\n{evidence_json}\n\n"
+        f"Block prompt criteria context:\n{criteria_context_text}\n\n"
+        "Output requirements:\n"
+        "- Provide concise analysis.\n"
+        "- Set need_fix=true only when evidence supports it.\n"
+        "- Include failure_mode, confidence (0..1), and concrete evidence references when possible.\n"
+        "- Keep recommendations generic and reusable."
+    )
+
+
 def root_cause_analysis(
     prompt: str,
     run_output: dict[str, Any],
@@ -1972,20 +2105,14 @@ def root_cause_analysis(
             )
         criteria_context_text = "\n\n".join(criteria_sections)
 
-    compact_run_output = _compact_run_output_for_storage(run_output)
-    run_output_json = _safe_json_dumps(compact_run_output, max_chars=14000)
-    case_context_text = _safe_json_dumps(case_context or {}, max_chars=1200)
-
-    rca_prompt = (
-        "You are an expert pipeline RCA analyst.\n"
-        "Use BOTH generic quality failures and block-specific prompt criteria misalignment.\n"
-        "You MUST only reference valid block IDs.\n\n"
-        f"Valid blocks:\n{', '.join(valid_blocks)}\n\n"
-        f"Case context:\n{case_context_text}\n\n"
-        f"User prompt:\n{prompt}\n\n"
-        f"Major issues from grading:\n{major_issues}\n\n"
-        f"Full run output (for RCA):\n{run_output_json}\n\n"
-        f"Block prompt criteria context:\n{criteria_context_text}\n"
+    evidence_bundle = _build_rca_evidence_bundle(run_output, case_context)
+    evidence_json = _safe_json_dumps(evidence_bundle, max_chars=16000)
+    rca_prompt = _build_rca_prompt_v2(
+        prompt=prompt,
+        major_issues=major_issues,
+        valid_blocks=valid_blocks,
+        criteria_context_text=criteria_context_text,
+        evidence_json=evidence_json,
     )
 
     report, used_model = _generate_with_oss_fallback(
@@ -2235,11 +2362,309 @@ def _rank_blocks_by_rca_impact(
     return ranked
 
 
+RECOVERABLE_MUTATION_FAILURE_CODES: set[str] = {
+    "missing_required_placeholders",
+    "prompt_contract_violation",
+    "candidate_same_as_baseline",
+}
+
+
+def _dedupe_block_analyses(analyses: list[BlockAnalysisSchema]) -> list[BlockAnalysisSchema]:
+    unique_analyses: list[BlockAnalysisSchema] = []
+    seen_analysis_signatures: set[tuple[str, str]] = set()
+    for analysis in analyses:
+        signature = (
+            str(analysis.analysis).strip().lower(),
+            str(analysis.what_to_fix).strip().lower(),
+        )
+        if signature in seen_analysis_signatures:
+            continue
+        seen_analysis_signatures.add(signature)
+        unique_analyses.append(analysis)
+    return unique_analyses
+
+
+def _mutation_temperature_for_attempt(attempt_index: int) -> float:
+    index = max(0, min(int(attempt_index), len(MUTATION_RETRY_TEMPERATURE_SCHEDULE) - 1))
+    return float(MUTATION_RETRY_TEMPERATURE_SCHEDULE[index])
+
+
+def _build_mutation_prompt(
+    *,
+    block_id: str,
+    current_prompt: str,
+    criteria: dict[str, Any],
+    analyses: list[BlockAnalysisSchema],
+    required_placeholders: list[str],
+    previous_candidate: str | None = None,
+    failure_code: str | None = None,
+    failure_details: dict[str, Any] | None = None,
+) -> str:
+    analyses_text = "\n".join(
+        (
+            f"- generic_issue_score={analysis.generic_issue_score}, "
+            f"criteria_misalignment_score={analysis.criteria_misalignment_score}\n"
+            f"  analysis={analysis.analysis}\n"
+            f"  what_to_fix={analysis.what_to_fix}\n"
+            f"  failure_mode={analysis.failure_mode or 'unknown'}\n"
+            f"  confidence={analysis.confidence if analysis.confidence is not None else 'n/a'}\n"
+            f"  evidence={analysis.evidence or 'n/a'}"
+        )
+        for analysis in analyses
+    )
+    contract_checklist = (
+        "Contract checklist (must pass all):\n"
+        f"- Preserve required placeholders exactly: {required_placeholders}\n"
+        "- Preserve schema/output-contract markers and strict JSON requirements when present.\n"
+        "- Do not remove essential section scaffolding that controls behavior.\n"
+        "- Do not introduce conflicting 'plain text only' instructions.\n"
+        "- Keep the revised prompt generic; never include case-specific facts or answer fragments.\n"
+    )
+
+    retry_instructions = ""
+    if previous_candidate is not None:
+        retry_instructions = (
+            "Repair mode:\n"
+            f"- Prior candidate failed with code: {failure_code or 'unknown'}.\n"
+            f"- Failure diagnostics: {_safe_json_dumps(failure_details or {}, max_chars=1400)}\n"
+            "Fix only what caused failure while preserving improvements from RCA.\n"
+            f"Prior candidate prompt:\n{previous_candidate}\n\n"
+        )
+
+    return (
+        "You are an expert prompt engineer. Improve this block prompt using a structured edit.\n"
+        "Preserve baseline section scaffolding and placeholders unless explicitly required to fix schema fidelity.\n"
+        "Do not insert specific training-case facts, numbers, or direct answer fragments.\n\n"
+        f"Block ID: {block_id}\n\n"
+        f"Current prompt:\n{current_prompt}\n\n"
+        f"RCA analyses:\n{analyses_text}\n\n"
+        f"Prompt creation parameters:\n{_safe_json_dumps(criteria, max_chars=2500)}\n\n"
+        f"{contract_checklist}\n"
+        f"{retry_instructions}"
+        "Editing protocol:\n"
+        "- Keep existing section headings and ordering where possible.\n"
+        "- Modify only sections necessary to address RCA findings.\n"
+        "- Keep wording concise and generalizable.\n"
+        "- Preserve strict JSON/output contract language for schema-based blocks.\n"
+        "Return a concise `plan_for_improvement` and the revised prompt text in `prompt`."
+    )
+
+
+def _is_recoverable_mutation_failure(reason: str) -> bool:
+    return str(reason or "").strip() in RECOVERABLE_MUTATION_FAILURE_CODES
+
+
+def _validate_mutation_candidate(
+    *,
+    block_id: str,
+    current_prompt: str,
+    candidate_prompt: str,
+    required_placeholders: list[str],
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    if candidate_prompt.strip() == current_prompt.strip():
+        return {
+            "valid": False,
+            "decision_reason": "candidate_same_as_baseline",
+            "missing_placeholders": [],
+            "contract_issues": [],
+            "contract_hard_issues": [],
+            "contract_soft_issues": [],
+            "contract_auto_repair_applied": [],
+            "candidate_prompt": candidate_prompt,
+        }
+
+    missing = [
+        token for token in required_placeholders if token not in _placeholder_tokens(candidate_prompt)
+    ]
+    if missing:
+        return {
+            "valid": False,
+            "decision_reason": "missing_required_placeholders",
+            "missing_placeholders": missing,
+            "contract_issues": [],
+            "contract_hard_issues": [],
+            "contract_soft_issues": [],
+            "contract_auto_repair_applied": [],
+            "candidate_prompt": candidate_prompt,
+        }
+
+    contract_issues = _validate_prompt_contract(block_id, candidate_prompt, details)
+    contract_hard_issues, contract_soft_issues = _split_contract_issues(contract_issues)
+    auto_repair_applied: list[str] = []
+    if contract_soft_issues and not contract_hard_issues:
+        repaired_prompt, auto_repair_applied = _auto_repair_contract_issues(
+            block_id,
+            candidate_prompt,
+            contract_soft_issues,
+        )
+        if repaired_prompt != candidate_prompt:
+            candidate_prompt = repaired_prompt
+            contract_issues = _validate_prompt_contract(block_id, candidate_prompt, details)
+            contract_hard_issues, contract_soft_issues = _split_contract_issues(contract_issues)
+
+    if contract_hard_issues:
+        return {
+            "valid": False,
+            "decision_reason": "prompt_contract_violation",
+            "missing_placeholders": [],
+            "contract_issues": contract_issues,
+            "contract_hard_issues": contract_hard_issues,
+            "contract_soft_issues": contract_soft_issues,
+            "contract_auto_repair_applied": auto_repair_applied,
+            "candidate_prompt": candidate_prompt,
+        }
+
+    return {
+        "valid": True,
+        "decision_reason": "candidate_structurally_valid",
+        "missing_placeholders": [],
+        "contract_issues": contract_issues,
+        "contract_hard_issues": contract_hard_issues,
+        "contract_soft_issues": contract_soft_issues,
+        "contract_auto_repair_applied": auto_repair_applied,
+        "candidate_prompt": candidate_prompt,
+    }
+
+
+def mutate_block_with_retries(
+    *,
+    block_id: str,
+    current_prompt: str,
+    analyses: list[BlockAnalysisSchema],
+    details: dict[str, Any],
+    mutation_retry_enabled: bool,
+    mutation_max_retries: int,
+    progress_tracker: TrainingProgressTracker | None = None,
+    epoch_current: int | None = None,
+) -> dict[str, Any]:
+    required_placeholders = sorted(_placeholder_tokens(current_prompt))
+    criteria = details.get("prompt_creation_parameters", {})
+    max_retries = max(0, int(mutation_max_retries))
+    total_attempts = 1 + max_retries if mutation_retry_enabled else 1
+
+    attempt_history: list[dict[str, Any]] = []
+    previous_candidate: str | None = None
+    previous_failure: dict[str, Any] | None = None
+
+    for attempt_idx in range(total_attempts):
+        is_retry = attempt_idx > 0
+        temperature = _mutation_temperature_for_attempt(attempt_idx)
+        mutation_prompt = _build_mutation_prompt(
+            block_id=block_id,
+            current_prompt=current_prompt,
+            criteria=criteria,
+            analyses=analyses,
+            required_placeholders=required_placeholders,
+            previous_candidate=previous_candidate if is_retry else None,
+            failure_code=(previous_failure or {}).get("decision_reason") if is_retry else None,
+            failure_details=previous_failure if is_retry else None,
+        )
+
+        mutation, used_model = _generate_with_oss_fallback(
+            prompt=mutation_prompt,
+            schema=PromptMutationSchema,
+            temperature=temperature,
+        )
+        candidate_prompt = str(mutation.prompt or "")
+        validation = _validate_mutation_candidate(
+            block_id=block_id,
+            current_prompt=current_prompt,
+            candidate_prompt=candidate_prompt,
+            required_placeholders=required_placeholders,
+            details=details,
+        )
+
+        attempt_record = {
+            "attempt_index": attempt_idx,
+            "temperature": temperature,
+            "mutation_model": used_model,
+            "decision_reason": validation.get("decision_reason"),
+            "missing_placeholders": list(validation.get("missing_placeholders") or []),
+            "contract_hard_issues": list(validation.get("contract_hard_issues") or []),
+            "contract_soft_issues": list(validation.get("contract_soft_issues") or []),
+            "valid": bool(validation.get("valid")),
+        }
+        attempt_history.append(attempt_record)
+
+        if validation.get("valid"):
+            return {
+                "valid": True,
+                "candidate_prompt": validation.get("candidate_prompt", candidate_prompt),
+                "mutation_model": used_model,
+                "required_placeholders": required_placeholders,
+                "attempt_history": attempt_history,
+                **validation,
+            }
+
+        previous_candidate = candidate_prompt
+        previous_failure = {
+            "decision_reason": validation.get("decision_reason"),
+            "missing_placeholders": list(validation.get("missing_placeholders") or []),
+            "contract_hard_issues": list(validation.get("contract_hard_issues") or []),
+            "contract_soft_issues": list(validation.get("contract_soft_issues") or []),
+        }
+
+        reason = str(validation.get("decision_reason") or "")
+        has_next_attempt = attempt_idx < (total_attempts - 1)
+        if has_next_attempt and _is_recoverable_mutation_failure(reason):
+            if progress_tracker:
+                progress_tracker.emit(
+                    event_type="mutation_retry_attempt",
+                    phase="prompt_improvement",
+                    step="repair_mutation",
+                    message=f"Retrying mutation for block {block_id} (attempt {attempt_idx + 2}/{total_attempts})",
+                    epoch_current=epoch_current,
+                    payload={
+                        "block_id": block_id,
+                        "attempt_index": attempt_idx + 1,
+                        "total_attempts": total_attempts,
+                        "failure_code": reason,
+                        "retry_temperature": _mutation_temperature_for_attempt(attempt_idx + 1),
+                    },
+                )
+            continue
+        break
+
+    final_reason = str((previous_failure or {}).get("decision_reason") or "mutation_retry_exhausted")
+    if progress_tracker:
+        progress_tracker.emit(
+            event_type="mutation_retry_exhausted",
+            phase="prompt_improvement",
+            step="repair_mutation_exhausted",
+            message=f"Mutation retries exhausted for block {block_id}",
+            epoch_current=epoch_current,
+            payload={
+                "block_id": block_id,
+                "failure_code": final_reason,
+                "attempts": attempt_history,
+            },
+        )
+
+    return {
+        "valid": False,
+        "candidate_prompt": previous_candidate or current_prompt,
+        "mutation_model": attempt_history[-1]["mutation_model"] if attempt_history else None,
+        "required_placeholders": required_placeholders,
+        "attempt_history": attempt_history,
+        "decision_reason": final_reason,
+        "missing_placeholders": list((previous_failure or {}).get("missing_placeholders") or []),
+        "contract_issues": list((previous_failure or {}).get("contract_hard_issues") or []),
+        "contract_hard_issues": list((previous_failure or {}).get("contract_hard_issues") or []),
+        "contract_soft_issues": list((previous_failure or {}).get("contract_soft_issues") or []),
+        "contract_auto_repair_applied": [],
+    }
+
+
 def prompt_improvements(
     current_prompts: dict[str, str],
     block_analyses: list[BlockAnalysisSchema],
     block_details_map: dict[str, dict[str, Any]],
     mutation_block_budget: int = 3,
+    mutation_retry_enabled: bool = True,
+    mutation_max_retries: int = DEFAULT_MUTATION_MAX_RETRIES,
+    progress_tracker: TrainingProgressTracker | None = None,
+    epoch_current: int | None = None,
 ) -> tuple[dict[str, str], list[dict[str, Any]]]:
     grouped: dict[str, list[BlockAnalysisSchema]] = defaultdict(list)
     for analysis in block_analyses:
@@ -2302,68 +2727,32 @@ def prompt_improvements(
 
         current_prompt = current_prompts[block_id]
         details = block_details_map.get(block_id, {})
-        criteria = details.get("prompt_creation_parameters", {})
+        unique_analyses = _dedupe_block_analyses(analyses)
 
-        unique_analyses: list[BlockAnalysisSchema] = []
-        seen_analysis_signatures: set[tuple[str, str]] = set()
-        for analysis in analyses:
-            signature = (
-                str(analysis.analysis).strip().lower(),
-                str(analysis.what_to_fix).strip().lower(),
+        try:
+            mutation_result = mutate_block_with_retries(
+                block_id=block_id,
+                current_prompt=current_prompt,
+                analyses=unique_analyses,
+                details=details,
+                mutation_retry_enabled=bool(mutation_retry_enabled),
+                mutation_max_retries=int(max(0, mutation_max_retries)),
+                progress_tracker=progress_tracker,
+                epoch_current=epoch_current,
             )
-            if signature in seen_analysis_signatures:
-                continue
-            seen_analysis_signatures.add(signature)
-            unique_analyses.append(analysis)
-
-        required_placeholders = sorted(_placeholder_tokens(current_prompt))
-        analyses_text = "\n".join(
-            (
-                f"- generic_issue_score={analysis.generic_issue_score}, "
-                f"criteria_misalignment_score={analysis.criteria_misalignment_score}\n"
-                f"  analysis={analysis.analysis}\n"
-                f"  what_to_fix={analysis.what_to_fix}"
-            )
-            for analysis in unique_analyses
-        )
-
-        improve_prompt = (
-            "You are an expert prompt engineer. Improve this block prompt using a structured edit.\n"
-            "Preserve baseline section scaffolding and placeholders unless explicitly required to fix schema fidelity.\n"
-            "Do not insert specific training-case facts, numbers, or direct answer fragments.\n\n"
-            f"Block ID: {block_id}\n\n"
-            f"Current prompt:\n{current_prompt}\n\n"
-            f"RCA analyses:\n{analyses_text}\n\n"
-            f"Prompt creation parameters:\n{_safe_json_dumps(criteria, max_chars=2500)}\n\n"
-            f"Required placeholders to preserve: {required_placeholders}\n"
-            "Editing protocol:\n"
-            "- Keep existing section headings and ordering where possible.\n"
-            "- Modify only sections necessary to address RCA findings.\n"
-            "- Do not remove output schema instructions or contract sections.\n"
-            "- Keep wording concise and generalizable.\n"
-            "- Preserve strict JSON/output contract language for schema-based blocks.\n"
-            "Return only the revised prompt text in `prompt`."
-        )
-
-        mutation, used_model = _generate_with_oss_fallback(
-            prompt=improve_prompt,
-            schema=PromptMutationSchema,
-            temperature=0.5,
-        )
-        logger.info(f"Prompt mutation for {block_id} generated with model={used_model}")
-
-        candidate_prompt = mutation.prompt
-        if candidate_prompt.strip() == current_prompt.strip():
+        except Exception as exc:
+            logger.exception("Mutation generation failed for block=%s: %s", block_id, exc)
             improvements[block_id] = current_prompt
             diagnostics.append(
                 {
                     "block_id": block_id,
                     "analysis_count": len(unique_analyses),
-                    "mutation_model": used_model,
+                    "mutation_model": None,
                     "changed": False,
                     "accepted": False,
-                    "decision_reason": "candidate_same_as_baseline",
-                    "required_placeholders_count": len(required_placeholders),
+                    "decision_reason": "mutation_generation_error",
+                    "error": str(exc),
+                    "required_placeholders_count": len(_placeholder_tokens(current_prompt)),
                     "missing_placeholders": [],
                     "baseline_total": None,
                     "candidate_total": None,
@@ -2371,71 +2760,37 @@ def prompt_improvements(
                     "baseline_scores": {},
                     "candidate_scores": {},
                     "score_models": {},
-                    "candidate_prompt_preview": candidate_prompt[:240],
+                    "candidate_prompt_preview": "",
+                    "mutation_attempts": [],
                 }
             )
             continue
 
-        missing = [
-            token for token in required_placeholders if token not in _placeholder_tokens(candidate_prompt)
-        ]
-        if missing:
-            logger.warning(f"Prompt mutation for {block_id} missing placeholders {missing}; keeping baseline")
+        candidate_prompt = str(mutation_result.get("candidate_prompt", current_prompt))
+        used_model = mutation_result.get("mutation_model")
+        required_placeholders = list(mutation_result.get("required_placeholders") or [])
+        contract_issues = list(mutation_result.get("contract_issues") or [])
+        contract_hard_issues = list(mutation_result.get("contract_hard_issues") or [])
+        contract_soft_issues = list(mutation_result.get("contract_soft_issues") or [])
+        auto_repair_applied = list(mutation_result.get("contract_auto_repair_applied") or [])
+        mutation_attempts = list(mutation_result.get("attempt_history") or [])
+
+        if not bool(mutation_result.get("valid")):
             improvements[block_id] = current_prompt
             diagnostics.append(
                 {
                     "block_id": block_id,
                     "analysis_count": len(unique_analyses),
                     "mutation_model": used_model,
-                    "changed": True,
+                    "changed": candidate_prompt.strip() != current_prompt.strip(),
                     "accepted": False,
-                    "decision_reason": "missing_required_placeholders",
-                    "required_placeholders_count": len(required_placeholders),
-                    "missing_placeholders": missing,
-                    "baseline_total": None,
-                    "candidate_total": None,
-                    "delta_total": 0.0,
-                    "baseline_scores": {},
-                    "candidate_scores": {},
-                    "score_models": {},
-                    "candidate_prompt_preview": candidate_prompt[:240],
-                }
-            )
-            continue
-
-        contract_issues = _validate_prompt_contract(block_id, candidate_prompt, details)
-        contract_hard_issues, contract_soft_issues = _split_contract_issues(contract_issues)
-        auto_repair_applied: list[str] = []
-        if contract_soft_issues and not contract_hard_issues:
-            repaired_prompt, auto_repair_applied = _auto_repair_contract_issues(
-                block_id,
-                candidate_prompt,
-                contract_soft_issues,
-            )
-            if repaired_prompt != candidate_prompt:
-                candidate_prompt = repaired_prompt
-                contract_issues = _validate_prompt_contract(block_id, candidate_prompt, details)
-                contract_hard_issues, contract_soft_issues = _split_contract_issues(contract_issues)
-
-        if contract_hard_issues:
-            logger.warning(
-                f"Prompt mutation for {block_id} violated hard prompt contract {contract_hard_issues}; keeping baseline"
-            )
-            improvements[block_id] = current_prompt
-            diagnostics.append(
-                {
-                    "block_id": block_id,
-                    "analysis_count": len(unique_analyses),
-                    "mutation_model": used_model,
-                    "changed": True,
-                    "accepted": False,
-                    "decision_reason": "prompt_contract_violation",
+                    "decision_reason": str(mutation_result.get("decision_reason") or "mutation_retry_exhausted"),
                     "contract_issues": contract_issues,
                     "contract_hard_issues": contract_hard_issues,
                     "contract_soft_issues": contract_soft_issues,
                     "contract_auto_repair_applied": auto_repair_applied,
                     "required_placeholders_count": len(required_placeholders),
-                    "missing_placeholders": [],
+                    "missing_placeholders": list(mutation_result.get("missing_placeholders") or []),
                     "baseline_total": None,
                     "candidate_total": None,
                     "delta_total": 0.0,
@@ -2443,6 +2798,7 @@ def prompt_improvements(
                     "candidate_scores": {},
                     "score_models": {},
                     "candidate_prompt_preview": candidate_prompt[:240],
+                    "mutation_attempts": mutation_attempts,
                 }
             )
             continue
@@ -2486,6 +2842,7 @@ def prompt_improvements(
                     "candidate_scores": {},
                     "score_models": {},
                     "candidate_prompt_preview": candidate_prompt[:240],
+                    "mutation_attempts": mutation_attempts,
                 }
             )
             continue
@@ -2527,159 +2884,9 @@ def prompt_improvements(
                     "candidate": candidate_score_model,
                 },
                 "candidate_prompt_preview": candidate_prompt[:240],
+                "mutation_attempts": mutation_attempts,
             }
         )
-
-    accepted_any = any(bool(item.get("accepted")) for item in diagnostics if item.get("changed"))
-    if not accepted_any:
-        fallback_grouped = {block_id: grouped.get(block_id, []) for block_id in target_block_ids}
-        fallback_block_id = _select_fallback_block_id(fallback_grouped, current_prompts)
-        if fallback_block_id:
-            base_prompt = current_prompts.get(fallback_block_id, "")
-            fallback_addendum = _deterministic_fallback_addendum(fallback_block_id).strip()
-            normalized_base = _normalize_contract_text(base_prompt)
-            normalized_addendum = _normalize_contract_text(fallback_addendum)
-
-            if fallback_addendum and normalized_addendum not in normalized_base:
-                fallback_prompt = base_prompt.rstrip() + "\n\n" + fallback_addendum
-                fallback_details = block_details_map.get(fallback_block_id, {})
-                fallback_issues = _validate_prompt_contract(
-                    fallback_block_id,
-                    fallback_prompt,
-                    fallback_details,
-                )
-                fallback_hard, fallback_soft = _split_contract_issues(fallback_issues)
-                fallback_repair_applied: list[str] = []
-                if fallback_soft and not fallback_hard:
-                    repaired_prompt, fallback_repair_applied = _auto_repair_contract_issues(
-                        fallback_block_id,
-                        fallback_prompt,
-                        fallback_soft,
-                    )
-                    if repaired_prompt != fallback_prompt:
-                        fallback_prompt = repaired_prompt
-                        fallback_issues = _validate_prompt_contract(
-                            fallback_block_id,
-                            fallback_prompt,
-                            fallback_details,
-                        )
-                        fallback_hard, fallback_soft = _split_contract_issues(fallback_issues)
-
-                if not fallback_hard:
-                    try:
-                        baseline_score, baseline_score_model = _score_cached(
-                            fallback_block_id,
-                            base_prompt,
-                            fallback_details,
-                        )
-                        candidate_score, candidate_score_model = _score_cached(
-                            fallback_block_id,
-                            fallback_prompt,
-                            fallback_details,
-                        )
-
-                        baseline_total = (
-                            baseline_score.generic_quality_score
-                            + baseline_score.criteria_alignment_score
-                            + baseline_score.anti_overfit_score
-                        )
-                        candidate_total = (
-                            candidate_score.generic_quality_score
-                            + candidate_score.criteria_alignment_score
-                            + candidate_score.anti_overfit_score
-                        )
-                        delta_total = candidate_total - baseline_total
-                        acceptance_floor = baseline_total / PROMPT_SCORE_ACCEPTANCE_RATIO
-                        fallback_accepted = candidate_total >= acceptance_floor
-                        if fallback_accepted:
-                            improvements[fallback_block_id] = fallback_prompt
-
-                        diagnostics.append(
-                            {
-                                "block_id": fallback_block_id,
-                                "analysis_count": len(fallback_grouped.get(fallback_block_id, [])),
-                                "mutation_model": "deterministic_fallback",
-                                "changed": True,
-                                "accepted": fallback_accepted,
-                                "decision_reason": (
-                                    "fallback_candidate_score_ge_baseline"
-                                    if fallback_accepted and candidate_total >= baseline_total
-                                    else "fallback_candidate_score_within_tolerance"
-                                    if fallback_accepted
-                                    else "fallback_candidate_score_lt_tolerance"
-                                ),
-                                "contract_issues": fallback_issues,
-                                "contract_hard_issues": fallback_hard,
-                                "contract_soft_issues": fallback_soft,
-                                "contract_auto_repair_applied": fallback_repair_applied,
-                                "required_placeholders_count": len(_placeholder_tokens(base_prompt)),
-                                "missing_placeholders": [],
-                                "baseline_total": baseline_total,
-                                "candidate_total": candidate_total,
-                                "delta_total": delta_total,
-                                "baseline_scores": baseline_score.model_dump(),
-                                "candidate_scores": candidate_score.model_dump(),
-                                "score_models": {
-                                    "baseline": baseline_score_model,
-                                    "candidate": candidate_score_model,
-                                },
-                                "candidate_prompt_preview": fallback_prompt[:240],
-                            }
-                        )
-                    except Exception as exc:
-                        logger.exception(
-                            "Fallback mutation scoring failed for block=%s: %s",
-                            fallback_block_id,
-                            exc,
-                        )
-                        diagnostics.append(
-                            {
-                                "block_id": fallback_block_id,
-                                "analysis_count": len(fallback_grouped.get(fallback_block_id, [])),
-                                "mutation_model": "deterministic_fallback",
-                                "changed": True,
-                                "accepted": False,
-                                "decision_reason": "mutation_scoring_error",
-                                "error": str(exc),
-                                "contract_issues": fallback_issues,
-                                "contract_hard_issues": fallback_hard,
-                                "contract_soft_issues": fallback_soft,
-                                "contract_auto_repair_applied": fallback_repair_applied,
-                                "required_placeholders_count": len(_placeholder_tokens(base_prompt)),
-                                "missing_placeholders": [],
-                                "baseline_total": None,
-                                "candidate_total": None,
-                                "delta_total": 0.0,
-                                "baseline_scores": {},
-                                "candidate_scores": {},
-                                "score_models": {},
-                                "candidate_prompt_preview": fallback_prompt[:240],
-                            }
-                        )
-                else:
-                        diagnostics.append(
-                            {
-                                "block_id": fallback_block_id,
-                                "analysis_count": len(fallback_grouped.get(fallback_block_id, [])),
-                                "mutation_model": "deterministic_fallback",
-                                "changed": True,
-                                "accepted": False,
-                            "decision_reason": "fallback_prompt_contract_violation",
-                            "contract_issues": fallback_issues,
-                            "contract_hard_issues": fallback_hard,
-                            "contract_soft_issues": fallback_soft,
-                            "contract_auto_repair_applied": fallback_repair_applied,
-                            "required_placeholders_count": len(_placeholder_tokens(base_prompt)),
-                            "missing_placeholders": [],
-                            "baseline_total": None,
-                            "candidate_total": None,
-                            "delta_total": 0.0,
-                            "baseline_scores": {},
-                            "candidate_scores": {},
-                            "score_models": {},
-                            "candidate_prompt_preview": fallback_prompt[:240],
-                        }
-                    )
 
     return improvements, diagnostics
 
@@ -2721,14 +2928,11 @@ def generalizer_check(prompts: dict[str, str], selected_cases: list[dict[str, An
 
     merged_suspicious = sorted(set(check.suspicious_phrases + suspicious))
     return {
-        "overfit_risk_score": max(
-            int(check.overfit_risk_score),
-            8 if merged_suspicious else int(check.overfit_risk_score),
-        )
-        if merged_suspicious
-        else int(check.overfit_risk_score),
+        "overfit_risk_score": int(check.overfit_risk_score),
         "suspicious_phrases": merged_suspicious,
         "rationale": check.rationale,
+        "heuristic_suspicious_count": len(suspicious),
+        "model_used": model_used,
     }
 
 
@@ -2753,6 +2957,20 @@ def evaluate_suite(
         "running_mean_delta": 0.0,
         "threshold": float(early_stop_mean_delta_threshold),
     }
+    if timeout_enforcement_mode == "disabled_non_main_thread":
+        logger.warning("Timeout guard inactive for %s: running on non-main thread", phase)
+        if progress_tracker:
+            progress_tracker.emit(
+                event_type="timeout_guard_inactive",
+                phase=phase,
+                step="timeout_mode_check",
+                message=f"{phase}: timeout enforcement inactive on non-main thread",
+                epoch_current=epoch_current,
+                payload={
+                    "timeout_enforcement_mode": timeout_enforcement_mode,
+                    "case_time_budget_seconds": case_time_budget_seconds,
+                },
+            )
 
     total_cases = len(selected_cases)
     with prompt_override_context(prompt_suite):
@@ -3105,11 +3323,15 @@ def train_ab_loop(
     holdout_sample_size: int = 6,
     rca_case_budget: int = 3,
     mutation_block_budget: int = 3,
+    mutation_retry_enabled: bool = True,
+    mutation_max_retries: int = DEFAULT_MUTATION_MAX_RETRIES,
     generalizer_cadence: int = 3,
+    generalizer_suspicious_delta_threshold: int = GENERALIZER_SUSPICIOUS_DELTA_THRESHOLD,
     bootstrap_resamples: int = 1000,
     holdout_split_ratio: float = DEFAULT_HOLDOUT_SPLIT_RATIO,
     progress_status_path: str = "data/training_status.json",
     progress_events_path: str = "data/training_events.jsonl",
+    progress_events_archive_dir: str = "data/training_events",
     track_progress: bool = True,
 ) -> dict[str, Any]:
     random.seed(random_seed)
@@ -3132,6 +3354,7 @@ def train_ab_loop(
 
     store = PromptSuiteStore(output_path)
     run_id = str(uuid.uuid4())
+    events_archive_path = str((Path(progress_events_archive_dir) / f"{run_id}.jsonl").resolve())
     generation = 0
     split_metadata = {
         "train_split": {
@@ -3144,10 +3367,20 @@ def train_ab_loop(
             "ratio": max(0.0, min(0.5, float(holdout_split_ratio))),
         },
     }
-    store.save_generation(current_prompts, generation, {"note": "initial", "run_id": run_id, **split_metadata})
+    store.save_generation(
+        current_prompts,
+        generation,
+        {
+            "note": "initial",
+            "run_id": run_id,
+            "events_archive_path": events_archive_path,
+            **split_metadata,
+        },
+    )
     tracker = TrainingProgressTracker(
         status_path=progress_status_path,
         events_path=progress_events_path,
+        events_archive_path=events_archive_path,
         run_id=run_id,
         epochs_total=epochs,
         enabled=track_progress,
@@ -3177,12 +3410,17 @@ def train_ab_loop(
             "rca_case_budget": int(max(0, rca_case_budget)),
             "mutation_block_budget": int(max(0, mutation_block_budget)),
             "generalizer_cadence": int(max(0, generalizer_cadence)),
+            "generalizer_suspicious_delta_threshold": int(max(0, generalizer_suspicious_delta_threshold)),
+            "mutation_retry_enabled": bool(mutation_retry_enabled),
+            "mutation_max_retries": int(max(0, mutation_max_retries)),
             "bootstrap_resamples": int(max(1, bootstrap_resamples)),
             "train_split_size": len(train_pool),
             "holdout_split_size": len(holdout_pool),
+            "events_archive_path": events_archive_path,
             "feature_flags": {
                 "ENABLE_CANDIDATE_GATES": ENABLE_CANDIDATE_GATES,
                 "ENABLE_TOOL_PROMPT_TEMPLATES": ENABLE_TOOL_PROMPT_TEMPLATES,
+                "ENABLE_MUTATION_RETRY_V2": ENABLE_MUTATION_RETRY_V2,
                 "TRAINING_CASE_TIME_BUDGET_SECONDS": TRAINING_CASE_TIME_BUDGET_SECONDS,
                 "STALL_WARNING_THRESHOLD_SECONDS": STALL_WARNING_THRESHOLD_SECONDS,
             },
@@ -3371,6 +3609,8 @@ def train_ab_loop(
                 payload={
                     "rca_items": len(all_analyses),
                     "mutation_block_budget": int(max(0, mutation_block_budget)),
+                    "mutation_retry_enabled": bool(mutation_retry_enabled and ENABLE_MUTATION_RETRY_V2),
+                    "mutation_max_retries": int(max(0, mutation_max_retries)),
                 },
             )
             if tracker is not None:
@@ -3383,6 +3623,10 @@ def train_ab_loop(
                         block_analyses=all_analyses,
                         block_details_map=block_details_map,
                         mutation_block_budget=mutation_block_budget,
+                        mutation_retry_enabled=bool(mutation_retry_enabled and ENABLE_MUTATION_RETRY_V2),
+                        mutation_max_retries=mutation_max_retries,
+                        progress_tracker=tracker,
+                        epoch_current=epoch_current,
                     )
             else:
                 improvements, prompt_scoring = prompt_improvements(
@@ -3390,6 +3634,10 @@ def train_ab_loop(
                     block_analyses=all_analyses,
                     block_details_map=block_details_map,
                     mutation_block_budget=mutation_block_budget,
+                    mutation_retry_enabled=bool(mutation_retry_enabled and ENABLE_MUTATION_RETRY_V2),
+                    mutation_max_retries=mutation_max_retries,
+                    progress_tracker=None,
+                    epoch_current=epoch_current,
                 )
             candidate_prompts.update(improvements)
 
@@ -3523,14 +3771,45 @@ def train_ab_loop(
                     message=f"Epoch {epoch_current}: running generalizer check",
                     epoch_current=epoch_current,
                 )
+                baseline_generalizer: dict[str, Any] | None = None
+                candidate_generalizer: dict[str, Any] | None = None
                 if tracker is not None:
                     with tracker.active_call(
                         "generalizer_check",
                         metadata={"epoch": epoch_current},
                     ):
-                        generalizer = generalizer_check(candidate_prompts, selected)
+                        baseline_generalizer = generalizer_check(current_prompts, selected)
+                        candidate_generalizer = generalizer_check(candidate_prompts, selected)
                 else:
-                    generalizer = generalizer_check(candidate_prompts, selected)
+                    baseline_generalizer = generalizer_check(current_prompts, selected)
+                    candidate_generalizer = generalizer_check(candidate_prompts, selected)
+                baseline_generalizer = baseline_generalizer or {}
+                candidate_generalizer = candidate_generalizer or {}
+                candidate_risk = int(candidate_generalizer.get("overfit_risk_score", 0) or 0)
+                baseline_risk = int(baseline_generalizer.get("overfit_risk_score", 0) or 0)
+                candidate_suspicious = set(candidate_generalizer.get("suspicious_phrases") or [])
+                baseline_suspicious = set(baseline_generalizer.get("suspicious_phrases") or [])
+                suspicious_delta = len(candidate_suspicious - baseline_suspicious)
+                risk_delta = candidate_risk - baseline_risk
+                reject_by_generalizer = (
+                    candidate_risk >= GENERALIZER_RISK_REJECT_THRESHOLD
+                    and suspicious_delta >= int(max(0, generalizer_suspicious_delta_threshold))
+                )
+                generalizer = {
+                    "baseline": baseline_generalizer,
+                    "candidate": candidate_generalizer,
+                    "overfit_risk_score": candidate_risk,
+                    "suspicious_phrases": sorted(candidate_suspicious),
+                    "baseline_risk_score": baseline_risk,
+                    "candidate_risk_score": candidate_risk,
+                    "risk_delta": risk_delta,
+                    "suspicious_delta": suspicious_delta,
+                    "reject_by_generalizer": reject_by_generalizer,
+                    "reject_rule": (
+                        f"candidate_risk >= {GENERALIZER_RISK_REJECT_THRESHOLD} and "
+                        f"suspicious_delta >= {int(max(0, generalizer_suspicious_delta_threshold))}"
+                    ),
+                }
                 tracker.emit(
                     event_type="generalizer_completed",
                     phase="generalizer_check",
@@ -3539,8 +3818,8 @@ def train_ab_loop(
                     epoch_current=epoch_current,
                     payload=generalizer,
                 )
-                if int(generalizer.get("overfit_risk_score", 0)) >= 8:
-                    logger.warning("Generalizer check flagged overfit risk; rejecting candidate mutations this epoch")
+                if bool(generalizer.get("reject_by_generalizer")):
+                    logger.warning("Generalizer check flagged materially higher overfit risk; rejecting mutations")
                     candidate_prompts = dict(current_prompts)
                     changed_keys = []
                     tracker.emit(
@@ -3549,6 +3828,7 @@ def train_ab_loop(
                         step="reject_mutations",
                         message=f"Epoch {epoch_current}: mutations rejected by generalizer",
                         epoch_current=epoch_current,
+                        payload=generalizer,
                     )
 
             if changed_keys:
@@ -3626,11 +3906,15 @@ def train_ab_loop(
             )
             improvement_delta = float(train_delta_stats.get("mean_delta", avg_score_b - avg_score_a))
             prompt_delta_avg = (sum(delta_totals) / len(delta_totals)) if delta_totals else 0.0
+            paired_eval_case_ids, paired_phase_a_eval_summary, paired_phase_b_eval_summary = _paired_eval_summaries(
+                results_a,
+                results_b,
+            )
 
             gate_results = _evaluate_candidate_gates(
                 delta_stats=train_delta_stats,
-                phase_a_summary=phase_a_eval_summary,
-                phase_b_summary=phase_b_eval_summary,
+                phase_a_summary=paired_phase_a_eval_summary,
+                phase_b_summary=paired_phase_b_eval_summary,
                 enabled=ENABLE_CANDIDATE_GATES,
             )
             gate_failure_reasons: list[str] = []
@@ -3724,6 +4008,7 @@ def train_ab_loop(
                 "holdout_confirmation": holdout_confirmation,
                 "early_stop_triggered": early_stop_triggered,
                 "prompt_delta_avg_total": prompt_delta_avg,
+                "paired_eval_case_ids": paired_eval_case_ids,
             }
             tracker.emit(
                 event_type="candidate_gate_decision",
@@ -3740,6 +4025,9 @@ def train_ab_loop(
                     "gate_failure_reasons": gate_failure_reasons,
                     "phase_a_eval_summary": phase_a_eval_summary,
                     "phase_b_eval_summary": phase_b_eval_summary,
+                    "paired_phase_a_eval_summary": paired_phase_a_eval_summary,
+                    "paired_phase_b_eval_summary": paired_phase_b_eval_summary,
+                    "paired_eval_case_ids": paired_eval_case_ids,
                     "selection_stats": selection_stats,
                 },
                 metrics={
@@ -3750,6 +4038,38 @@ def train_ab_loop(
                     "candidate_prompt_delta_avg_total": prompt_delta_avg,
                 },
             )
+
+            mutation_attempts = [
+                {
+                    "block_id": item.get("block_id"),
+                    "attempts": item.get("mutation_attempts", []),
+                }
+                for item in prompt_scoring
+                if isinstance(item, dict) and item.get("mutation_attempts")
+            ]
+            retried_block_count = sum(
+                1
+                for item in mutation_attempts
+                if isinstance(item.get("attempts"), list) and len(item.get("attempts", [])) > 1
+            )
+            total_retry_attempts = sum(
+                max(0, len(item.get("attempts", [])) - 1)
+                for item in mutation_attempts
+                if isinstance(item.get("attempts"), list)
+            )
+            mutation_retry_summary = {
+                "enabled": bool(mutation_retry_enabled and ENABLE_MUTATION_RETRY_V2),
+                "max_retries": int(max(0, mutation_max_retries)),
+                "blocks_with_attempts": len(mutation_attempts),
+                "retried_blocks": retried_block_count,
+                "total_retry_attempts": total_retry_attempts,
+            }
+            timeout_stats = {
+                "phase_a": _timeout_stats(results_a),
+                "phase_b": _timeout_stats(results_b),
+                "holdout_phase_a": _timeout_stats(holdout_results_a) if holdout_phase_a_summary is not None else None,
+                "holdout_phase_b": _timeout_stats(holdout_results_b) if holdout_phase_b_summary is not None else None,
+            }
 
             metadata = {
                 "epoch": epoch,
@@ -3773,6 +4093,9 @@ def train_ab_loop(
                 "generalizer": generalizer,
                 "phase_a_eval_summary": phase_a_eval_summary,
                 "phase_b_eval_summary": phase_b_eval_summary,
+                "paired_phase_a_eval_summary": paired_phase_a_eval_summary,
+                "paired_phase_b_eval_summary": paired_phase_b_eval_summary,
+                "paired_eval_case_ids": paired_eval_case_ids,
                 "phase_a_eval_meta": phase_a_meta,
                 "phase_b_eval_meta": phase_b_meta,
                 "holdout_phase_a_eval_summary": holdout_phase_a_summary,
@@ -3792,6 +4115,10 @@ def train_ab_loop(
                 "train_split": split_metadata["train_split"],
                 "holdout_split": split_metadata["holdout_split"],
                 "early_stop": phase_b_meta.get("early_stop", {"triggered": False}),
+                "events_archive_path": events_archive_path,
+                "mutation_retry_summary": mutation_retry_summary,
+                "mutation_attempts": mutation_attempts,
+                "timeout_stats": timeout_stats,
                 "prompt_scoring_summary": {
                     "changed_blocks": len(changed_blocks),
                     "scored_blocks": len(scored_blocks),
@@ -3850,6 +4177,7 @@ def train_ab_loop(
             "history_entries": len(PromptSuiteStore(output_path).list_generations()),
             "progress_status_path": progress_status_path,
             "progress_events_path": progress_events_path,
+            "events_archive_path": events_archive_path,
             "sample_strategy": "stratified_rotating_unseen_first",
             "train_split_size": len(train_pool),
             "holdout_split_size": len(holdout_pool),
@@ -3871,13 +4199,17 @@ def run_training_loop(
     holdout_sample_size: int = 6,
     rca_case_budget: int = 3,
     mutation_block_budget: int = 3,
+    mutation_retry_enabled: bool = True,
+    mutation_max_retries: int = DEFAULT_MUTATION_MAX_RETRIES,
     generalizer_cadence: int = 3,
+    generalizer_suspicious_delta_threshold: int = GENERALIZER_SUSPICIOUS_DELTA_THRESHOLD,
     bootstrap_resamples: int = 1000,
     holdout_split_ratio: float = DEFAULT_HOLDOUT_SPLIT_RATIO,
     random_seed: int = 42,
     thinking_level: Literal["low", "med-synth", "med-plan", "high"] = "med-synth",
     progress_status_path: str = "data/training_status.json",
     progress_events_path: str = "data/training_events.jsonl",
+    progress_events_archive_dir: str = "data/training_events",
     track_progress: bool = True,
 ) -> dict[str, Any]:
     return train_ab_loop(
@@ -3889,13 +4221,17 @@ def run_training_loop(
         holdout_sample_size=holdout_sample_size,
         rca_case_budget=rca_case_budget,
         mutation_block_budget=mutation_block_budget,
+        mutation_retry_enabled=mutation_retry_enabled,
+        mutation_max_retries=mutation_max_retries,
         generalizer_cadence=generalizer_cadence,
+        generalizer_suspicious_delta_threshold=generalizer_suspicious_delta_threshold,
         bootstrap_resamples=bootstrap_resamples,
         holdout_split_ratio=holdout_split_ratio,
         random_seed=random_seed,
         thinking_level=thinking_level,
         progress_status_path=progress_status_path,
         progress_events_path=progress_events_path,
+        progress_events_archive_dir=progress_events_archive_dir,
         track_progress=track_progress,
     )
 

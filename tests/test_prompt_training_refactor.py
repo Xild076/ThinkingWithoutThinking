@@ -192,6 +192,83 @@ def test_prompt_improvements_handles_mutation_scoring_error(monkeypatch: pytest.
     )
     assert improvements["custom_block"] == current_prompts["custom_block"]
     assert any(item.get("decision_reason") == "mutation_scoring_error" for item in diagnostics)
+    scoring_item = next(item for item in diagnostics if item.get("decision_reason") == "mutation_scoring_error")
+    assert len(scoring_item.get("mutation_attempts", [])) == 1
+
+
+def test_mutate_block_with_retries_repairs_missing_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
+    analyses = [
+        pt.BlockAnalysisSchema(
+            block_id="custom_block",
+            generic_issue_score=8,
+            criteria_misalignment_score=9,
+            need_fix=True,
+            analysis="Missing reliability contract",
+            what_to_fix="Preserve placeholders",
+        )
+    ]
+    details = {"schema": str, "prompt_creation_parameters": {}}
+    emitted: list[str] = []
+
+    class _Tracker:
+        def emit(self, event_type: str, **kwargs):  # type: ignore[no-untyped-def]
+            emitted.append(event_type)
+
+    calls = {"count": 0}
+
+    def _mock_mutation(*args, **kwargs):  # type: ignore[no-untyped-def]
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return pt.PromptMutationSchema(plan_for_improvement="x", prompt="bad {{{objective}}}"), "mock"
+        return pt.PromptMutationSchema(plan_for_improvement="x", prompt="good {{{objective}}} {{{format}}}"), "mock"
+
+    monkeypatch.setattr(pt, "_generate_with_oss_fallback", _mock_mutation)
+    result = pt.mutate_block_with_retries(
+        block_id="custom_block",
+        current_prompt="base {{{objective}}} {{{format}}}",
+        analyses=analyses,
+        details=details,
+        mutation_retry_enabled=True,
+        mutation_max_retries=3,
+        progress_tracker=_Tracker(),  # type: ignore[arg-type]
+        epoch_current=1,
+    )
+    assert result["valid"] is True
+    assert len(result.get("attempt_history", [])) == 2
+    assert result.get("attempt_history", [])[0].get("decision_reason") == "missing_required_placeholders"
+    assert "mutation_retry_attempt" in emitted
+
+
+def test_generalizer_check_does_not_force_risk_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _mock_generate(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return (
+            pt.GeneralizerCheckSchema(
+                overfit_risk_score=3,
+                suspicious_phrases=["example phrase"],
+                rationale="low risk",
+            ),
+            "mock",
+        )
+
+    monkeypatch.setattr(pt, "_generate_with_oss_fallback", _mock_generate)
+    out = pt.generalizer_check({"b": "prompt text with example phrase"}, [{"prompt": "example phrase", "validation": ""}])
+    assert out["overfit_risk_score"] == 3
+
+
+def test_paired_eval_summaries_use_pair_prefix() -> None:
+    a_results = [
+        {"case": {"id": "c1"}, "case_stats": {"case_total_seconds": 10.0, "degraded_mode_active": False, "tool_failure_signals_count": 0}},
+        {"case": {"id": "c2"}, "case_stats": {"case_total_seconds": 20.0, "degraded_mode_active": False, "tool_failure_signals_count": 0}},
+        {"case": {"id": "c3"}, "case_stats": {"case_total_seconds": 30.0, "degraded_mode_active": False, "tool_failure_signals_count": 0}},
+    ]
+    b_results = [
+        {"case": {"id": "c1"}, "case_stats": {"case_total_seconds": 12.0, "degraded_mode_active": False, "tool_failure_signals_count": 0}},
+        {"case": {"id": "c2"}, "case_stats": {"case_total_seconds": 22.0, "degraded_mode_active": False, "tool_failure_signals_count": 0}},
+    ]
+    case_ids, a_summary, b_summary = pt._paired_eval_summaries(a_results, b_results)
+    assert case_ids == ["c1", "c2"]
+    assert a_summary["case_count"] == 2
+    assert b_summary["case_count"] == 2
 
 
 def test_timeout_enforcement_mode_reports_expected_values() -> None:

@@ -33,6 +33,14 @@ def _import_app():
     return app
 
 
+def _import_visualizer():
+    try:
+        from prompt_improvement_visualizer import create_prompt_improvement_visualization
+    except Exception:
+        from src.prompt_improvement_visualizer import create_prompt_improvement_visualization
+    return create_prompt_improvement_visualization
+
+
 def _resolve_app_import_string() -> str:
     candidates = ["src.app:app", "app:app"]
     for candidate in candidates:
@@ -128,13 +136,17 @@ def cmd_train(args: argparse.Namespace) -> int:
         holdout_sample_size=args.holdout_sample_size,
         rca_case_budget=args.rca_case_budget,
         mutation_block_budget=args.mutation_block_budget,
+        mutation_retry_enabled=args.mutation_retry_enabled,
+        mutation_max_retries=args.mutation_max_retries,
         generalizer_cadence=args.generalizer_cadence,
+        generalizer_suspicious_delta_threshold=args.generalizer_suspicious_delta_threshold,
         bootstrap_resamples=args.bootstrap_resamples,
         holdout_split_ratio=args.holdout_split_ratio,
         random_seed=args.seed,
         thinking_level=args.thinking,
         progress_status_path=args.progress_status,
         progress_events_path=args.progress_events,
+        progress_events_archive_dir=args.progress_events_archive_dir,
         track_progress=not args.no_progress,
     )
     print(json.dumps(result, indent=2))
@@ -172,6 +184,33 @@ def cmd_rollback(args: argparse.Namespace) -> int:
             indent=2,
         )
     )
+    return 0
+
+
+def cmd_visualize(args: argparse.Namespace) -> int:
+    create_prompt_improvement_visualization = _import_visualizer()
+    batch_result = create_prompt_improvement_visualization(
+        input_path=args.input,
+        output_dir=args.output_dir,
+        run_id=args.run_id or None,
+        base_name=args.base_name,
+        latest_run=bool(args.latest_run),
+        emit_index=bool(args.emit_index),
+        golden_alias=bool(args.golden_alias),
+    )
+    payload = batch_result.to_dict()
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"Runs visualized: {payload['runs_count']}")
+        print(f"Golden run:      {payload['golden_run_id']}")
+        if payload.get("golden_png_path"):
+            print(f"Golden PNG:      {payload['golden_png_path']}")
+            print(f"Golden HTML:     {payload['golden_html_path']}")
+        if payload.get("index_html_path"):
+            print(f"Index HTML:      {payload['index_html_path']}")
+        if payload.get("index_json_path"):
+            print(f"Index JSON:      {payload['index_json_path']}")
     return 0
 
 
@@ -215,12 +254,16 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--holdout-sample-size", type=int, default=6)
     train_p.add_argument("--rca-case-budget", type=int, default=3)
     train_p.add_argument("--mutation-block-budget", type=int, default=3)
+    train_p.add_argument("--mutation-retry-enabled", action=argparse.BooleanOptionalAction, default=True)
+    train_p.add_argument("--mutation-max-retries", type=int, default=3)
     train_p.add_argument("--generalizer-cadence", type=int, default=3)
+    train_p.add_argument("--generalizer-suspicious-delta-threshold", type=int, default=3)
     train_p.add_argument("--bootstrap-resamples", type=int, default=1000)
     train_p.add_argument("--holdout-split-ratio", type=float, default=0.2)
     train_p.add_argument("--seed", type=int, default=42)
     train_p.add_argument("--progress-status", type=str, default="data/training_status.json")
     train_p.add_argument("--progress-events", type=str, default="data/training_events.jsonl")
+    train_p.add_argument("--progress-events-archive-dir", type=str, default="data/training_events")
     train_p.add_argument("--no-progress", action="store_true", help="Disable structured progress tracking files")
     train_p.add_argument(
         "--thinking",
@@ -240,6 +283,17 @@ def build_parser() -> argparse.ArgumentParser:
     rollback_p.add_argument("--generation", type=int, required=True)
     rollback_p.add_argument("--run-id", type=str, default="", help="Optional run_id to disambiguate repeated generations")
     rollback_p.set_defaults(func=cmd_rollback)
+
+    vis_p = sub.add_parser("visualize", help="Visualize prompt evolution and improvement over training epochs")
+    vis_p.add_argument("--input", type=str, default="data/prompt_suite_generations.json")
+    vis_p.add_argument("--output-dir", type=str, default="plots/prompt_improvement")
+    vis_p.add_argument("--run-id", type=str, default="", help="Optional run_id (defaults to all runs)")
+    vis_p.add_argument("--base-name", type=str, default="prompt_improvement_dashboard")
+    vis_p.add_argument("--latest-run", action=argparse.BooleanOptionalAction, default=True)
+    vis_p.add_argument("--emit-index", action=argparse.BooleanOptionalAction, default=True)
+    vis_p.add_argument("--golden-alias", action=argparse.BooleanOptionalAction, default=False)
+    vis_p.add_argument("--json", action="store_true", help="Print result as JSON")
+    vis_p.set_defaults(func=cmd_visualize)
 
     return parser
 

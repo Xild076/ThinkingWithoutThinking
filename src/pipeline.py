@@ -2192,6 +2192,8 @@ class Pipeline:
                 projected_units,
             )
 
+        except TimeoutError:
+            raise
         except Exception as exc:
             logger.error(f"Fatal pipeline error: {exc}")
             yield self._emit_event(
