@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import copy
+import gzip
+import hashlib
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -69,26 +72,69 @@ def _env_float(name: str, default: float) -> float:
 ENABLE_CANDIDATE_GATES = _env_flag("ENABLE_CANDIDATE_GATES", default=True)
 ENABLE_TOOL_PROMPT_TEMPLATES = _env_flag("ENABLE_TOOL_PROMPT_TEMPLATES", default=True)
 ENABLE_MUTATION_RETRY_V2 = _env_flag("ENABLE_MUTATION_RETRY_V2", default=True)
+ENABLE_TAIL_RISK_GATE = _env_flag("ENABLE_TAIL_RISK_GATE", default=True)
+ENABLE_NO_CHANGE_STRICT_SEMANTICS = _env_flag("ENABLE_NO_CHANGE_STRICT_SEMANTICS", default=True)
+ENABLE_BLOCK_IMPACT_RANKER = _env_flag("ENABLE_BLOCK_IMPACT_RANKER", default=True)
+ENABLE_RESOURCE_TELEMETRY_V3 = _env_flag("ENABLE_RESOURCE_TELEMETRY_V3", default=True)
+ENABLE_ADAPTIVE_EVAL_V1 = _env_flag("ENABLE_ADAPTIVE_EVAL_V1", default=True)
+ENABLE_BALANCED_GUARDRAILS_V1 = _env_flag("ENABLE_BALANCED_GUARDRAILS_V1", default=True)
+ENABLE_MUTATION_BUDGET_OPT_V1 = _env_flag("ENABLE_MUTATION_BUDGET_OPT_V1", default=True)
+ENABLE_REPLAY_REBALANCE_V1 = _env_flag("ENABLE_REPLAY_REBALANCE_V1", default=True)
 TRAINING_CASE_TIME_BUDGET_SECONDS = _env_float("TRAINING_CASE_TIME_BUDGET_SECONDS", 600.0)
 STALL_WARNING_THRESHOLD_SECONDS = _env_float("TRAINING_STALL_WARNING_SECONDS", 600.0)
 
-RUNTIME_GATE_MEAN_MAX_RATIO = 1.20
-RUNTIME_GATE_P90_MAX_RATIO = 1.30
-RUNTIME_GATE_MAX_ABS_MEAN_INCREASE_SECONDS = 45.0
-STABILITY_GATE_MAX_TOOL_FAILURE_DELTA = 0.2
-DEGRADATION_GATE_MAX_DELTA = 0.05
-PROMPT_SCORE_ACCEPTANCE_RATIO = 1.05
-QUALITY_GATE_MIN_MEAN_DELTA = 0.10
-QUALITY_GATE_MIN_CI_LOWER = -0.05
+RUNTIME_GATE_MEAN_MAX_RATIO = 1.60
+RUNTIME_GATE_P90_MAX_RATIO = 1.90
+RUNTIME_GATE_MAX_ABS_MEAN_INCREASE_SECONDS = 180.0
+STABILITY_GATE_MAX_TOOL_FAILURE_DELTA = 0.90
+DEGRADATION_GATE_MAX_DELTA = 0.35
+PROMPT_SCORE_ACCEPTANCE_MIN_DELTA = 2.0
+MUTATION_ACCEPTANCE_TOTAL_MIN = 24
+QUALITY_GATE_MIN_MEAN_DELTA = 0.0
+QUALITY_GATE_MIN_CI_LOWER = -2.5
+QUALITY_GATE_MIN_WIN_RATE = 0.50
+QUALITY_GATE_MIN_P10_DELTA = -1.25
+QUALITY_GATE_MIN_WORST_CASE_DELTA = -3.0
+TAIL_RISK_CATASTROPHIC_DELTA_THRESHOLD = -3.0
+TAIL_RISK_MAX_CATASTROPHIC_REGRESSIONS = 1
 HOLDOUT_GATE_MIN_MEAN_DELTA = 0.0
 HOLDOUT_GATE_MIN_CI_LOWER = -0.10
-EARLY_STOP_MIN_CASES = 4
-EARLY_STOP_MEAN_DELTA_THRESHOLD = -0.35
+HOLDOUT_GATE_MIN_WIN_RATE = 0.50
+EARLY_STOP_MIN_CASES = 6
+EARLY_STOP_MEAN_DELTA_THRESHOLD = -0.75
 DEFAULT_HOLDOUT_SPLIT_RATIO = 0.2
 DEFAULT_MUTATION_MAX_RETRIES = 3
+DEFAULT_MUTATION_TOURNAMENT_SIZE = 3
+DEFAULT_MUTATION_DIVERSITY_TARGET = 3
 MUTATION_RETRY_TEMPERATURE_SCHEDULE = [0.45, 0.30, 0.20, 0.10]
 GENERALIZER_RISK_REJECT_THRESHOLD = 8
-GENERALIZER_SUSPICIOUS_DELTA_THRESHOLD = 3
+GENERALIZER_SUSPICIOUS_DELTA_THRESHOLD = 5
+DEFAULT_RCA_THRESHOLD = 7.0
+DEFAULT_RCA_FALLBACK_FRACTION = 0.5
+DEFAULT_SELECTION_MODE = "hybrid_coverage_replay"
+EVENT_SCHEMA_VERSION = "2.0"
+METADATA_SCHEMA_VERSION = "2.0"
+DEFAULT_DATASET_SCHEMA_VERSION = "2.0"
+DEFAULT_REPLAY_FRACTION = 0.3
+DEFAULT_EXPLORATION_FRACTION = 0.2
+DEFAULT_REPLAY_COOLDOWN_EPOCHS = 2
+DEFAULT_EVAL_MODE = "adaptive_sequential"
+DEFAULT_TRAIN_EVAL_MIN_PAIRS = 4
+DEFAULT_TRAIN_EVAL_MAX_PAIRS = 10
+DEFAULT_TRAIN_EVAL_CHECKPOINTS = [4, 6, 8, 10]
+DEFAULT_HOLDOUT_EVAL_MIN_PAIRS = 4
+DEFAULT_HOLDOUT_EVAL_MAX_PAIRS = 8
+DEFAULT_HOLDOUT_EVAL_CHECKPOINTS = [4, 6, 8]
+DEFAULT_MUTATION_STAGE_A_TOP_K = 4
+DEFAULT_MUTATION_PRECHECK_CASES = 4
+DEFAULT_RESOURCE_TARGET_REDUCTION = 0.35
+
+REPLAY_CAUSE_WEIGHTS: dict[str, float] = {
+    "low_score": 1.8,
+    "negative_delta": 2.0,
+    "degraded": 1.2,
+    "timeout": 2.5,
+}
 
 _TIME_LIMIT_MODE_WARNINGS: set[str] = set()
 
@@ -211,12 +257,122 @@ def _estimated_tokens_from_text(text: str) -> int:
     return max(1, int(len(text or "") / 4))
 
 
-def _should_skip_oss_for_prompt(prompt: str, token_budget: int = 5500) -> bool:
+def _parse_eval_checkpoints(
+    checkpoints: list[int] | tuple[int, ...] | str | None,
+    *,
+    default: list[int],
+) -> list[int]:
+    values: list[int] = []
+    if isinstance(checkpoints, str):
+        for raw in checkpoints.split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                values.append(int(raw))
+            except Exception:
+                continue
+    elif isinstance(checkpoints, (list, tuple)):
+        for item in checkpoints:
+            try:
+                values.append(int(item))
+            except Exception:
+                continue
+    if not values:
+        values = list(default)
+    return sorted({max(1, int(value)) for value in values})
+
+
+class RunResourceTelemetry:
+    def __init__(self) -> None:
+        self.llm_calls = 0
+        self.llm_tokens_in = 0
+        self.llm_tokens_out = 0
+        self.phase_wall_seconds: dict[str, float] = {}
+        self._phase_stack: list[tuple[str, float]] = []
+
+    @contextmanager
+    def phase(self, phase_name: str):
+        phase = str(phase_name or "unknown")
+        started = time.perf_counter()
+        self._phase_stack.append((phase, started))
+        try:
+            yield
+        finally:
+            ended = time.perf_counter()
+            if self._phase_stack:
+                self._phase_stack.pop()
+            elapsed = max(0.0, ended - started)
+            self.phase_wall_seconds[phase] = self.phase_wall_seconds.get(phase, 0.0) + elapsed
+
+    def current_phase(self) -> str:
+        if self._phase_stack:
+            return self._phase_stack[-1][0]
+        return "unknown"
+
+    def record_llm_call(
+        self,
+        *,
+        tokens_in: int,
+        tokens_out: int,
+    ) -> None:
+        self.llm_calls += 1
+        self.llm_tokens_in += max(0, int(tokens_in))
+        self.llm_tokens_out += max(0, int(tokens_out))
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "llm_calls": int(self.llm_calls),
+            "llm_tokens_in": int(self.llm_tokens_in),
+            "llm_tokens_out": int(self.llm_tokens_out),
+            "phase_wall_seconds": {
+                phase: round(float(seconds), 6)
+                for phase, seconds in sorted(self.phase_wall_seconds.items())
+            },
+        }
+
+    def delta_since(self, baseline: dict[str, Any]) -> dict[str, Any]:
+        baseline_calls = int((baseline or {}).get("llm_calls") or 0)
+        baseline_tokens_in = int((baseline or {}).get("llm_tokens_in") or 0)
+        baseline_tokens_out = int((baseline or {}).get("llm_tokens_out") or 0)
+        baseline_phase_wall = (baseline or {}).get("phase_wall_seconds") or {}
+        delta_phase_wall: dict[str, float] = {}
+        if isinstance(baseline_phase_wall, dict):
+            for phase in set(self.phase_wall_seconds.keys()).union(
+                {str(item) for item in baseline_phase_wall.keys()}
+            ):
+                current = float(self.phase_wall_seconds.get(phase, 0.0) or 0.0)
+                previous = float(baseline_phase_wall.get(phase, 0.0) or 0.0)
+                delta = current - previous
+                if delta:
+                    delta_phase_wall[str(phase)] = round(delta, 6)
+        return {
+            "llm_calls": int(self.llm_calls - baseline_calls),
+            "llm_tokens_in": int(self.llm_tokens_in - baseline_tokens_in),
+            "llm_tokens_out": int(self.llm_tokens_out - baseline_tokens_out),
+            "phase_wall_seconds": dict(sorted(delta_phase_wall.items())),
+        }
+
+
+_ACTIVE_RESOURCE_TELEMETRY: RunResourceTelemetry | None = None
+
+
+def _should_skip_oss_for_prompt(prompt: str, token_budget: int = 6000) -> bool:
+    """Skip oss120b if estimated prompt tokens exceed budget (8k model limit)."""
     return _estimated_tokens_from_text(prompt) > token_budget
 
 
 def _extract_explicit_json_keys(prompt_text: str) -> set[str]:
-    return set(re.findall(r'"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:', prompt_text or ""))
+    """Extract JSON keys only from fenced code blocks and inline JSON object literals."""
+    text = prompt_text or ""
+    keys: set[str] = set()
+    # Fenced code blocks (```json ... ``` or ``` ... ```)
+    for block in re.findall(r'```[\w]*\s*\n?(.*?)```', text, re.DOTALL):
+        keys.update(re.findall(r'"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:', block))
+    # Inline JSON object literals ({...})
+    for block in re.findall(r'\{[^{}]*\}', text):
+        keys.update(re.findall(r'"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:', block))
+    return keys
 
 
 HARD_CONTRACT_ISSUES: set[str] = {
@@ -230,7 +386,6 @@ HARD_CONTRACT_ISSUES: set[str] = {
     "router_missing_required_keys",
     "router_route_list_shape_unspecified",
     "router_single_route_schema_drift",
-    "python_tool_prompt_missing_repair_or_schema_markers",
     "long_response_conflicting_output_contract",
 }
 
@@ -303,6 +458,14 @@ def _auto_repair_contract_issues(
         append_lines.append("Use only validated premises for downstream deductions and validity checks.")
         applied.append("deductive_prompt_missing_validation_dependency")
 
+    if block_id == "python_code_execution_tool_block" and "python_tool_prompt_missing_repair_or_schema_markers" in soft_set:
+        append_lines.extend([
+            'Output contract: return strict JSON with keys "code_to_run" and "packages_needed".',
+            "Disallow file system writes, network access, and shell commands.",
+            "If a previous error occurred, fix the root cause instead of masking it.",
+        ])
+        applied.append("python_tool_prompt_missing_repair_or_schema_markers")
+
     if not append_lines:
         return prompt_text, []
 
@@ -334,11 +497,20 @@ def _validate_prompt_contract(
         or "no json or markup" in prompt_norm
         or "no json or markdown" in prompt_norm
     ):
-        issues.append("conflicting_plain_text_instruction")
+        _benign_plain_text_contexts = (
+            "explain in plain text", "describe in plain text",
+            "plain text reasoning", "plain text before",
+            "include plain text", "plain text explanation",
+            "plain text summary", "reasoning in plain text",
+        )
+        has_json_instruction = _contains_any_marker(prompt_norm, ("json", "strict json", "valid json"))
+        has_benign_context = any(ctx in prompt_norm for ctx in _benign_plain_text_contexts)
+        if not (has_benign_context and has_json_instruction):
+            issues.append("conflicting_plain_text_instruction")
 
     explicit_keys = _extract_explicit_json_keys(prompt_text)
     if explicit_keys:
-        if required_fields and required_fields.isdisjoint(explicit_keys):
+        if len(explicit_keys) >= 3 and required_fields and required_fields.isdisjoint(explicit_keys):
             issues.append("explicit_json_keys_do_not_match_schema")
         if block_id == "self_critique_block":
             if "weaknesses" in explicit_keys and not {
@@ -700,6 +872,7 @@ def _build_sampling_state(cases: list[dict[str, Any]], rng: random.Random) -> di
         "bucket_offsets": {bucket_key: 0 for bucket_key in shuffled_buckets},
         "seen_case_ids": set(),
         "epoch_index": 0,
+        "rng": rng,  # stored for re-shuffling on wrap-around
     }
 
 
@@ -728,6 +901,11 @@ def _next_case_from_bucket(
         state["bucket_offsets"] = offsets
 
     start_index = int(offsets.get(bucket_key, 0) or 0) % len(bucket)
+    # Re-shuffle when wrapping around to avoid repeating the same order
+    if start_index == 0 and state.get("epoch_index", 0) > 0:
+        shuffle_rng = state.get("rng")
+        if shuffle_rng is not None:
+            shuffle_rng.shuffle(bucket)
     for step in range(len(bucket)):
         idx = (start_index + step) % len(bucket)
         candidate = bucket[idx]
@@ -817,6 +995,231 @@ def sample_cases_stratified(
     sample_state["epoch_index"] = epoch_index + 1
     return selected
 
+
+def _all_cases_from_sampling_state(sample_state: dict[str, Any]) -> list[dict[str, Any]]:
+    buckets = sample_state.get("buckets", {})
+    if not isinstance(buckets, dict):
+        return []
+    items: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for bucket_cases in buckets.values():
+        if not isinstance(bucket_cases, list):
+            continue
+        for case in bucket_cases:
+            if not isinstance(case, dict):
+                continue
+            case_id = _case_identifier(case)
+            if case_id in seen_ids:
+                continue
+            seen_ids.add(case_id)
+            items.append(case)
+    return items
+
+
+def _replay_priority_score(history: dict[str, Any]) -> float:
+    last_score = float(history.get("last_score") or 0.0)
+    last_delta = float(history.get("last_delta") or 0.0)
+    degraded_count = int(history.get("degraded_count") or 0)
+    timeout_count = int(history.get("timeout_count") or 0)
+    low_score_penalty = max(0.0, 7.0 - last_score)
+    negative_delta_penalty = abs(last_delta) if last_delta < 0 else 0.0
+    base_score = (
+        (2.0 * low_score_penalty)
+        + (2.5 * negative_delta_penalty)
+        + (2.2 * degraded_count)
+        + (3.5 * timeout_count)
+    )
+    replay_cause = "low_score"
+    if timeout_count > 0:
+        replay_cause = "timeout"
+    elif negative_delta_penalty > 0:
+        replay_cause = "negative_delta"
+    elif degraded_count > 0:
+        replay_cause = "degraded"
+    cause_weight = float(REPLAY_CAUSE_WEIGHTS.get(replay_cause, 1.0))
+    return float(base_score * cause_weight)
+
+
+def select_cases_hybrid(
+    *,
+    sample_state: dict[str, Any],
+    sample_size: int,
+    rng: random.Random,
+    case_history: dict[str, dict[str, Any]],
+    epoch_current: int,
+    replay_fraction: float = DEFAULT_REPLAY_FRACTION,
+    exploration_fraction: float = DEFAULT_EXPLORATION_FRACTION,
+    replay_cooldown_epochs: int = DEFAULT_REPLAY_COOLDOWN_EPOCHS,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    target_size = max(0, int(sample_size))
+    if target_size <= 0:
+        return [], []
+
+    replay_slots = max(0, int(round(target_size * max(0.0, min(0.6, replay_fraction)))))
+    exploration_slots = max(0, int(round(target_size * max(0.0, min(0.6, exploration_fraction)))))
+    coverage_slots = max(0, target_size - replay_slots - exploration_slots)
+
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[str] = set()
+    diagnostics: list[dict[str, Any]] = []
+
+    def _append(
+        case: dict[str, Any],
+        slot: str,
+        reason: str,
+        replay_cause: str | None = None,
+    ) -> bool:
+        case_id = _case_identifier(case)
+        if case_id in selected_ids:
+            return False
+        selected.append(case)
+        selected_ids.add(case_id)
+        seen_case_ids = sample_state.setdefault("seen_case_ids", set())
+        if isinstance(seen_case_ids, set):
+            seen_case_ids.add(case_id)
+        diagnostics.append(
+            {
+                "case_id": case_id,
+                "slot": slot,
+                "reason": reason,
+                "replay_cause": replay_cause,
+                "category": case.get("category"),
+                "difficulty": case.get("difficulty"),
+            }
+        )
+        return True
+
+    coverage_cases = sample_cases_stratified(
+        sample_state=sample_state,
+        sample_size=coverage_slots,
+        rng=rng,
+    )
+    for case in coverage_cases:
+        _append(case, "coverage", "stratified_unseen_rotation")
+
+    all_cases = _all_cases_from_sampling_state(sample_state)
+    by_id = {_case_identifier(case): case for case in all_cases}
+
+    replay_candidates: list[tuple[float, str, str]] = []
+    for case_id, history in case_history.items():
+        if case_id in selected_ids:
+            continue
+        if case_id not in by_id:
+            continue
+        last_epoch = int(history.get("last_epoch") or -999999)
+        if epoch_current - last_epoch <= int(max(0, replay_cooldown_epochs)):
+            continue
+        if (
+            float(history.get("last_score") or 10.0) >= 7.0
+            and float(history.get("last_delta") or 0.0) >= 0.0
+            and int(history.get("degraded_count") or 0) == 0
+            and int(history.get("timeout_count") or 0) == 0
+        ):
+            continue
+        replay_reason = "low_score"
+        if int(history.get("timeout_count") or 0) > 0:
+            replay_reason = "timeout"
+        elif float(history.get("last_delta") or 0.0) < 0:
+            replay_reason = "negative_delta"
+        elif int(history.get("degraded_count") or 0) > 0:
+            replay_reason = "degraded"
+        replay_candidates.append((_replay_priority_score(history), case_id, replay_reason))
+    replay_candidates.sort(key=lambda item: item[0], reverse=True)
+
+    replay_selected_ids: set[str] = set()
+    replay_count_by_cause: dict[str, int] = {}
+    by_cause: dict[str, list[tuple[float, str, str]]] = {}
+    for item in replay_candidates:
+        by_cause.setdefault(item[2], []).append(item)
+
+    mandatory_causes = ["negative_delta", "low_score"]
+    if ENABLE_REPLAY_REBALANCE_V1:
+        for cause in mandatory_causes:
+            if len(replay_selected_ids) >= replay_slots:
+                break
+            candidate_list = by_cause.get(cause) or []
+            if not candidate_list:
+                continue
+            _, case_id, replay_reason = candidate_list.pop(0)
+            case = by_id.get(case_id)
+            if not isinstance(case, dict):
+                continue
+            if _append(case, "replay", "replay_priority", replay_reason):
+                replay_selected_ids.add(case_id)
+                replay_count_by_cause[replay_reason] = replay_count_by_cause.get(replay_reason, 0) + 1
+
+    cause_cap = max(1, int(math.ceil(max(1, replay_slots) * 0.6)))
+    for _, case_id, replay_reason in replay_candidates:
+        if len(replay_selected_ids) >= replay_slots:
+            break
+        if case_id in replay_selected_ids:
+            continue
+        if ENABLE_REPLAY_REBALANCE_V1 and replay_count_by_cause.get(replay_reason, 0) >= cause_cap:
+            continue
+        case = by_id.get(case_id)
+        if not isinstance(case, dict):
+            continue
+        if _append(case, "replay", "replay_priority", replay_reason):
+            replay_selected_ids.add(case_id)
+            replay_count_by_cause[replay_reason] = replay_count_by_cause.get(replay_reason, 0) + 1
+
+    if exploration_slots > 0:
+        exploration_pool = [
+            case for case in all_cases if _case_identifier(case) not in selected_ids
+        ]
+        weighted_pool: list[tuple[float, dict[str, Any]]] = []
+        for case in exploration_pool:
+            case_id = _case_identifier(case)
+            sampled_times = int((case_history.get(case_id) or {}).get("times_sampled") or 0)
+            novelty_weight = 1.0 / float(1 + sampled_times)
+            weighted_pool.append((novelty_weight + rng.random() * 0.05, case))
+        weighted_pool.sort(key=lambda item: item[0], reverse=True)
+        for _, case in weighted_pool[:exploration_slots]:
+            _append(case, "exploration", "novelty_weighted")
+
+    if len(selected) < target_size:
+        filler = sample_cases_stratified(
+            sample_state=sample_state,
+            sample_size=target_size,
+            rng=rng,
+        )
+        for case in filler:
+            if len(selected) >= target_size:
+                break
+            _append(case, "fallback", "stratified_fill")
+
+    return selected[:target_size], diagnostics
+
+
+def update_case_history(
+    *,
+    case_history: dict[str, dict[str, Any]],
+    selected_cases: list[dict[str, Any]],
+    results_a: list[dict[str, Any]],
+    results_b: list[dict[str, Any]],
+    epoch_current: int,
+) -> None:
+    pair_count = min(len(selected_cases), len(results_a), len(results_b))
+    for idx in range(pair_count):
+        case = selected_cases[idx]
+        case_id = _case_identifier(case)
+        grade_a = results_a[idx].get("grade", {}) if isinstance(results_a[idx], dict) else {}
+        grade_b = results_b[idx].get("grade", {}) if isinstance(results_b[idx], dict) else {}
+        stats_a = results_a[idx].get("case_stats", {}) if isinstance(results_a[idx], dict) else {}
+        stats_b = results_b[idx].get("case_stats", {}) if isinstance(results_b[idx], dict) else {}
+        score_a = float(grade_a.get("aggregate_score", 0.0) or 0.0)
+        score_b = float(grade_b.get("aggregate_score", 0.0) or 0.0)
+        delta = score_b - score_a
+        degraded = bool(stats_a.get("degraded_mode_active")) or bool(stats_b.get("degraded_mode_active"))
+        timed_out = bool(stats_a.get("timed_out")) or bool(stats_b.get("timed_out"))
+
+        entry = case_history.setdefault(case_id, {})
+        entry["times_sampled"] = int(entry.get("times_sampled") or 0) + 1
+        entry["last_epoch"] = int(epoch_current)
+        entry["last_score"] = float(score_b)
+        entry["last_delta"] = float(delta)
+        entry["degraded_count"] = int(entry.get("degraded_count") or 0) + (1 if degraded else 0)
+        entry["timeout_count"] = int(entry.get("timeout_count") or 0) + (1 if timed_out else 0)
 
 def _paired_delta_stats(
     baseline_scores: list[float],
@@ -999,6 +1402,8 @@ def _extract_case_tool_metrics(run_output: dict[str, Any]) -> dict[str, Any]:
 
 def _summarize_eval_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     case_times_s: list[float] = []
+    pipeline_times_s: list[float] = []
+    grading_times_s: list[float] = []
     tool_failure_counts: list[float] = []
     degraded_flags: list[bool] = []
     python_attempts: list[float] = []
@@ -1014,6 +1419,14 @@ def _summarize_eval_results(results: list[dict[str, Any]]) -> dict[str, Any]:
         case_total_seconds = case_stats.get("case_total_seconds")
         if isinstance(case_total_seconds, (int, float)):
             case_times_s.append(float(case_total_seconds))
+
+        pipeline_seconds = case_stats.get("pipeline_run_seconds")
+        if isinstance(pipeline_seconds, (int, float)):
+            pipeline_times_s.append(float(pipeline_seconds))
+
+        grading_seconds = case_stats.get("grading_seconds")
+        if isinstance(grading_seconds, (int, float)):
+            grading_times_s.append(float(grading_seconds))
 
         failure_count = case_stats.get("tool_failure_signals_count")
         if isinstance(failure_count, (int, float)):
@@ -1051,6 +1464,9 @@ def _summarize_eval_results(results: list[dict[str, Any]]) -> dict[str, Any]:
         "case_count": case_count,
         "mean_case_time_s": _mean(case_times_s) or 0.0,
         "p90_case_time_s": _percentile(case_times_s, 90) or 0.0,
+        "sum_case_time_s": float(sum(case_times_s)),
+        "sum_pipeline_run_s": float(sum(pipeline_times_s)),
+        "sum_grading_s": float(sum(grading_times_s)),
         "avg_tool_failure_signals": _mean(tool_failure_counts) or 0.0,
         "degraded_case_rate": degraded_rate,
         "degraded_case_count": degraded_count,
@@ -1108,24 +1524,114 @@ def _timeout_stats(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _quality_gate_thresholds(n: int) -> tuple[float, float]:
+    """Return (min_mean_delta, min_ci_lower) based on sample size tier."""
+    if n >= 15:
+        return (0.05, -0.50)
+    if n >= 8:
+        return (0.0, -1.0)
+    return (0.0, -2.5)
+
+
+def _stability_gate_thresholds(n: int) -> tuple[float, float]:
+    """Return (max_tool_failure_delta, max_degraded_rate_delta) based on sample size tier."""
+    if n >= 15:
+        return (0.20, 0.05)
+    if n >= 8:
+        return (0.30, 0.10)
+    return (0.50, 0.20)
+
+
+def _gate_tier_label(n: int) -> str:
+    if n >= 15:
+        return "large"
+    if n >= 8:
+        return "medium"
+    return "small"
+
+
 def _evaluate_candidate_gates(
     *,
     delta_stats: dict[str, Any],
     phase_a_summary: dict[str, Any],
     phase_b_summary: dict[str, Any],
     enabled: bool,
+    n_pairs: int = 0,
+    quality_gate_min_mean_delta: float = QUALITY_GATE_MIN_MEAN_DELTA,
+    quality_gate_min_win_rate: float = QUALITY_GATE_MIN_WIN_RATE,
+    quality_gate_min_p10_delta: float = QUALITY_GATE_MIN_P10_DELTA,
+    quality_gate_min_worst_case_delta: float = QUALITY_GATE_MIN_WORST_CASE_DELTA,
+    runtime_gate_mean_ratio_max: float = RUNTIME_GATE_MEAN_MAX_RATIO,
+    runtime_gate_p90_ratio_max: float = RUNTIME_GATE_P90_MAX_RATIO,
+    runtime_gate_abs_mean_increase_max_seconds: float = RUNTIME_GATE_MAX_ABS_MEAN_INCREASE_SECONDS,
+    stability_gate_tool_failure_delta_max: float = STABILITY_GATE_MAX_TOOL_FAILURE_DELTA,
+    stability_gate_degraded_rate_delta_max: float = DEGRADATION_GATE_MAX_DELTA,
+    tail_risk_gate_enabled: bool = ENABLE_TAIL_RISK_GATE,
+    tail_risk_catastrophic_delta_threshold: float = TAIL_RISK_CATASTROPHIC_DELTA_THRESHOLD,
+    tail_risk_max_catastrophic_regressions: int = TAIL_RISK_MAX_CATASTROPHIC_REGRESSIONS,
 ) -> dict[str, Any]:
     mean_delta = float(delta_stats.get("mean_delta", 0.0) or 0.0)
     ci_lower = float(delta_stats.get("ci_lower", mean_delta) or mean_delta)
     ci_upper = float(delta_stats.get("ci_upper", mean_delta) or mean_delta)
 
+    deltas = [float(item) for item in (delta_stats.get("deltas") or []) if isinstance(item, (int, float))]
+    wins = sum(1 for d in deltas if d > 0)
+    win_rate = (wins / len(deltas)) if deltas else 0.0
+    p10_delta = float(_percentile(deltas, 10) or mean_delta)
+    worst_case_delta = float(min(deltas)) if deltas else mean_delta
+    catastrophic_threshold = float(tail_risk_catastrophic_delta_threshold)
+    catastrophic_regression_count = sum(1 for d in deltas if d <= catastrophic_threshold)
+
+    tier = "balanced_lenient_v2"
+    min_mean_delta = float(quality_gate_min_mean_delta)
+    min_ci_lower = QUALITY_GATE_MIN_CI_LOWER
+    min_win_rate = float(quality_gate_min_win_rate)
+    min_p10_delta = float(quality_gate_min_p10_delta)
+    min_worst_case_delta = float(quality_gate_min_worst_case_delta)
+    quality_checks = {
+        "mean_delta_nonnegative": mean_delta >= min_mean_delta,
+        "win_rate_minimum": win_rate >= min_win_rate,
+        "p10_delta_guardrail": p10_delta >= min_p10_delta,
+        "worst_case_guardrail": worst_case_delta >= min_worst_case_delta,
+    }
+    quality_passed = all(bool(value) for value in quality_checks.values())
+    quality_failed_checks = [name for name, passed in quality_checks.items() if not bool(passed)]
+
     quality_gate = {
         "name": "quality_gate",
-        "passed": mean_delta >= QUALITY_GATE_MIN_MEAN_DELTA and ci_lower > QUALITY_GATE_MIN_CI_LOWER,
+        "passed": quality_passed,
         "mean_delta": mean_delta,
         "ci_lower": ci_lower,
         "ci_upper": ci_upper,
-        "rule": f"mean_delta >= {QUALITY_GATE_MIN_MEAN_DELTA} and ci_lower > {QUALITY_GATE_MIN_CI_LOWER}",
+        "win_rate": round(win_rate, 4),
+        "p10_delta": round(p10_delta, 6),
+        "worst_case_delta": round(worst_case_delta, 6),
+        "wins": wins,
+        "n_pairs": n_pairs,
+        "tier": tier,
+        "thresholds": {
+            "min_mean_delta": min_mean_delta,
+            "min_ci_lower": min_ci_lower,
+            "min_win_rate": min_win_rate,
+            "min_p10_delta": min_p10_delta,
+            "min_worst_case_delta": min_worst_case_delta,
+        },
+        "distance_from_threshold": {
+            "mean_delta": round(mean_delta - min_mean_delta, 6),
+            "ci_lower": round(ci_lower - min_ci_lower, 6),
+            "win_rate": round(win_rate - min_win_rate, 4),
+            "p10_delta": round(p10_delta - min_p10_delta, 6),
+            "worst_case_delta": round(worst_case_delta - min_worst_case_delta, 6),
+        },
+        "checks": quality_checks,
+        "failed_checks": quality_failed_checks,
+        "passed_via": "all_quality_constraints" if quality_passed else "failed_quality_constraints",
+        "rule": (
+            f"mean_delta >= {min_mean_delta} and "
+            f"win_rate >= {min_win_rate} and "
+            f"p10_delta >= {min_p10_delta} and "
+            f"worst_case_delta >= {min_worst_case_delta}"
+        ),
     }
 
     mean_a = float(phase_a_summary.get("mean_case_time_s", 0.0) or 0.0)
@@ -1143,8 +1649,8 @@ def _evaluate_candidate_gates(
 
     runtime_gate = {
         "name": "runtime_gate",
-        "passed": (mean_ratio is None or mean_ratio <= RUNTIME_GATE_MEAN_MAX_RATIO)
-        and (p90_ratio is None or p90_ratio <= RUNTIME_GATE_P90_MAX_RATIO),
+        "passed": (mean_ratio is None or mean_ratio <= float(runtime_gate_mean_ratio_max))
+        and (p90_ratio is None or p90_ratio <= float(runtime_gate_p90_ratio_max)),
         "baseline_mean_case_time_s": mean_a,
         "candidate_mean_case_time_s": mean_b,
         "baseline_p90_case_time_s": p90_a,
@@ -1152,11 +1658,16 @@ def _evaluate_candidate_gates(
         "mean_ratio_b_over_a": mean_ratio,
         "p90_ratio_b_over_a": p90_ratio,
         "mean_delta_seconds_b_minus_a": mean_delta_seconds,
-        "passed_abs_mean_delta": mean_delta_seconds <= RUNTIME_GATE_MAX_ABS_MEAN_INCREASE_SECONDS,
+        "passed_abs_mean_delta": mean_delta_seconds <= float(runtime_gate_abs_mean_increase_max_seconds),
+        "distance_from_threshold": {
+            "mean_ratio": round(float(runtime_gate_mean_ratio_max) - (mean_ratio or 0), 6) if mean_ratio is not None else None,
+            "p90_ratio": round(float(runtime_gate_p90_ratio_max) - (p90_ratio or 0), 6) if p90_ratio is not None else None,
+            "mean_delta_seconds": round(float(runtime_gate_abs_mean_increase_max_seconds) - mean_delta_seconds, 6),
+        },
         "rule": (
-            f"mean_ratio <= {RUNTIME_GATE_MEAN_MAX_RATIO}, "
-            f"p90_ratio <= {RUNTIME_GATE_P90_MAX_RATIO}, "
-            f"and mean_delta_seconds <= {RUNTIME_GATE_MAX_ABS_MEAN_INCREASE_SECONDS}"
+            f"mean_ratio <= {float(runtime_gate_mean_ratio_max)}, "
+            f"p90_ratio <= {float(runtime_gate_p90_ratio_max)}, "
+            f"and mean_delta_seconds <= {float(runtime_gate_abs_mean_increase_max_seconds)}"
         ),
     }
     runtime_gate["passed"] = bool(runtime_gate["passed"]) and bool(runtime_gate["passed_abs_mean_delta"])
@@ -1164,23 +1675,63 @@ def _evaluate_candidate_gates(
     tool_failure_delta = failure_b - failure_a
     degraded_rate_delta = degraded_rate_b - degraded_rate_a
 
+    max_tf_delta = float(stability_gate_tool_failure_delta_max)
+    max_deg_delta = float(stability_gate_degraded_rate_delta_max)
+
     stability_gate = {
         "name": "stability_gate",
-        "passed": tool_failure_delta <= STABILITY_GATE_MAX_TOOL_FAILURE_DELTA
-        and degraded_rate_delta <= DEGRADATION_GATE_MAX_DELTA,
+        "passed": tool_failure_delta <= max_tf_delta
+        and degraded_rate_delta <= max_deg_delta,
         "baseline_avg_tool_failure_signals": failure_a,
         "candidate_avg_tool_failure_signals": failure_b,
         "tool_failure_delta_b_minus_a": tool_failure_delta,
         "baseline_degraded_case_rate": degraded_rate_a,
         "candidate_degraded_case_rate": degraded_rate_b,
         "degraded_rate_delta_b_minus_a": degraded_rate_delta,
+        "n_pairs": n_pairs,
+        "tier": tier,
+        "thresholds": {"max_tool_failure_delta": max_tf_delta, "max_degraded_rate_delta": max_deg_delta},
+        "distance_from_threshold": {
+            "tool_failure_delta": round(max_tf_delta - tool_failure_delta, 6),
+            "degraded_rate_delta": round(max_deg_delta - degraded_rate_delta, 6),
+        },
+        "rule": f"tool_failure_delta <= {max_tf_delta} and degraded_rate_delta <= {max_deg_delta}",
+    }
+
+    max_catastrophic = int(max(0, tail_risk_max_catastrophic_regressions))
+    tail_risk_passed = (catastrophic_regression_count <= max_catastrophic) and (
+        True
+    )
+    tail_risk_gate = {
+        "name": "tail_risk_gate",
+        "enabled": bool(tail_risk_gate_enabled),
+        "passed": bool(tail_risk_passed) if bool(tail_risk_gate_enabled) else True,
+        "catastrophic_regression_count": catastrophic_regression_count,
+        "catastrophic_threshold": catastrophic_threshold,
+        "max_catastrophic_regressions": max_catastrophic,
+        "worst_case_delta": worst_case_delta,
+        "worst_case_delta_min": min_worst_case_delta,
         "rule": (
-            f"tool_failure_delta <= {STABILITY_GATE_MAX_TOOL_FAILURE_DELTA} "
-            f"and degraded_rate_delta <= {DEGRADATION_GATE_MAX_DELTA}"
+            f"catastrophic_regression_count <= {max_catastrophic}"
         ),
     }
 
-    gates = [quality_gate, runtime_gate, stability_gate]
+    utility_components = {
+        "mean_delta": mean_delta,
+        "runtime_mean_penalty": 0.15 * max(0.0, (mean_ratio or 1.0) - 1.0),
+        "runtime_p90_penalty": 0.10 * max(0.0, (p90_ratio or 1.0) - 1.0),
+        "tool_failure_penalty": 0.20 * max(0.0, tool_failure_delta),
+        "degraded_rate_penalty": 0.20 * max(0.0, degraded_rate_delta),
+    }
+    utility_score = (
+        utility_components["mean_delta"]
+        - utility_components["runtime_mean_penalty"]
+        - utility_components["runtime_p90_penalty"]
+        - utility_components["tool_failure_penalty"]
+        - utility_components["degraded_rate_penalty"]
+    )
+
+    gates = [quality_gate, runtime_gate, stability_gate, tail_risk_gate]
     all_passed = all(bool(gate.get("passed")) for gate in gates)
     failed_gates = [str(gate.get("name")) for gate in gates if not bool(gate.get("passed"))]
 
@@ -1188,6 +1739,8 @@ def _evaluate_candidate_gates(
         "enabled": bool(enabled),
         "all_passed": bool(all_passed),
         "failed_gates": failed_gates,
+        "n_pairs": n_pairs,
+        "tier": tier,
         "gates": {gate["name"]: gate for gate in gates},
         "ratios": {
             "mean_case_time_ratio": mean_ratio,
@@ -1197,27 +1750,130 @@ def _evaluate_candidate_gates(
             "mean_delta": mean_delta,
             "ci_lower": ci_lower,
             "ci_upper": ci_upper,
+            "win_rate": win_rate,
+            "p10_delta": p10_delta,
+            "worst_case_delta": worst_case_delta,
         },
         "deltas": {
             "tool_failure_delta": tool_failure_delta,
             "degraded_rate_delta": degraded_rate_delta,
             "mean_case_time_delta_seconds": mean_delta_seconds,
+            "catastrophic_regression_count": catastrophic_regression_count,
+            "catastrophic_threshold": catastrophic_threshold,
+        },
+        "utility": {
+            "score": float(round(utility_score, 6)),
+            "components": {k: float(round(v, 6)) for k, v in utility_components.items()},
+            "rule": (
+                "mean_delta - 0.15*max(0, mean_ratio-1) - 0.10*max(0, p90_ratio-1) "
+                "- 0.20*max(0, tool_failure_delta) - 0.20*max(0, degraded_rate_delta)"
+            ),
         },
     }
 
 
-def _evaluate_holdout_confirmation(delta_stats: dict[str, Any]) -> dict[str, Any]:
+def _evaluate_holdout_confirmation(
+    delta_stats: dict[str, Any],
+    *,
+    holdout_winrate_min: float = HOLDOUT_GATE_MIN_WIN_RATE,
+    holdout_min_mean_delta: float = -0.10,
+    holdout_catastrophic_threshold: float = TAIL_RISK_CATASTROPHIC_DELTA_THRESHOLD,
+    holdout_max_catastrophic_regressions: int = 1,
+) -> dict[str, Any]:
     mean_delta = float(delta_stats.get("mean_delta", 0.0) or 0.0)
     ci_lower = float(delta_stats.get("ci_lower", mean_delta) or mean_delta)
     ci_upper = float(delta_stats.get("ci_upper", mean_delta) or mean_delta)
-    passed = mean_delta >= HOLDOUT_GATE_MIN_MEAN_DELTA and ci_lower > HOLDOUT_GATE_MIN_CI_LOWER
+    deltas = list(delta_stats.get("deltas") or [])
+    wins = sum(1 for delta in deltas if float(delta) > 0.0)
+    pairs = len(deltas)
+    win_rate = (float(wins) / float(pairs)) if pairs else 0.0
+    catastrophic_threshold = float(holdout_catastrophic_threshold)
+    catastrophic_regression_count = sum(1 for delta in deltas if float(delta) <= catastrophic_threshold)
+    checks = {
+        "win_rate_minimum": win_rate >= float(holdout_winrate_min),
+        "mean_delta_floor": mean_delta >= float(holdout_min_mean_delta),
+        "catastrophic_limit": catastrophic_regression_count <= int(max(0, holdout_max_catastrophic_regressions)),
+    }
+    passed = all(bool(value) for value in checks.values())
     return {
         "passed": passed,
         "mean_delta": mean_delta,
         "ci_lower": ci_lower,
         "ci_upper": ci_upper,
-        "rule": f"mean_delta >= {HOLDOUT_GATE_MIN_MEAN_DELTA} and ci_lower > {HOLDOUT_GATE_MIN_CI_LOWER}",
+        "wins": wins,
+        "pairs": pairs,
+        "win_rate": win_rate,
+        "win_rate_min": float(holdout_winrate_min),
+        "mean_delta_min": float(holdout_min_mean_delta),
+        "catastrophic_threshold": catastrophic_threshold,
+        "max_catastrophic_regressions": int(max(0, holdout_max_catastrophic_regressions)),
+        "catastrophic_regression_count": catastrophic_regression_count,
+        "checks": checks,
+        "rule": (
+            f"win_rate >= {float(holdout_winrate_min)} and "
+            f"mean_delta >= {float(holdout_min_mean_delta)} and "
+            f"catastrophic_regression_count <= {int(max(0, holdout_max_catastrophic_regressions))}"
+        ),
     }
+
+
+def _build_rejection_reason_codes(
+    *,
+    gate_failure_reasons: list[str],
+    gate_results: dict[str, Any],
+    candidate_exists: bool,
+    evaluation_mode: str,
+) -> list[dict[str, Any]]:
+    reasons = list(gate_failure_reasons or [])
+    if not reasons:
+        return []
+
+    severity_map = {
+        "no_candidate_changes": "high",
+        "precheck_rejected": "high",
+        "quality_gate": "high",
+        "tail_risk_gate": "high",
+        "runtime_gate": "medium",
+        "stability_gate": "medium",
+        "holdout_confirmation_gate": "high",
+    }
+    evidence_map = {
+        "quality_gate": "candidate_gate_results.gates.quality_gate",
+        "tail_risk_gate": "candidate_gate_results.gates.tail_risk_gate",
+        "runtime_gate": "candidate_gate_results.gates.runtime_gate",
+        "stability_gate": "candidate_gate_results.gates.stability_gate",
+        "holdout_confirmation_gate": "selection_stats.holdout_confirmation",
+        "no_candidate_changes": "phase_b_eval_meta.evaluation_mode",
+        "precheck_rejected": "selection_stats.precheck_trace",
+    }
+    out: list[dict[str, Any]] = []
+    for index, code in enumerate(reasons):
+        out.append(
+            {
+                "code": str(code),
+                "severity": severity_map.get(str(code), "medium"),
+                "rank": index + 1,
+                "evidence": evidence_map.get(str(code), "metadata"),
+                "candidate_exists": bool(candidate_exists),
+                "evaluation_mode": str(evaluation_mode),
+            }
+        )
+
+    if not candidate_exists and all(item.get("code") != "no_candidate_changes" for item in out):
+        out.insert(
+            0,
+            {
+                "code": "candidate_not_evaluated",
+                "severity": "high",
+                "rank": 1,
+                "evidence": "phase_b_eval_meta.evaluation_mode",
+                "candidate_exists": False,
+                "evaluation_mode": str(evaluation_mode),
+            },
+        )
+        for idx, item in enumerate(out, start=1):
+            item["rank"] = idx
+    return out
 
 
 _GRADE_WEIGHTS: dict[str, float] = {
@@ -1271,11 +1927,29 @@ class BlockAnalysisSchema(BaseModel):
     failure_mode: str | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     evidence: str | None = None
+    linked_theme_ids: list[str] = Field(default_factory=list)
+    recommended_fix_patterns: list[str] = Field(default_factory=list)
+    likely_issue_points: list[str] = Field(default_factory=list)
 
 
 class PipelineAnalysisReportSchema(BaseModel):
     overall_recommendations: str
     block_analyses: list[BlockAnalysisSchema]
+
+
+class HighLevelRCAThemeSchema(BaseModel):
+    theme_id: str
+    description: str
+    evidence_case_ids: list[str] = Field(default_factory=list)
+    implicated_blocks: list[str] = Field(default_factory=list)
+    severity: int = Field(ge=1, le=10)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    recommended_fix_patterns: list[str] = Field(default_factory=list)
+
+
+class HighLevelRCAReportSchema(BaseModel):
+    summary: str
+    themes: list[HighLevelRCAThemeSchema]
 
 
 class PromptMutationSchema(BaseModel):
@@ -1359,15 +2033,18 @@ def _generate_with_oss_fallback(
     schema: type[BaseModel],
     temperature: float = 0.2,
 ) -> tuple[BaseModel, str]:
+    """Try oss120b first (fast-fail), then nemotron. OSS has 8k token limit."""
     attempts: list[tuple[str, BaseModel]] = []
     model_order: list[str] = ["oss120b", "nemotron"]
     if _should_skip_oss_for_prompt(prompt):
-        logger.info("Skipping oss120b for oversized prompt; using nemotron directly")
+        logger.debug("Skipping oss120b for oversized prompt (%d est. tokens); using nemotron",
+                      _estimated_tokens_from_text(prompt))
         model_order = ["nemotron"]
 
     for model in model_order:
-        retries = 2 if model == "oss120b" else 5
-        max_retry_wait = 8.0 if model == "oss120b" else 30.0
+        # OSS: try once with very short timeout; nemotron: standard retries
+        retries = 1 if model == "oss120b" else 5
+        max_retry_wait = 5.0 if model == "oss120b" else 30.0
         output_raw = generate_text(
             prompt=prompt,
             model=model,
@@ -1376,6 +2053,14 @@ def _generate_with_oss_fallback(
             retries=retries,
             max_total_retry_wait=max_retry_wait,
         )
+        if ENABLE_RESOURCE_TELEMETRY_V3 and _ACTIVE_RESOURCE_TELEMETRY is not None:
+            try:
+                _ACTIVE_RESOURCE_TELEMETRY.record_llm_call(
+                    tokens_in=_estimated_tokens_from_text(prompt),
+                    tokens_out=_estimated_tokens_from_text(_safe_json_dumps(output_raw, max_chars=24000)),
+                )
+            except Exception:
+                pass
         try:
             output = _coerce_schema_result(output_raw, schema, model_name=model)
         except Exception as exc:
@@ -1440,14 +2125,196 @@ def get_prompted_block_details() -> dict[str, dict[str, Any]]:
     return details
 
 
-def load_test_cases(path: str) -> list[dict[str, Any]]:
+class TrainingCaseSchema(BaseModel):
+    id: str
+    category: str
+    difficulty: str
+    prompt: str
+    validation: str
+    answer: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    expected_tools: list[str] = Field(default_factory=list)
+    failure_modes: list[str] = Field(default_factory=list)
+    strictness_level: str = "medium"
+    anti_overfit_markers: list[str] = Field(default_factory=list)
+
+
+def _normalize_case_tags(case: dict[str, Any]) -> list[str]:
+    tags: set[str] = set()
+    category = str(case.get("category") or "").strip().lower()
+    difficulty = str(case.get("difficulty") or "").strip().lower()
+    if category:
+        tags.add(category)
+    if difficulty:
+        tags.add(difficulty)
+
+    prompt_text = str(case.get("prompt") or "").lower()
+    validation_text = str(case.get("validation") or "").lower()
+    combined = f"{prompt_text}\n{validation_text}"
+    marker_map = {
+        "citation": "citation_quality",
+        "source": "citation_quality",
+        "proof": "formal_reasoning",
+        "counterexample": "formal_reasoning",
+        "python": "python_required",
+        "code": "coding",
+        "table": "formatting",
+        "json": "formatting",
+        "timeout": "runtime_sensitivity",
+        "deterministic": "deterministic_answer",
+        "must not": "strict_constraints",
+        "must include": "strict_constraints",
+        "exactly": "strict_constraints",
+    }
+    for token, tag in marker_map.items():
+        if token in combined:
+            tags.add(tag)
+    existing = case.get("tags")
+    if isinstance(existing, list):
+        for item in existing:
+            item_text = str(item).strip().lower()
+            if item_text:
+                tags.add(item_text)
+    return sorted(tags)
+
+
+def _infer_strictness_level(validation_text: str) -> str:
+    normalized = str(validation_text or "").lower()
+    hard_markers = (
+        "must not",
+        "must include",
+        "exactly",
+        "do not",
+        "strict",
+        "not exceed",
+        "greater than",
+    )
+    medium_markers = (
+        "should",
+        "include",
+        "compare",
+        "explain",
+        "discuss",
+    )
+    hard_count = sum(1 for marker in hard_markers if marker in normalized)
+    medium_count = sum(1 for marker in medium_markers if marker in normalized)
+    if hard_count >= 4:
+        return "critical"
+    if hard_count >= 2:
+        return "high"
+    if medium_count >= 2:
+        return "medium"
+    return "low"
+
+
+def _normalize_training_case(raw_case: dict[str, Any], index: int) -> dict[str, Any]:
+    case = dict(raw_case or {})
+    case_id = str(case.get("id") or f"case-{index:04d}").strip()
+    category = str(case.get("category") or "uncategorized").strip().lower()
+    difficulty = str(case.get("difficulty") or "medium").strip().lower()
+    prompt = str(case.get("prompt") or "").strip()
+    validation = str(case.get("validation") or "").strip()
+    answer = case.get("answer")
+    answer_text = str(answer).strip() if answer is not None else None
+    case["id"] = case_id
+    case["category"] = category
+    case["difficulty"] = difficulty
+    case["prompt"] = prompt
+    case["validation"] = validation
+    case["answer"] = answer_text if answer_text else None
+    case["tags"] = _normalize_case_tags(case)
+    expected_tools = case.get("expected_tools")
+    if not isinstance(expected_tools, list):
+        expected_tools = []
+    case["expected_tools"] = [str(item).strip() for item in expected_tools if str(item).strip()]
+    failure_modes = case.get("failure_modes")
+    if not isinstance(failure_modes, list):
+        failure_modes = []
+    case["failure_modes"] = [str(item).strip() for item in failure_modes if str(item).strip()]
+    anti_overfit_markers = case.get("anti_overfit_markers")
+    if not isinstance(anti_overfit_markers, list):
+        anti_overfit_markers = []
+    if not anti_overfit_markers:
+        anti_overfit_markers = [f"id::{case_id}", f"category::{category}"]
+    case["anti_overfit_markers"] = [
+        str(item).strip() for item in anti_overfit_markers if str(item).strip()
+    ]
+    strictness = str(case.get("strictness_level") or "").strip().lower()
+    case["strictness_level"] = strictness or _infer_strictness_level(validation)
+    validated = TrainingCaseSchema.model_validate(case)
+    return validated.model_dump()
+
+
+def _dataset_balance_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    category_counts: dict[str, int] = {}
+    difficulty_counts: dict[str, int] = {}
+    strictness_counts: dict[str, int] = {}
+    for case in cases:
+        category = str(case.get("category") or "uncategorized")
+        difficulty = str(case.get("difficulty") or "unknown")
+        strictness = str(case.get("strictness_level") or "unknown")
+        category_counts[category] = category_counts.get(category, 0) + 1
+        difficulty_counts[difficulty] = difficulty_counts.get(difficulty, 0) + 1
+        strictness_counts[strictness] = strictness_counts.get(strictness, 0) + 1
+    return {
+        "cases_count": len(cases),
+        "categories_count": len(category_counts),
+        "category_counts": dict(sorted(category_counts.items())),
+        "difficulty_counts": dict(sorted(difficulty_counts.items())),
+        "strictness_counts": dict(sorted(strictness_counts.items())),
+    }
+
+
+def load_test_cases_with_diagnostics(path: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Training dataset not found: {path}")
     data = json.loads(p.read_text())
     if not isinstance(data, list):
         raise ValueError(f"Training dataset must be a list: {path}")
-    return data
+
+    normalized_cases: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    duplicate_ids: list[str] = []
+    dropped_cases = 0
+    derived_field_counts: dict[str, int] = {
+        "tags": 0,
+        "expected_tools": 0,
+        "failure_modes": 0,
+        "strictness_level": 0,
+        "anti_overfit_markers": 0,
+    }
+    for idx, item in enumerate(data, start=1):
+        if not isinstance(item, dict):
+            dropped_cases += 1
+            continue
+        for field in derived_field_counts:
+            if field not in item:
+                derived_field_counts[field] += 1
+        case = _normalize_training_case(item, idx)
+        case_id = _case_identifier(case)
+        if case_id in seen_ids:
+            duplicate_ids.append(case_id)
+            case["id"] = f"{case['id']}__dup_{idx}"
+            case_id = _case_identifier(case)
+        seen_ids.add(case_id)
+        normalized_cases.append(case)
+
+    diagnostics = {
+        "dataset_schema_version": DEFAULT_DATASET_SCHEMA_VERSION,
+        "input_cases_count": len(data),
+        "normalized_cases_count": len(normalized_cases),
+        "dropped_cases_count": dropped_cases,
+        "duplicate_ids": duplicate_ids[:20],
+        "derived_v2_field_counts": derived_field_counts,
+        **_dataset_balance_summary(normalized_cases),
+    }
+    return normalized_cases, diagnostics
+
+
+def load_test_cases(path: str) -> list[dict[str, Any]]:
+    cases, _ = load_test_cases_with_diagnostics(path)
+    return cases
 
 
 def load_prompts_file(path: str) -> dict[str, str]:
@@ -1528,6 +2395,10 @@ class TrainingProgressTracker:
         self._run_started_perf = time.perf_counter()
         self._phase_started_perf = self._run_started_perf
         self._last_phase = "init"
+        self._emit_latency_ms_total = 0.0
+        self._write_status_latency_ms_total = 0.0
+        self._write_event_latency_ms_total = 0.0
+        self._phase_snapshot_every = 25
         self.status_path = Path(status_path)
         self.events_path = Path(events_path)
         self.events_archive_path = Path(events_archive_path) if events_archive_path else None
@@ -1551,6 +2422,9 @@ class TrainingProgressTracker:
             "elapsed_seconds": 0.0,
             "phase_elapsed_seconds": 0.0,
             "metrics": {},
+            "event_schema_version": EVENT_SCHEMA_VERSION,
+            "metadata_schema_version": METADATA_SCHEMA_VERSION,
+            "telemetry_mode": "dense_compressed",
             "paths": {
                 "status_path": str(self.status_path),
                 "events_path": str(self.events_path),
@@ -1575,18 +2449,98 @@ class TrainingProgressTracker:
     def _write_status(self) -> None:
         if not self.enabled:
             return
+        started = time.perf_counter()
         tmp_path = self.status_path.with_suffix(self.status_path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(self.status, indent=2))
         tmp_path.replace(self.status_path)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        self._write_status_latency_ms_total += elapsed_ms
 
     def _append_event(self, event: dict[str, Any]) -> None:
         if not self.enabled:
             return
+        started = time.perf_counter()
         with self.events_path.open("a") as handle:
             handle.write(json.dumps(event) + "\n")
         if self.events_archive_path is not None:
             with self.events_archive_path.open("a") as handle:
                 handle.write(json.dumps(event) + "\n")
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        self._write_event_latency_ms_total += elapsed_ms
+
+    def _compress_payload(self, payload: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
+        base_payload = payload or {}
+        try:
+            payload_text = _safe_json_dumps(base_payload)
+        except Exception:
+            payload_text = str(base_payload)
+        payload_bytes = len(payload_text.encode("utf-8", errors="ignore"))
+        payload_hash = hashlib.sha256(payload_text.encode("utf-8", errors="ignore")).hexdigest()
+        payload_ref_id = f"payload:{payload_hash[:16]}"
+        compressed = False
+        if payload_bytes > 12000:
+            compressed = True
+            base_payload = {
+                "_compressed": True,
+                "payload_ref_id": payload_ref_id,
+                "payload_sha256": payload_hash,
+                "payload_bytes": payload_bytes,
+                "payload_preview": _prune_for_rca(
+                    payload or {},
+                    max_depth=6,
+                    max_items=40,
+                    max_text_chars=300,
+                ),
+            }
+        return base_payload, {
+            "payload_ref_id": payload_ref_id,
+            "payload_sha256": payload_hash,
+            "payload_bytes": payload_bytes,
+            "payload_compressed": compressed,
+        }
+
+    def _emit_phase_profile_snapshot(self, *, phase: str, epoch_current: int, timestamp_unix: float) -> None:
+        if not self.enabled:
+            return
+        self.seq += 1
+        elapsed_seconds = max(0.0, time.perf_counter() - self._run_started_perf)
+        events_per_min = (float(self.seq) / max(elapsed_seconds / 60.0, 1e-6))
+        avg_emit_latency = self._emit_latency_ms_total / max(float(self.seq), 1.0)
+        avg_write_latency = (
+            (self._write_status_latency_ms_total + self._write_event_latency_ms_total)
+            / max(float(self.seq), 1.0)
+        )
+        snapshot_event = {
+            "run_id": self.run_id,
+            "seq": self.seq,
+            "timestamp": _iso_now(),
+            "timestamp_unix": round(timestamp_unix, 3),
+            "event_type": "phase_profile_snapshot",
+            "phase": phase,
+            "step": "telemetry_profile",
+            "message": f"Telemetry snapshot for phase={phase}",
+            "epoch_current": int(epoch_current),
+            "epochs_total": self.epochs_total,
+            "elapsed_seconds": round(elapsed_seconds, 3),
+            "phase_elapsed_seconds": round(max(0.0, time.perf_counter() - self._phase_started_perf), 3),
+            "payload": {
+                "event_schema_version": EVENT_SCHEMA_VERSION,
+                "events_count": int(self.seq),
+                "events_per_min": round(events_per_min, 3),
+                "avg_emit_latency_ms": round(avg_emit_latency, 4),
+                "avg_tracker_write_latency_ms": round(avg_write_latency, 4),
+                "stream_lag_ms": 0.0,
+            },
+            "current_case": self.status.get("current_case"),
+            "metrics": {},
+            "active_call": self._active_call_snapshot(timestamp_unix),
+        }
+        self._append_event(snapshot_event)
+        self.status["events_count"] = self.seq
+        self.status["last_event_type"] = "phase_profile_snapshot"
+        self.status["updated_at"] = _iso_now()
+        self.status["updated_at_unix"] = round(timestamp_unix, 3)
+        self._write_status()
 
     def _active_call_snapshot(self, now_unix: float | None = None) -> dict[str, Any] | None:
         active_call = self.status.get("active_call")
@@ -1715,8 +2669,10 @@ class TrainingProgressTracker:
         current_case: dict[str, Any] | None = None,
         metrics: dict[str, Any] | None = None,
     ) -> None:
+        started_perf = time.perf_counter()
         timestamp = _iso_now()
         timestamp_unix = round(time.time(), 3)
+        compact_payload, payload_diag = self._compress_payload(payload or {})
         self.seq += 1
         if phase != self._last_phase:
             self._last_phase = phase
@@ -1736,10 +2692,15 @@ class TrainingProgressTracker:
             "epochs_total": self.epochs_total,
             "elapsed_seconds": round(elapsed_seconds, 3),
             "phase_elapsed_seconds": round(phase_elapsed_seconds, 3),
-            "payload": payload or {},
+            "payload": compact_payload,
             "current_case": current_case,
             "metrics": metrics or {},
             "active_call": self._active_call_snapshot(timestamp_unix),
+            "event_schema_version": EVENT_SCHEMA_VERSION,
+            "payload_ref_id": payload_diag.get("payload_ref_id"),
+            "payload_sha256": payload_diag.get("payload_sha256"),
+            "payload_bytes": payload_diag.get("payload_bytes"),
+            "payload_compressed": bool(payload_diag.get("payload_compressed")),
         }
 
         self.status["updated_at"] = timestamp
@@ -1772,8 +2733,33 @@ class TrainingProgressTracker:
         if event_type in {"case_started", "case_completed"}:
             self._last_case_activity_unix = timestamp_unix
 
+        emit_elapsed_ms = (time.perf_counter() - started_perf) * 1000.0
+        self._emit_latency_ms_total += emit_elapsed_ms
+        events_per_min = (float(self.seq) / max(elapsed_seconds / 60.0, 1e-6))
+        avg_emit_latency_ms = self._emit_latency_ms_total / max(float(self.seq), 1.0)
+        avg_tracker_write_latency_ms = (
+            (self._write_status_latency_ms_total + self._write_event_latency_ms_total)
+            / max(float(self.seq), 1.0)
+        )
+        merged_metrics = dict(self.status.get("metrics", {}))
+        merged_metrics.update(
+            {
+                "events_per_min": round(events_per_min, 3),
+                "avg_emit_latency_ms": round(avg_emit_latency_ms, 4),
+                "avg_tracker_write_latency_ms": round(avg_tracker_write_latency_ms, 4),
+                "stream_lag_ms": 0.0,
+            }
+        )
+        self.status["metrics"] = merged_metrics
+
         self._write_status()
         self._append_event(event)
+        if self.seq > 0 and (self.seq % int(max(1, self._phase_snapshot_every)) == 0):
+            self._emit_phase_profile_snapshot(
+                phase=phase,
+                epoch_current=int(event.get("epoch_current") or 0),
+                timestamp_unix=timestamp_unix,
+            )
         if self.status.get("state") == "running" and event_type not in {"stalled_warning", "run_completed", "run_error"}:
             self._emit_stalled_warning_if_needed(
                 now_unix=timestamp_unix,
@@ -1796,6 +2782,20 @@ class TrainingProgressTracker:
             metrics=metrics or {},
             current_case=None,
         )
+        if not self.enabled:
+            return
+        if self.events_archive_path is None or not self.events_archive_path.exists():
+            return
+        try:
+            gz_path = self.events_archive_path.with_suffix(self.events_archive_path.suffix + ".gz")
+            with self.events_archive_path.open("rb") as src, gzip.open(gz_path, "wb") as dst:
+                dst.write(src.read())
+            self.status["paths"]["events_archive_gzip_path"] = str(gz_path)
+            self.status["updated_at"] = _iso_now()
+            self.status["updated_at_unix"] = round(time.time(), 3)
+            self._write_status()
+        except Exception as exc:
+            logger.warning("Could not gzip training event archive: %s", exc)
 
     def fail(self, error_message: str, epoch_current: int | None = None) -> None:
         self.clear_active_call()
@@ -1962,6 +2962,7 @@ def _postprocess_grade(
     normalized_grade["deterministic_answer_mode"] = deterministic_mode
     normalized_grade["reliability_penalty"] = float(penalty_info.get("total", 0.0))
     normalized_grade["reliability_penalty_breakdown"] = penalty_info.get("breakdown", {})
+    normalized_grade["infrastructure_degraded"] = float(penalty_info.get("total", 0.0)) >= 2.0
     normalized_grade["aggregate_score"] = round(final_aggregate, 6)
     return normalized_grade
 
@@ -2004,17 +3005,15 @@ def grade_result(
         "Also provide major_issues and strengths."
     )
 
-    graded = generate_text(
+    graded_output, grading_model = _generate_with_oss_fallback(
         prompt=grading_prompt,
-        model="nemotron",
         schema=GenericGradeSchema,
         temperature=0.0,
-        retries=5,
-        max_total_retry_wait=30.0,
     )
 
-    payload = graded.model_dump()
+    payload = graded_output.model_dump()
     payload["aggregate_score"] = _weighted_aggregate(payload)
+    payload["grading_model"] = grading_model
     return payload
 
 
@@ -2058,6 +3057,147 @@ def _build_rca_evidence_bundle(run_output: dict[str, Any], case_context: dict[st
     }
 
 
+def _dedupe_non_empty_strings(values: list[Any], *, max_items: int | None = None) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(text)
+        if max_items is not None and len(deduped) >= int(max_items):
+            break
+    return deduped
+
+
+_RCA_LINKAGE_STOPWORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "this",
+    "that",
+    "case",
+    "cases",
+    "block",
+    "blocks",
+    "prompt",
+    "prompts",
+    "issue",
+    "issues",
+    "fix",
+    "needs",
+    "need",
+    "mode",
+    "analysis",
+    "major",
+    "minor",
+    "should",
+    "must",
+}
+
+
+def _text_tokens_for_rca_linkage(text: str) -> set[str]:
+    tokens = re.findall(r"[a-z0-9_]{3,}", str(text or "").lower())
+    return {token for token in tokens if token not in _RCA_LINKAGE_STOPWORDS}
+
+
+def _link_analyses_to_high_level_themes(
+    analyses: list[BlockAnalysisSchema],
+    high_level_themes: list[dict[str, Any]] | None,
+) -> None:
+    if not analyses or not high_level_themes:
+        return
+
+    theme_rows: list[dict[str, Any]] = []
+    for theme in high_level_themes:
+        if not isinstance(theme, dict):
+            continue
+        theme_id = str(theme.get("theme_id") or "").strip()
+        if not theme_id:
+            continue
+        description = str(theme.get("description") or "")
+        implicated_blocks = [str(item) for item in (theme.get("implicated_blocks") or []) if str(item).strip()]
+        fix_patterns = _dedupe_non_empty_strings(list(theme.get("recommended_fix_patterns") or []), max_items=8)
+        theme_text = " ".join(
+            [
+                description,
+                " ".join(fix_patterns),
+                " ".join(str(item) for item in (theme.get("evidence_case_ids") or [])),
+            ]
+        )
+        theme_rows.append(
+            {
+                "theme_id": theme_id,
+                "severity": int(theme.get("severity", 1) or 1),
+                "description": description,
+                "tokens": _text_tokens_for_rca_linkage(theme_text),
+                "implicated_blocks": set(implicated_blocks),
+                "fix_patterns": fix_patterns,
+            }
+        )
+
+    if not theme_rows:
+        return
+
+    for analysis in analyses:
+        analysis_tokens = _text_tokens_for_rca_linkage(
+            " ".join(
+                [
+                    str(analysis.analysis or ""),
+                    str(analysis.what_to_fix or ""),
+                    str(analysis.failure_mode or ""),
+                    str(analysis.evidence or ""),
+                ]
+            )
+        )
+        scored_links: list[tuple[float, int, str, list[str]]] = []
+        for theme in theme_rows:
+            score = 0.0
+            if analysis.block_id in theme["implicated_blocks"]:
+                score += 2.4
+            overlap = len(analysis_tokens.intersection(theme["tokens"]))
+            if overlap > 0:
+                score += min(1.8, overlap * 0.35)
+            failure_mode = str(analysis.failure_mode or "").strip().lower()
+            if failure_mode and failure_mode in str(theme["description"]).lower():
+                score += 0.6
+            if score >= 2.0:
+                scored_links.append(
+                    (
+                        score,
+                        int(theme["severity"]),
+                        str(theme["theme_id"]),
+                        list(theme["fix_patterns"]),
+                    )
+                )
+        scored_links.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        linked_theme_ids = [item[2] for item in scored_links[:3]]
+        fallback_issue_points = _dedupe_non_empty_strings(
+            [analysis.what_to_fix, analysis.failure_mode, analysis.analysis],
+            max_items=3,
+        )
+        linked_fix_patterns = _dedupe_non_empty_strings(
+            list(analysis.recommended_fix_patterns or [])
+            + [pattern for item in scored_links[:3] for pattern in item[3]],
+            max_items=10,
+        )
+        analysis.linked_theme_ids = linked_theme_ids
+        analysis.recommended_fix_patterns = linked_fix_patterns
+        if not analysis.likely_issue_points:
+            analysis.likely_issue_points = fallback_issue_points
+        if analysis.confidence is not None and linked_theme_ids:
+            adjusted_confidence = float(analysis.confidence) + (0.04 * len(linked_theme_ids))
+            analysis.confidence = max(0.0, min(1.0, adjusted_confidence))
+
+
 def _build_rca_prompt_v2(
     *,
     prompt: str,
@@ -2065,7 +3205,11 @@ def _build_rca_prompt_v2(
     valid_blocks: list[str],
     criteria_context_text: str,
     evidence_json: str,
+    high_level_themes_context: str | None = None,
 ) -> str:
+    themes_section = ""
+    if high_level_themes_context:
+        themes_section = f"High-level RCA themes to honor:\n{high_level_themes_context}\n\n"
     return (
         "You are an expert pipeline RCA analyst.\n"
         "Diagnose why the case failed and map findings to block-level fixes.\n"
@@ -2073,6 +3217,7 @@ def _build_rca_prompt_v2(
         "Use evidence from tool execution, degraded markers, and step coverage.\n"
         "Do not overfit to this one case; avoid proposing case-specific facts or answer fragments.\n"
         "Each suggested fix must preserve output schema/contract safety.\n\n"
+        f"{themes_section}"
         f"Valid blocks:\n{', '.join(valid_blocks)}\n\n"
         f"User prompt:\n{prompt}\n\n"
         f"Major issues from grading:\n{major_issues}\n\n"
@@ -2082,8 +3227,95 @@ def _build_rca_prompt_v2(
         "- Provide concise analysis.\n"
         "- Set need_fix=true only when evidence supports it.\n"
         "- Include failure_mode, confidence (0..1), and concrete evidence references when possible.\n"
+        "- Include likely_issue_points as concise actionable bullets.\n"
+        "- If high-level themes are provided, populate linked_theme_ids with matching theme_id values.\n"
+        "- Include reusable recommended_fix_patterns; do not include case-specific answers.\n"
         "- Keep recommendations generic and reusable."
     )
+
+
+def _build_high_level_rca_prompt(
+    *,
+    failed_results: list[dict[str, Any]],
+    valid_blocks: list[str],
+) -> str:
+    cohort: list[dict[str, Any]] = []
+    for item in failed_results[:60]:
+        case = item.get("case", {}) if isinstance(item, dict) else {}
+        case_id = _case_identifier(case) if isinstance(case, dict) else "unknown_case"
+        grade = item.get("grade", {}) if isinstance(item, dict) else {}
+        case_stats = item.get("case_stats", {}) if isinstance(item, dict) else {}
+        run_output = item.get("run_output", {}) if isinstance(item, dict) else {}
+        cohort.append(
+            {
+                "case_id": case_id,
+                "category": (case or {}).get("category"),
+                "difficulty": (case or {}).get("difficulty"),
+                "aggregate_score": float((grade or {}).get("aggregate_score", 0.0) or 0.0),
+                "major_issues": str((grade or {}).get("major_issues", ""))[:600],
+                "timed_out": bool((case_stats or {}).get("timed_out")),
+                "degraded_mode_active": bool((case_stats or {}).get("degraded_mode_active")),
+                "implicated_blocks": _implicated_blocks_for_case(
+                    run_output if isinstance(run_output, dict) else {},
+                    valid_blocks,
+                )[:10],
+                "tool_failure_signals": _prune_for_rca(
+                    (run_output or {}).get("tool_failure_signals"),
+                    max_depth=4,
+                    max_items=8,
+                    max_text_chars=220,
+                ),
+            }
+        )
+    return (
+        "You are performing a HIGH-LEVEL RCA across multiple failed cases.\n"
+        "Extract recurring, cross-case themes and prioritize reusable fixes.\n"
+        "Do NOT propose case-specific answer hacks.\n"
+        "Use only block IDs from the valid list.\n\n"
+        f"Valid blocks:\n{', '.join(valid_blocks)}\n\n"
+        f"Failed cohort summary:\n{_safe_json_dumps(cohort, max_chars=24000)}\n\n"
+        "Return concise themes with evidence_case_ids, implicated_blocks, severity, confidence, and reusable fix patterns.\n"
+        "Each theme_id should be stable (short snake_case) and map to concrete reusable remediation patterns."
+    )
+
+
+def run_high_level_rca(
+    *,
+    failed_results: list[dict[str, Any]],
+    valid_blocks: list[str],
+) -> dict[str, Any]:
+    if not failed_results:
+        return {"summary": "No RCA cohort selected", "themes": []}
+
+    prompt = _build_high_level_rca_prompt(
+        failed_results=failed_results,
+        valid_blocks=valid_blocks,
+    )
+    report, used_model = _generate_with_oss_fallback(
+        prompt=prompt,
+        schema=HighLevelRCAReportSchema,
+        temperature=0.2,
+    )
+    themes: list[dict[str, Any]] = []
+    valid_block_set = set(valid_blocks)
+    for theme in report.themes:
+        implicated = [block_id for block_id in theme.implicated_blocks if block_id in valid_block_set]
+        themes.append(
+            {
+                "theme_id": str(theme.theme_id),
+                "description": str(theme.description),
+                "evidence_case_ids": [str(case_id) for case_id in theme.evidence_case_ids[:24]],
+                "implicated_blocks": implicated,
+                "severity": int(theme.severity),
+                "confidence": float(theme.confidence) if theme.confidence is not None else None,
+                "recommended_fix_patterns": [str(item) for item in theme.recommended_fix_patterns[:12]],
+            }
+        )
+    return {
+        "summary": str(report.summary),
+        "themes": themes,
+        "model_used": used_model,
+    }
 
 
 def root_cause_analysis(
@@ -2094,6 +3326,7 @@ def root_cause_analysis(
     block_details_map: dict[str, dict[str, Any]],
     criteria_context_text: str | None = None,
     case_context: dict[str, Any] | None = None,
+    high_level_themes: list[dict[str, Any]] | None = None,
 ) -> list[BlockAnalysisSchema]:
     if criteria_context_text is None:
         criteria_sections: list[str] = []
@@ -2107,12 +3340,30 @@ def root_cause_analysis(
 
     evidence_bundle = _build_rca_evidence_bundle(run_output, case_context)
     evidence_json = _safe_json_dumps(evidence_bundle, max_chars=16000)
+    high_level_context = None
+    if high_level_themes:
+        compact_themes = []
+        for theme in high_level_themes[:10]:
+            if not isinstance(theme, dict):
+                continue
+            compact_themes.append(
+                {
+                    "theme_id": theme.get("theme_id"),
+                    "description": theme.get("description"),
+                    "implicated_blocks": list(theme.get("implicated_blocks") or [])[:8],
+                    "severity": theme.get("severity"),
+                    "recommended_fix_patterns": list(theme.get("recommended_fix_patterns") or [])[:6],
+                }
+            )
+        if compact_themes:
+            high_level_context = _safe_json_dumps(compact_themes, max_chars=5000)
     rca_prompt = _build_rca_prompt_v2(
         prompt=prompt,
         major_issues=major_issues,
         valid_blocks=valid_blocks,
         criteria_context_text=criteria_context_text,
         evidence_json=evidence_json,
+        high_level_themes_context=high_level_context,
     )
 
     report, used_model = _generate_with_oss_fallback(
@@ -2125,7 +3376,18 @@ def root_cause_analysis(
     analyses: list[BlockAnalysisSchema] = []
     for item in report.block_analyses:
         if item.block_id in valid_blocks:
+            if not item.likely_issue_points:
+                item.likely_issue_points = _dedupe_non_empty_strings(
+                    [item.what_to_fix, item.failure_mode, item.analysis],
+                    max_items=3,
+                )
+            if not item.recommended_fix_patterns:
+                item.recommended_fix_patterns = _dedupe_non_empty_strings(
+                    [item.what_to_fix],
+                    max_items=4,
+                )
             analyses.append(item)
+    _link_analyses_to_high_level_themes(analyses, high_level_themes)
     return analyses
 
 
@@ -2300,66 +3562,208 @@ def _criteria_context_for_blocks(
     return "\n\n".join(sections)
 
 
-def _select_rca_cases(results: list[dict[str, Any]], rca_case_budget: int) -> list[dict[str, Any]]:
-    budget = max(0, int(rca_case_budget))
+def _select_rca_cases(
+    results: list[dict[str, Any]],
+    rca_case_budget: int,
+    rca_threshold: float = DEFAULT_RCA_THRESHOLD,
+    rca_fallback_fraction: float = DEFAULT_RCA_FALLBACK_FRACTION,
+    case_history: dict[str, dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    configured_budget = max(0, int(rca_case_budget))
+    budget = configured_budget
     if budget == 0:
-        return []
+        return [], {
+            "rule": "disabled",
+            "rca_case_budget": 0,
+            "configured_rca_case_budget": int(configured_budget),
+            "threshold": float(rca_threshold),
+            "fallback_fraction": float(rca_fallback_fraction),
+            "total_cases": len(results),
+            "selected_count": 0,
+            "threshold_hits": 0,
+            "fallback_count_before_budget": 0,
+            "selected_case_ids": [],
+        }
+
+    ranked = sorted(
+        [
+            item
+            for item in results
+            if isinstance(item, dict) and isinstance(item.get("grade"), dict)
+        ],
+        key=lambda item: float(item.get("grade", {}).get("aggregate_score", 0.0) or 0.0),
+    )
+    threshold_matches = [
+        item
+        for item in ranked
+        if float(item.get("grade", {}).get("aggregate_score", 0.0) or 0.0) < float(rca_threshold)
+    ]
+
+    if ENABLE_REPLAY_REBALANCE_V1 and ranked:
+        dynamic_budget = min(
+            6,
+            max(
+                3,
+                int(math.ceil(0.35 * len(threshold_matches))),
+                int(math.ceil(0.25 * len(ranked))),
+            ),
+        )
+        budget = int(dynamic_budget)
+
+    selection_rule = "threshold"
+    selected_pool = threshold_matches
+    fallback_count_before_budget = 0
+    if not threshold_matches:
+        selection_rule = "fallback_worst_fraction"
+        bounded_fraction = max(0.05, min(1.0, float(rca_fallback_fraction)))
+        fallback_count_before_budget = max(1, int(round(len(ranked) * bounded_fraction)))
+        selected_pool = ranked[:fallback_count_before_budget]
 
     selected: list[dict[str, Any]] = []
     selected_ids: set[str] = set()
 
-    def _append_if_new(item: dict[str, Any]) -> None:
+    def _append_selected(item: dict[str, Any]) -> None:
+        if not isinstance(item, dict):
+            return
         case_payload = item.get("case")
-        if isinstance(case_payload, dict):
-            case_id = _case_identifier(case_payload)
-        else:
-            case_id = str(item.get("prompt", ""))[:220]
+        case_id = _case_identifier(case_payload if isinstance(case_payload, dict) else {})
         if case_id in selected_ids:
             return
-        selected_ids.add(case_id)
         selected.append(item)
+        selected_ids.add(case_id)
 
-    degraded_or_timeout = [
-        result
-        for result in results
-        if bool(result.get("case_stats", {}).get("timed_out"))
-        or bool(result.get("case_stats", {}).get("degraded_mode_active"))
-    ]
-    degraded_or_timeout.sort(
-        key=lambda item: float(item.get("grade", {}).get("aggregate_score", 0.0))
-    )
-    for item in degraded_or_timeout:
+    # Always include top-2 worst scoring items.
+    for item in ranked[:2]:
         if len(selected) >= budget:
             break
-        _append_if_new(item)
+        _append_selected(item)
 
-    if len(selected) < budget:
-        by_score = sorted(
-            results,
-            key=lambda item: float(item.get("grade", {}).get("aggregate_score", 0.0)),
-        )
-        for item in by_score:
+    # Include one historical severe regression case when available.
+    if len(selected) < budget and isinstance(case_history, dict):
+        severe_candidates: list[tuple[float, dict[str, Any]]] = []
+        for item in ranked:
+            case_payload = item.get("case")
+            if not isinstance(case_payload, dict):
+                continue
+            case_id = _case_identifier(case_payload)
+            history = case_history.get(case_id) or {}
+            last_delta = float(history.get("last_delta") or 0.0)
+            timeout_count = int(history.get("timeout_count") or 0)
+            if last_delta <= float(TAIL_RISK_CATASTROPHIC_DELTA_THRESHOLD) or timeout_count > 0:
+                severe_candidates.append((_replay_priority_score(history), item))
+        severe_candidates.sort(key=lambda pair: pair[0], reverse=True)
+        for _, item in severe_candidates:
             if len(selected) >= budget:
                 break
-            _append_if_new(item)
+            _append_selected(item)
+            break
 
-    return selected[:budget]
+    # Fill from threshold selection pool, then full ranking.
+    for item in selected_pool:
+        if len(selected) >= budget:
+            break
+        _append_selected(item)
+    for item in ranked:
+        if len(selected) >= budget:
+            break
+        _append_selected(item)
+
+    selected_case_ids = [
+        _case_identifier(item.get("case", {}))
+        for item in selected
+        if isinstance(item.get("case"), dict)
+    ]
+    diagnostics = {
+        "rule": selection_rule,
+        "threshold": float(rca_threshold),
+        "fallback_fraction": float(rca_fallback_fraction),
+        "rca_case_budget": int(budget),
+        "configured_rca_case_budget": int(configured_budget),
+        "total_cases": len(ranked),
+        "threshold_hits": len(threshold_matches),
+        "fallback_count_before_budget": fallback_count_before_budget,
+        "selected_count": len(selected),
+        "selected_case_ids": selected_case_ids,
+        "dynamic_budget_enabled": bool(ENABLE_REPLAY_REBALANCE_V1),
+    }
+    return selected, diagnostics
 
 
 def _rank_blocks_by_rca_impact(
     grouped: dict[str, list[BlockAnalysisSchema]],
+    *,
+    block_impact_history: dict[str, dict[str, Any]] | None = None,
+    enable_block_impact_ranker: bool = ENABLE_BLOCK_IMPACT_RANKER,
 ) -> list[tuple[float, str]]:
     ranked: list[tuple[float, str]] = []
+    history = block_impact_history or {}
     for block_id, analyses in grouped.items():
         if not analyses:
             continue
-        impact = sum(
+        rca_impact = sum(
             float(analysis.generic_issue_score) + float(analysis.criteria_misalignment_score)
             for analysis in analyses
         )
+        linkage_bonus = sum(
+            (0.45 * len(set(analysis.linked_theme_ids or [])))
+            + (0.12 * len(analysis.recommended_fix_patterns or []))
+            + (0.08 * len(analysis.likely_issue_points or []))
+            for analysis in analyses
+        )
+        impact = float(rca_impact) + float(linkage_bonus)
+        if enable_block_impact_ranker:
+            block_hist = history.get(str(block_id)) or {}
+            avg_mean_delta = float(block_hist.get("avg_mean_delta", 0.0) or 0.0)
+            acceptance_rate = float(block_hist.get("acceptance_rate", 0.0) or 0.0)
+            # Historical end-to-end signal nudges ranking toward blocks that have helped before.
+            impact += (avg_mean_delta * 3.0) + acceptance_rate
         ranked.append((impact, block_id))
     ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
     return ranked
+
+
+def _update_block_impact_history(
+    *,
+    block_impact_history: dict[str, dict[str, Any]],
+    mutated_block_ids: list[str],
+    winner: str,
+    train_delta_stats: dict[str, Any],
+) -> None:
+    if not mutated_block_ids:
+        return
+    mean_delta = float(train_delta_stats.get("mean_delta", 0.0) or 0.0)
+    p10_delta = float(_percentile(list(train_delta_stats.get("deltas") or []), 10) or mean_delta)
+    worst_case_delta = float(min(list(train_delta_stats.get("deltas") or [mean_delta])))
+    accepted = str(winner or "") == "candidate"
+
+    for block_id in mutated_block_ids:
+        if not block_id:
+            continue
+        entry = block_impact_history.setdefault(
+            str(block_id),
+            {
+                "times_mutated": 0,
+                "times_accepted": 0,
+                "sum_mean_delta": 0.0,
+                "sum_p10_delta": 0.0,
+                "worst_observed_delta": worst_case_delta,
+                "avg_mean_delta": 0.0,
+                "avg_p10_delta": 0.0,
+                "acceptance_rate": 0.0,
+            },
+        )
+        entry["times_mutated"] = int(entry.get("times_mutated", 0) or 0) + 1
+        if accepted:
+            entry["times_accepted"] = int(entry.get("times_accepted", 0) or 0) + 1
+        entry["sum_mean_delta"] = float(entry.get("sum_mean_delta", 0.0) or 0.0) + mean_delta
+        entry["sum_p10_delta"] = float(entry.get("sum_p10_delta", 0.0) or 0.0) + p10_delta
+        previous_worst = float(entry.get("worst_observed_delta", worst_case_delta) or worst_case_delta)
+        entry["worst_observed_delta"] = min(previous_worst, worst_case_delta)
+        mutated = max(1, int(entry.get("times_mutated", 1) or 1))
+        accepted_count = int(entry.get("times_accepted", 0) or 0)
+        entry["avg_mean_delta"] = float(entry["sum_mean_delta"]) / float(mutated)
+        entry["avg_p10_delta"] = float(entry["sum_p10_delta"]) / float(mutated)
+        entry["acceptance_rate"] = float(accepted_count) / float(mutated)
 
 
 RECOVERABLE_MUTATION_FAILURE_CODES: set[str] = {
@@ -2384,9 +3788,140 @@ def _dedupe_block_analyses(analyses: list[BlockAnalysisSchema]) -> list[BlockAna
     return unique_analyses
 
 
-def _mutation_temperature_for_attempt(attempt_index: int) -> float:
+MUTATION_STYLE_LIBRARY: dict[str, dict[str, str]] = {
+    "failure_targeted_patch": {
+        "title": "Failure-targeted patch",
+        "change_budget": "Change only the minimum wording needed for the top RCA failure.",
+        "instructions": (
+            "Focus tightly on the highest-confidence failure mode and patch it with minimal drift."
+        ),
+    },
+    "structure_tightening": {
+        "title": "Structure tightening",
+        "change_budget": "You may rewrite up to 25% of the prompt while preserving scaffolding intent.",
+        "instructions": (
+            "Improve hierarchy, ordering, and instruction boundaries so behavior is easier to follow."
+        ),
+    },
+    "contract_hardening": {
+        "title": "Contract hardening",
+        "change_budget": "Prioritize contract-safe edits even if wording changes are broader.",
+        "instructions": (
+            "Strengthen placeholder handling, schema guarantees, and strict format constraints."
+        ),
+    },
+    "reliability_guardrails": {
+        "title": "Reliability guardrails",
+        "change_budget": "Add robust fallback and error-handling directives when failures suggest instability.",
+        "instructions": (
+            "Reduce timeout/degraded/tool-failure risk with concise guardrails that remain generic."
+        ),
+    },
+}
+MUTATION_STYLE_DEFAULT_ORDER = [
+    "failure_targeted_patch",
+    "structure_tightening",
+    "contract_hardening",
+    "reliability_guardrails",
+]
+
+
+def _collect_analysis_linkage_summary(analyses: list[BlockAnalysisSchema]) -> dict[str, Any]:
+    linked_theme_ids = _dedupe_non_empty_strings(
+        [theme_id for analysis in analyses for theme_id in (analysis.linked_theme_ids or [])],
+        max_items=24,
+    )
+    recommended_fix_patterns = _dedupe_non_empty_strings(
+        [pattern for analysis in analyses for pattern in (analysis.recommended_fix_patterns or [])],
+        max_items=16,
+    )
+    likely_issue_points = _dedupe_non_empty_strings(
+        [point for analysis in analyses for point in (analysis.likely_issue_points or [])],
+        max_items=16,
+    )
+    dominant_failure_modes = _dedupe_non_empty_strings(
+        [analysis.failure_mode for analysis in analyses if analysis.failure_mode],
+        max_items=8,
+    )
+    return {
+        "linked_theme_ids": linked_theme_ids,
+        "recommended_fix_patterns": recommended_fix_patterns,
+        "likely_issue_points": likely_issue_points,
+        "dominant_failure_modes": dominant_failure_modes,
+    }
+
+
+def _rank_mutation_styles_for_block(analyses: list[BlockAnalysisSchema]) -> list[str]:
+    text = " ".join(
+        [
+            str(analysis.analysis or "")
+            + " "
+            + str(analysis.what_to_fix or "")
+            + " "
+            + str(analysis.failure_mode or "")
+            for analysis in analyses
+        ]
+    ).lower()
+    styles: list[str] = ["failure_targeted_patch"]
+
+    if re.search(r"\b(json|schema|contract|placeholder|format|parser|strict)\b", text):
+        styles.append("contract_hardening")
+    if re.search(r"\b(timeout|degraded|tool|failure|retry|latency|error|fallback)\b", text):
+        styles.append("reliability_guardrails")
+    if re.search(r"\b(ambiguous|clarity|confusing|ordering|structure|hierarchy)\b", text):
+        styles.append("structure_tightening")
+
+    for style in MUTATION_STYLE_DEFAULT_ORDER:
+        if style not in styles:
+            styles.append(style)
+    return styles
+
+
+def _build_mutation_style_plan(
+    analyses: list[BlockAnalysisSchema],
+    *,
+    tournament_size: int,
+) -> list[str]:
+    ranked_styles = _rank_mutation_styles_for_block(analyses)
+    target_size = max(1, int(tournament_size))
+    desired_unique = max(1, min(target_size, int(DEFAULT_MUTATION_DIVERSITY_TARGET)))
+    plan: list[str] = []
+    for style in ranked_styles:
+        plan.append(style)
+        if len(plan) >= target_size:
+            break
+    if len(set(plan)) < desired_unique:
+        for style in MUTATION_STYLE_DEFAULT_ORDER:
+            if style in plan:
+                continue
+            plan.append(style)
+            if len(plan) >= target_size:
+                break
+            if len(set(plan)) >= desired_unique:
+                break
+    while len(plan) < target_size:
+        plan.append(ranked_styles[len(plan) % len(ranked_styles)])
+    return plan[:target_size]
+
+
+def _mutation_style_for_retry(base_style: str, failure_code: str | None) -> str:
+    reason = str(failure_code or "").strip()
+    if reason in {"missing_required_placeholders", "prompt_contract_violation"}:
+        return "contract_hardening"
+    if reason == "candidate_same_as_baseline" and base_style == "failure_targeted_patch":
+        return "structure_tightening"
+    return base_style
+
+
+def _mutation_temperature_for_attempt(attempt_index: int, mutation_style: str | None = None) -> float:
     index = max(0, min(int(attempt_index), len(MUTATION_RETRY_TEMPERATURE_SCHEDULE) - 1))
-    return float(MUTATION_RETRY_TEMPERATURE_SCHEDULE[index])
+    base_temperature = float(MUTATION_RETRY_TEMPERATURE_SCHEDULE[index])
+    style = str(mutation_style or "").strip()
+    if style == "structure_tightening":
+        return min(0.60, base_temperature + 0.05)
+    if style == "contract_hardening":
+        return max(0.10, base_temperature - 0.05)
+    return base_temperature
 
 
 def _build_mutation_prompt(
@@ -2395,11 +3930,16 @@ def _build_mutation_prompt(
     current_prompt: str,
     criteria: dict[str, Any],
     analyses: list[BlockAnalysisSchema],
+    mutation_style: str,
+    style_plan: list[str] | None = None,
     required_placeholders: list[str],
     previous_candidate: str | None = None,
     failure_code: str | None = None,
     failure_details: dict[str, Any] | None = None,
 ) -> str:
+    style_id = str(mutation_style or "failure_targeted_patch")
+    style_config = MUTATION_STYLE_LIBRARY.get(style_id, MUTATION_STYLE_LIBRARY["failure_targeted_patch"])
+    linkage_summary = _collect_analysis_linkage_summary(analyses)
     analyses_text = "\n".join(
         (
             f"- generic_issue_score={analysis.generic_issue_score}, "
@@ -2408,10 +3948,32 @@ def _build_mutation_prompt(
             f"  what_to_fix={analysis.what_to_fix}\n"
             f"  failure_mode={analysis.failure_mode or 'unknown'}\n"
             f"  confidence={analysis.confidence if analysis.confidence is not None else 'n/a'}\n"
-            f"  evidence={analysis.evidence or 'n/a'}"
+            f"  evidence={analysis.evidence or 'n/a'}\n"
+            f"  linked_theme_ids={analysis.linked_theme_ids or []}\n"
+            f"  recommended_fix_patterns={analysis.recommended_fix_patterns or []}\n"
+            f"  likely_issue_points={analysis.likely_issue_points or []}"
         )
         for analysis in analyses
     )
+
+    # --- Failure-focused context: extract concrete failing outputs ----------
+    failure_examples_text = ""
+    failure_examples = []
+    for analysis in analyses:
+        evidence = getattr(analysis, "evidence", None) or ""
+        what_to_fix = getattr(analysis, "what_to_fix", None) or ""
+        if evidence and len(evidence) > 20:
+            failure_examples.append(
+                f"  * Evidence: {evidence[:400]}\n"
+                f"    Fix needed: {what_to_fix[:200]}"
+            )
+    if failure_examples:
+        failure_examples_text = (
+            "\nConcrete failure examples from A/B test cases (use these to guide your fix):\n"
+            + "\n".join(failure_examples[:5])
+            + "\n"
+        )
+
     contract_checklist = (
         "Contract checklist (must pass all):\n"
         f"- Preserve required placeholders exactly: {required_placeholders}\n"
@@ -2431,22 +3993,42 @@ def _build_mutation_prompt(
             f"Prior candidate prompt:\n{previous_candidate}\n\n"
         )
 
+    style_plan_text = ", ".join(style_plan or [])
+    linked_theme_text = _safe_json_dumps(
+        {
+            "linked_theme_ids": linkage_summary.get("linked_theme_ids", []),
+            "recommended_fix_patterns": linkage_summary.get("recommended_fix_patterns", []),
+            "likely_issue_points": linkage_summary.get("likely_issue_points", []),
+            "dominant_failure_modes": linkage_summary.get("dominant_failure_modes", []),
+        },
+        max_chars=1800,
+    )
+
     return (
-        "You are an expert prompt engineer. Improve this block prompt using a structured edit.\n"
-        "Preserve baseline section scaffolding and placeholders unless explicitly required to fix schema fidelity.\n"
-        "Do not insert specific training-case facts, numbers, or direct answer fragments.\n\n"
+        "You are an expert prompt engineer. Improve this block prompt while preserving strong baseline behavior.\n"
+        f"Mutation style: {style_id} ({style_config.get('title')})\n"
+        f"Style intent: {style_config.get('instructions')}\n"
+        f"Style change budget: {style_config.get('change_budget')}\n"
+        f"Tournament style plan: {style_plan_text}\n\n"
+        "CRITICAL CONSTRAINTS:\n"
+        "- Target the SPECIFIC failure mode identified in RCA, not general improvements.\n"
+        "- Preserve baseline section scaffolding and placeholders unless explicitly required.\n"
+        "- Do not insert specific training-case facts, numbers, or direct answer fragments.\n\n"
         f"Block ID: {block_id}\n\n"
         f"Current prompt:\n{current_prompt}\n\n"
+        f"Linked RCA themes and fix patterns:\n{linked_theme_text}\n\n"
         f"RCA analyses:\n{analyses_text}\n\n"
+        f"{failure_examples_text}"
         f"Prompt creation parameters:\n{_safe_json_dumps(criteria, max_chars=2500)}\n\n"
         f"{contract_checklist}\n"
         f"{retry_instructions}"
         "Editing protocol:\n"
         "- Keep existing section headings and ordering where possible.\n"
-        "- Modify only sections necessary to address RCA findings.\n"
+        "- Modify only the text needed to address the top-priority RCA findings for this style.\n"
         "- Keep wording concise and generalizable.\n"
         "- Preserve strict JSON/output contract language for schema-based blocks.\n"
-        "Return a concise `plan_for_improvement` and the revised prompt text in `prompt`."
+        "Return a concise `plan_for_improvement` (1-2 sentences max describing exactly what you changed) "
+        "and the revised prompt text in `prompt`."
     )
 
 
@@ -2533,6 +4115,8 @@ def mutate_block_with_retries(
     current_prompt: str,
     analyses: list[BlockAnalysisSchema],
     details: dict[str, Any],
+    mutation_style: str,
+    style_plan: list[str] | None = None,
     mutation_retry_enabled: bool,
     mutation_max_retries: int,
     progress_tracker: TrainingProgressTracker | None = None,
@@ -2546,15 +4130,30 @@ def mutate_block_with_retries(
     attempt_history: list[dict[str, Any]] = []
     previous_candidate: str | None = None
     previous_failure: dict[str, Any] | None = None
+    base_style = str(mutation_style or "failure_targeted_patch")
+    mutation_style_used = base_style
+    retry_budget_by_reason = {
+        "prompt_contract_violation": 1,
+        "missing_required_placeholders": 1,
+        "candidate_same_as_baseline": 2,
+    }
+    retry_count_by_reason: dict[str, int] = {}
 
     for attempt_idx in range(total_attempts):
         is_retry = attempt_idx > 0
-        temperature = _mutation_temperature_for_attempt(attempt_idx)
+        mutation_style_used = (
+            _mutation_style_for_retry(base_style, (previous_failure or {}).get("decision_reason"))
+            if is_retry
+            else base_style
+        )
+        temperature = _mutation_temperature_for_attempt(attempt_idx, mutation_style=mutation_style_used)
         mutation_prompt = _build_mutation_prompt(
             block_id=block_id,
             current_prompt=current_prompt,
             criteria=criteria,
             analyses=analyses,
+            mutation_style=mutation_style_used,
+            style_plan=style_plan,
             required_placeholders=required_placeholders,
             previous_candidate=previous_candidate if is_retry else None,
             failure_code=(previous_failure or {}).get("decision_reason") if is_retry else None,
@@ -2579,6 +4178,7 @@ def mutate_block_with_retries(
             "attempt_index": attempt_idx,
             "temperature": temperature,
             "mutation_model": used_model,
+            "mutation_style": mutation_style_used,
             "decision_reason": validation.get("decision_reason"),
             "missing_placeholders": list(validation.get("missing_placeholders") or []),
             "contract_hard_issues": list(validation.get("contract_hard_issues") or []),
@@ -2592,8 +4192,10 @@ def mutate_block_with_retries(
                 "valid": True,
                 "candidate_prompt": validation.get("candidate_prompt", candidate_prompt),
                 "mutation_model": used_model,
+                "mutation_style": mutation_style_used,
                 "required_placeholders": required_placeholders,
                 "attempt_history": attempt_history,
+                "style_plan": list(style_plan or []),
                 **validation,
             }
 
@@ -2608,6 +4210,10 @@ def mutate_block_with_retries(
         reason = str(validation.get("decision_reason") or "")
         has_next_attempt = attempt_idx < (total_attempts - 1)
         if has_next_attempt and _is_recoverable_mutation_failure(reason):
+            retry_count_by_reason[reason] = retry_count_by_reason.get(reason, 0) + 1
+            max_reason_retries = retry_budget_by_reason.get(reason)
+            if max_reason_retries is not None and retry_count_by_reason[reason] > int(max_reason_retries):
+                break
             if progress_tracker:
                 progress_tracker.emit(
                     event_type="mutation_retry_attempt",
@@ -2620,7 +4226,11 @@ def mutate_block_with_retries(
                         "attempt_index": attempt_idx + 1,
                         "total_attempts": total_attempts,
                         "failure_code": reason,
-                        "retry_temperature": _mutation_temperature_for_attempt(attempt_idx + 1),
+                        "retry_temperature": _mutation_temperature_for_attempt(
+                            attempt_idx + 1,
+                            mutation_style=_mutation_style_for_retry(base_style, reason),
+                        ),
+                        "mutation_style": mutation_style_used,
                     },
                 )
             continue
@@ -2645,8 +4255,10 @@ def mutate_block_with_retries(
         "valid": False,
         "candidate_prompt": previous_candidate or current_prompt,
         "mutation_model": attempt_history[-1]["mutation_model"] if attempt_history else None,
+        "mutation_style": mutation_style_used,
         "required_placeholders": required_placeholders,
         "attempt_history": attempt_history,
+        "style_plan": list(style_plan or []),
         "decision_reason": final_reason,
         "missing_placeholders": list((previous_failure or {}).get("missing_placeholders") or []),
         "contract_issues": list((previous_failure or {}).get("contract_hard_issues") or []),
@@ -2660,11 +4272,15 @@ def prompt_improvements(
     current_prompts: dict[str, str],
     block_analyses: list[BlockAnalysisSchema],
     block_details_map: dict[str, dict[str, Any]],
-    mutation_block_budget: int = 3,
+    mutation_block_budget: int = 1,
+    mutation_accept_threshold: int = MUTATION_ACCEPTANCE_TOTAL_MIN,
     mutation_retry_enabled: bool = True,
     mutation_max_retries: int = DEFAULT_MUTATION_MAX_RETRIES,
+    mutation_tournament_size: int = DEFAULT_MUTATION_TOURNAMENT_SIZE,
+    block_impact_history: dict[str, dict[str, Any]] | None = None,
     progress_tracker: TrainingProgressTracker | None = None,
     epoch_current: int | None = None,
+    target_block_ids_override: list[str] | None = None,
 ) -> tuple[dict[str, str], list[dict[str, Any]]]:
     grouped: dict[str, list[BlockAnalysisSchema]] = defaultdict(list)
     for analysis in block_analyses:
@@ -2674,38 +4290,15 @@ def prompt_improvements(
     improvements: dict[str, str] = {}
     diagnostics: list[dict[str, Any]] = []
     score_cache: dict[tuple[str, str], tuple[PromptCriteriaScoreSchema, str]] = {}
-    block_budget = max(0, int(mutation_block_budget))
-    ranked_blocks = _rank_blocks_by_rca_impact(grouped)
+    ranked_blocks = _rank_blocks_by_rca_impact(
+        grouped,
+        block_impact_history=block_impact_history,
+        enable_block_impact_ranker=ENABLE_BLOCK_IMPACT_RANKER,
+    )
     target_block_ids = [block_id for _, block_id in ranked_blocks]
-    if block_budget > 0:
-        target_block_ids = target_block_ids[:block_budget]
-    else:
-        target_block_ids = []
-
-    target_block_id_set = set(target_block_ids)
-    skipped_by_budget = [block_id for _, block_id in ranked_blocks if block_id not in target_block_id_set]
-    for block_id in skipped_by_budget:
-        if block_id in current_prompts:
-            improvements[block_id] = current_prompts[block_id]
-        diagnostics.append(
-            {
-                "block_id": block_id,
-                "analysis_count": len(grouped.get(block_id, [])),
-                "mutation_model": None,
-                "changed": False,
-                "accepted": False,
-                "decision_reason": "skipped_by_mutation_budget",
-                "required_placeholders_count": len(_placeholder_tokens(current_prompts.get(block_id, ""))),
-                "missing_placeholders": [],
-                "baseline_total": None,
-                "candidate_total": None,
-                "delta_total": 0.0,
-                "baseline_scores": {},
-                "candidate_scores": {},
-                "score_models": {},
-                "candidate_prompt_preview": "",
-            }
-        )
+    if isinstance(target_block_ids_override, list) and target_block_ids_override:
+        override_set = {str(item) for item in target_block_ids_override if str(item).strip()}
+        target_block_ids = [block_id for block_id in target_block_ids if block_id in override_set]
 
     def _score_cached(
         block_id: str,
@@ -2728,167 +4321,267 @@ def prompt_improvements(
         current_prompt = current_prompts[block_id]
         details = block_details_map.get(block_id, {})
         unique_analyses = _dedupe_block_analyses(analyses)
+        analysis_linkage = _collect_analysis_linkage_summary(unique_analyses)
 
-        try:
-            mutation_result = mutate_block_with_retries(
-                block_id=block_id,
-                current_prompt=current_prompt,
-                analyses=unique_analyses,
-                details=details,
-                mutation_retry_enabled=bool(mutation_retry_enabled),
-                mutation_max_retries=int(max(0, mutation_max_retries)),
-                progress_tracker=progress_tracker,
-                epoch_current=epoch_current,
-            )
-        except Exception as exc:
-            logger.exception("Mutation generation failed for block=%s: %s", block_id, exc)
+        # -- Tournament: generate N candidates, score each, pick best --------
+        tournament_size = int(max(1, mutation_tournament_size))
+        effective_tournament_size = int(max(1, min(tournament_size, 3))) if ENABLE_MUTATION_BUDGET_OPT_V1 else tournament_size
+        style_plan = _build_mutation_style_plan(unique_analyses, tournament_size=effective_tournament_size)
+        candidates: list[dict[str, Any]] = []  # [{mutation_result, candidate_prompt, ...}]
+        all_tournament_attempts: list[dict[str, Any]] = []
+        invalid_reason_counts: dict[str, int] = {}
+        invalid_reasons_by_style: dict[str, dict[str, int]] = {}
+        seen_candidate_hashes: set[str] = set()
+
+        for t_idx in range(effective_tournament_size):
+            if ENABLE_MUTATION_BUDGET_OPT_V1 and t_idx >= 1:
+                best_so_far = max(
+                    [float(item.get("candidate_total", 0.0) or 0.0) for item in candidates] or [0.0]
+                )
+                if t_idx == 1 and best_so_far >= 26.0:
+                    break
+                if t_idx >= 2 and best_so_far >= 25.5:
+                    break
+            style_for_slot = style_plan[t_idx % len(style_plan)]
+            try:
+                mutation_result = mutate_block_with_retries(
+                    block_id=block_id,
+                    current_prompt=current_prompt,
+                    analyses=unique_analyses,
+                    details=details,
+                    mutation_style=style_for_slot,
+                    style_plan=style_plan,
+                    mutation_retry_enabled=bool(mutation_retry_enabled),
+                    mutation_max_retries=int(max(0, mutation_max_retries)),
+                    progress_tracker=progress_tracker,
+                    epoch_current=epoch_current,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Tournament[%d/%d] mutation failed for block=%s: %s",
+                    t_idx + 1,
+                    tournament_size,
+                    block_id,
+                    exc,
+                )
+                all_tournament_attempts.append(
+                    {
+                        "tournament_idx": t_idx,
+                        "mutation_style": style_for_slot,
+                        "error": str(exc),
+                    }
+                )
+                continue
+
+            cand_prompt = str(mutation_result.get("candidate_prompt", current_prompt))
+            attempt_history = list(mutation_result.get("attempt_history") or [])
+            all_tournament_attempts.extend(attempt_history)
+            mutation_style_used = str(mutation_result.get("mutation_style") or style_for_slot)
+            candidate_hash = hashlib.sha1(cand_prompt.encode("utf-8", errors="ignore")).hexdigest()
+            if candidate_hash in seen_candidate_hashes:
+                invalid_reason = "duplicate_candidate_hash"
+                invalid_reason_counts[invalid_reason] = invalid_reason_counts.get(invalid_reason, 0) + 1
+                by_style = invalid_reasons_by_style.setdefault(mutation_style_used, {})
+                by_style[invalid_reason] = by_style.get(invalid_reason, 0) + 1
+                continue
+            seen_candidate_hashes.add(candidate_hash)
+
+            if not bool(mutation_result.get("valid")):
+                invalid_reason = str(mutation_result.get("decision_reason") or "mutation_retry_exhausted")
+                invalid_reason_counts[invalid_reason] = invalid_reason_counts.get(invalid_reason, 0) + 1
+                by_style = invalid_reasons_by_style.setdefault(mutation_style_used, {})
+                by_style[invalid_reason] = by_style.get(invalid_reason, 0) + 1
+                logger.debug("Tournament[%d/%d] invalid candidate for block=%s", t_idx + 1, tournament_size, block_id)
+                continue
+
+            # Score the candidate
+            try:
+                baseline_score, baseline_score_model = _score_cached(block_id, current_prompt, details)
+                candidate_score, candidate_score_model = _score_cached(block_id, cand_prompt, details)
+                baseline_total = (
+                    baseline_score.generic_quality_score
+                    + baseline_score.criteria_alignment_score
+                    + baseline_score.anti_overfit_score
+                )
+                candidate_total = (
+                    candidate_score.generic_quality_score
+                    + candidate_score.criteria_alignment_score
+                    + candidate_score.anti_overfit_score
+                )
+            except Exception as exc:
+                logger.warning("Tournament[%d/%d] scoring failed for block=%s: %s", t_idx + 1, tournament_size, block_id, exc)
+                continue
+
+            delta_total = candidate_total - baseline_total
+            candidates.append({
+                "candidate_prompt": cand_prompt,
+                "mutation_result": mutation_result,
+                "baseline_score": baseline_score,
+                "candidate_score": candidate_score,
+                "baseline_score_model": baseline_score_model,
+                "candidate_score_model": candidate_score_model,
+                "baseline_total": baseline_total,
+                "candidate_total": candidate_total,
+                "delta_total": delta_total,
+                "tournament_idx": t_idx,
+                "mutation_style": mutation_style_used,
+            })
+
+        # -- Pick the best candidate from the tournament ---------------------
+        if not candidates:
+            mapped_reason = "rejected_retry_exhausted"
+            if invalid_reason_counts:
+                top_reason = sorted(
+                    invalid_reason_counts.items(),
+                    key=lambda item: item[1],
+                    reverse=True,
+                )[0][0]
+                if top_reason == "missing_required_placeholders":
+                    mapped_reason = "rejected_placeholder"
+                elif top_reason == "prompt_contract_violation":
+                    mapped_reason = "rejected_contract"
             improvements[block_id] = current_prompt
-            diagnostics.append(
-                {
-                    "block_id": block_id,
-                    "analysis_count": len(unique_analyses),
-                    "mutation_model": None,
-                    "changed": False,
-                    "accepted": False,
-                    "decision_reason": "mutation_generation_error",
-                    "error": str(exc),
-                    "required_placeholders_count": len(_placeholder_tokens(current_prompt)),
-                    "missing_placeholders": [],
-                    "baseline_total": None,
-                    "candidate_total": None,
-                    "delta_total": 0.0,
-                    "baseline_scores": {},
-                    "candidate_scores": {},
-                    "score_models": {},
-                    "candidate_prompt_preview": "",
-                    "mutation_attempts": [],
-                }
-            )
+            diagnostics.append({
+                "block_id": block_id,
+                "analysis_count": len(unique_analyses),
+                "mutation_model": None,
+                "changed": False,
+                "accepted": False,
+                "decision_reason": mapped_reason,
+                "legacy_decision_reason": "tournament_no_valid_candidates",
+                "tournament_size": effective_tournament_size,
+                "tournament_size_requested": tournament_size,
+                "tournament_budget_mode": "progressive_v1" if ENABLE_MUTATION_BUDGET_OPT_V1 else "fixed",
+                "tournament_scored": 0,
+                "required_placeholders_count": len(_placeholder_tokens(current_prompt)),
+                "missing_placeholders": [],
+                "baseline_total": None,
+                "candidate_total": None,
+                "delta_total": 0.0,
+                "baseline_scores": {},
+                "candidate_scores": {},
+                "score_models": {},
+                "candidate_prompt_preview": "",
+                "mutation_attempts": all_tournament_attempts,
+                "invalid_reason_counts": invalid_reason_counts,
+                "invalid_reasons_by_style": invalid_reasons_by_style,
+                "mutation_style_plan": style_plan,
+                "mutation_styles_attempted": sorted(
+                    {
+                        str(item.get("mutation_style"))
+                        for item in all_tournament_attempts
+                        if isinstance(item, dict) and str(item.get("mutation_style") or "").strip()
+                    }
+                ),
+                "analysis_linkage": analysis_linkage,
+                "mutation_accept_threshold": int(mutation_accept_threshold),
+            })
             continue
 
-        candidate_prompt = str(mutation_result.get("candidate_prompt", current_prompt))
+        # Sort by delta_total descending, pick best
+        candidates.sort(
+            key=lambda c: (
+                float(c["candidate_total"]),
+                float(c["delta_total"]),
+                -int(c["tournament_idx"]),
+            ),
+            reverse=True,
+        )
+        best = candidates[0]
+
+        candidate_prompt = best["candidate_prompt"]
+        mutation_result = best["mutation_result"]
         used_model = mutation_result.get("mutation_model")
-        required_placeholders = list(mutation_result.get("required_placeholders") or [])
+        selected_mutation_style = str(best.get("mutation_style") or mutation_result.get("mutation_style") or "")
         contract_issues = list(mutation_result.get("contract_issues") or [])
         contract_hard_issues = list(mutation_result.get("contract_hard_issues") or [])
         contract_soft_issues = list(mutation_result.get("contract_soft_issues") or [])
         auto_repair_applied = list(mutation_result.get("contract_auto_repair_applied") or [])
-        mutation_attempts = list(mutation_result.get("attempt_history") or [])
+        required_placeholders = list(mutation_result.get("required_placeholders") or [])
 
-        if not bool(mutation_result.get("valid")):
-            improvements[block_id] = current_prompt
-            diagnostics.append(
-                {
-                    "block_id": block_id,
-                    "analysis_count": len(unique_analyses),
-                    "mutation_model": used_model,
-                    "changed": candidate_prompt.strip() != current_prompt.strip(),
-                    "accepted": False,
-                    "decision_reason": str(mutation_result.get("decision_reason") or "mutation_retry_exhausted"),
-                    "contract_issues": contract_issues,
-                    "contract_hard_issues": contract_hard_issues,
-                    "contract_soft_issues": contract_soft_issues,
-                    "contract_auto_repair_applied": auto_repair_applied,
-                    "required_placeholders_count": len(required_placeholders),
-                    "missing_placeholders": list(mutation_result.get("missing_placeholders") or []),
-                    "baseline_total": None,
-                    "candidate_total": None,
-                    "delta_total": 0.0,
-                    "baseline_scores": {},
-                    "candidate_scores": {},
-                    "score_models": {},
-                    "candidate_prompt_preview": candidate_prompt[:240],
-                    "mutation_attempts": mutation_attempts,
-                }
-            )
-            continue
-
-        try:
-            baseline_score, baseline_score_model = _score_cached(block_id, current_prompt, details)
-            candidate_score, candidate_score_model = _score_cached(block_id, candidate_prompt, details)
-
-            baseline_total = (
-                baseline_score.generic_quality_score
-                + baseline_score.criteria_alignment_score
-                + baseline_score.anti_overfit_score
-            )
-            candidate_total = (
-                candidate_score.generic_quality_score
-                + candidate_score.criteria_alignment_score
-                + candidate_score.anti_overfit_score
-            )
-        except Exception as exc:
-            logger.exception("Mutation scoring failed for block=%s: %s", block_id, exc)
-            improvements[block_id] = current_prompt
-            diagnostics.append(
-                {
-                    "block_id": block_id,
-                    "analysis_count": len(unique_analyses),
-                    "mutation_model": used_model,
-                    "changed": True,
-                    "accepted": False,
-                    "decision_reason": "mutation_scoring_error",
-                    "error": str(exc),
-                    "contract_issues": contract_issues,
-                    "contract_hard_issues": contract_hard_issues,
-                    "contract_soft_issues": contract_soft_issues,
-                    "contract_auto_repair_applied": auto_repair_applied,
-                    "required_placeholders_count": len(required_placeholders),
-                    "missing_placeholders": [],
-                    "baseline_total": None,
-                    "candidate_total": None,
-                    "delta_total": 0.0,
-                    "baseline_scores": {},
-                    "candidate_scores": {},
-                    "score_models": {},
-                    "candidate_prompt_preview": candidate_prompt[:240],
-                    "mutation_attempts": mutation_attempts,
-                }
-            )
-            continue
-
-        delta_total = candidate_total - baseline_total
-        acceptance_floor = baseline_total / PROMPT_SCORE_ACCEPTANCE_RATIO
-        accepted = candidate_total >= acceptance_floor
+        delta_total = best["delta_total"]
+        candidate_total = float(best["candidate_total"])
+        accepted = candidate_total >= float(mutation_accept_threshold)
         if accepted:
             improvements[block_id] = candidate_prompt
-            if candidate_total >= baseline_total:
-                decision_reason = "candidate_score_ge_baseline"
-            else:
-                decision_reason = "candidate_score_within_tolerance"
+            decision_reason = "accepted_absolute_threshold"
         else:
             improvements[block_id] = current_prompt
-            decision_reason = "candidate_score_lt_tolerance"
+            decision_reason = "rejected_below_absolute_threshold"
 
-        diagnostics.append(
-            {
-                "block_id": block_id,
-                "analysis_count": len(unique_analyses),
-                "mutation_model": used_model,
-                "changed": True,
-                "accepted": accepted,
-                "decision_reason": decision_reason,
-                "contract_issues": contract_issues,
-                "contract_hard_issues": contract_hard_issues,
-                "contract_soft_issues": contract_soft_issues,
-                "contract_auto_repair_applied": auto_repair_applied,
-                "required_placeholders_count": len(required_placeholders),
-                "missing_placeholders": [],
-                "baseline_total": baseline_total,
-                "candidate_total": candidate_total,
-                "delta_total": delta_total,
-                "baseline_scores": baseline_score.model_dump(),
-                "candidate_scores": candidate_score.model_dump(),
-                "score_models": {
-                    "baseline": baseline_score_model,
-                    "candidate": candidate_score_model,
-                },
-                "candidate_prompt_preview": candidate_prompt[:240],
-                "mutation_attempts": mutation_attempts,
-            }
-        )
+        diagnostics.append({
+            "block_id": block_id,
+            "analysis_count": len(unique_analyses),
+            "mutation_model": used_model,
+            "changed": True,
+            "accepted": accepted,
+            "decision_reason": decision_reason,
+            "selected_mutation_style": selected_mutation_style,
+            "mutation_style_plan": style_plan,
+            "mutation_styles_attempted": sorted(
+                {
+                    str(item.get("mutation_style"))
+                    for item in all_tournament_attempts
+                    if isinstance(item, dict) and str(item.get("mutation_style") or "").strip()
+                }
+            ),
+            "tournament_size": effective_tournament_size,
+            "tournament_size_requested": tournament_size,
+            "tournament_budget_mode": "progressive_v1" if ENABLE_MUTATION_BUDGET_OPT_V1 else "fixed",
+            "tournament_scored": len(candidates),
+            "tournament_deltas": [round(c["delta_total"], 3) for c in candidates],
+            "tournament_styles": [str(c.get("mutation_style") or "") for c in candidates],
+            "contract_issues": contract_issues,
+            "contract_hard_issues": contract_hard_issues,
+            "contract_soft_issues": contract_soft_issues,
+            "contract_auto_repair_applied": auto_repair_applied,
+            "required_placeholders_count": len(required_placeholders),
+            "missing_placeholders": [],
+            "baseline_total": best["baseline_total"],
+            "candidate_total": candidate_total,
+            "delta_total": delta_total,
+            "baseline_scores": best["baseline_score"].model_dump(),
+            "candidate_scores": best["candidate_score"].model_dump(),
+            "score_models": {
+                "baseline": best["baseline_score_model"],
+                "candidate": best["candidate_score_model"],
+            },
+            "candidate_prompt_preview": candidate_prompt[:240],
+            "mutation_attempts": all_tournament_attempts,
+            "invalid_reason_counts": invalid_reason_counts,
+            "invalid_reasons_by_style": invalid_reasons_by_style,
+            "analysis_linkage": analysis_linkage,
+            "mutation_accept_threshold": int(mutation_accept_threshold),
+            "mutation_block_budget_deprecated": int(max(0, mutation_block_budget)),
+        })
 
     return improvements, diagnostics
+
+
+def _summarize_mutation_style_diagnostics(prompt_scoring: list[dict[str, Any]]) -> dict[str, Any]:
+    style_attempt_counts: dict[str, int] = {}
+    selected_style_counts: dict[str, int] = {}
+    blocks_with_styles = 0
+    for item in prompt_scoring:
+        if not isinstance(item, dict):
+            continue
+        attempted = item.get("mutation_styles_attempted") or []
+        if isinstance(attempted, list) and attempted:
+            blocks_with_styles += 1
+            for style in attempted:
+                style_key = str(style).strip()
+                if not style_key:
+                    continue
+                style_attempt_counts[style_key] = style_attempt_counts.get(style_key, 0) + 1
+        selected_style = str(item.get("selected_mutation_style") or "").strip()
+        if selected_style:
+            selected_style_counts[selected_style] = selected_style_counts.get(selected_style, 0) + 1
+    return {
+        "blocks_with_styles": blocks_with_styles,
+        "style_attempt_counts": style_attempt_counts,
+        "selected_style_counts": selected_style_counts,
+        "style_catalog": list(MUTATION_STYLE_DEFAULT_ORDER),
+    }
 
 
 def _heuristic_leakage_scan(prompts: dict[str, str], selected_cases: list[dict[str, Any]]) -> list[str]:
@@ -2946,6 +4639,11 @@ def evaluate_suite(
     reference_scores: list[float] | None = None,
     early_stop_min_cases: int = EARLY_STOP_MIN_CASES,
     early_stop_mean_delta_threshold: float = EARLY_STOP_MEAN_DELTA_THRESHOLD,
+    eval_mode: str = DEFAULT_EVAL_MODE,
+    eval_min_pairs: int = DEFAULT_TRAIN_EVAL_MIN_PAIRS,
+    eval_max_pairs: int = DEFAULT_TRAIN_EVAL_MAX_PAIRS,
+    eval_checkpoints: list[int] | tuple[int, ...] | str | None = None,
+    bootstrap_resamples: int = 400,
 ) -> tuple[list[dict[str, Any]], list[float], dict[str, Any]]:
     results: list[dict[str, Any]] = []
     scores: list[float] = []
@@ -2972,14 +4670,35 @@ def evaluate_suite(
                 },
             )
 
-    total_cases = len(selected_cases)
+    requested_cases = len(selected_cases)
+    adaptive_mode = bool(ENABLE_ADAPTIVE_EVAL_V1 and str(eval_mode) == "adaptive_sequential")
+    if adaptive_mode:
+        max_pairs = max(1, int(eval_max_pairs))
+        scheduled_cases = min(requested_cases, max_pairs)
+    else:
+        scheduled_cases = requested_cases
+    eval_cases = selected_cases[:scheduled_cases]
+    adaptive_checkpoints = _parse_eval_checkpoints(
+        eval_checkpoints,
+        default=DEFAULT_TRAIN_EVAL_CHECKPOINTS,
+    )
+    min_pairs = max(1, int(eval_min_pairs))
+    adaptive_eval_trace: dict[str, Any] = {
+        "mode": "adaptive_sequential" if adaptive_mode else "fixed",
+        "min_pairs": int(min_pairs),
+        "max_pairs": int(scheduled_cases),
+        "checkpoints": adaptive_checkpoints,
+        "decision": "none",
+        "decision_reason": None,
+        "events": [],
+    }
     with prompt_override_context(prompt_suite):
         pipeline = Pipeline(
             enable_image_embedding=False,
             allow_visual_outputs=False,
         )
 
-        for index, case in enumerate(selected_cases, start=1):
+        for index, case in enumerate(eval_cases, start=1):
             case_prompt = str(case.get("prompt", ""))
             validation = case.get("validation")
             case_payload = {
@@ -2992,7 +4711,7 @@ def evaluate_suite(
             }
             case_meta = {
                 "index": index,
-                "total": total_cases,
+                "total": scheduled_cases,
                 "id": case_payload.get("id"),
                 "category": case_payload.get("category"),
                 "difficulty": case_payload.get("difficulty"),
@@ -3004,7 +4723,7 @@ def evaluate_suite(
                     event_type="case_started",
                     phase=phase,
                     step="case_run",
-                    message=f"Running case {index}/{total_cases}",
+                    message=f"Running case {index}/{scheduled_cases}",
                     epoch_current=epoch_current,
                     current_case=case_meta,
                     payload={
@@ -3144,7 +4863,7 @@ def evaluate_suite(
                         event_type="case_completed",
                         phase=phase,
                         step="case_timeout",
-                        message=f"Case {index}/{total_cases} timed out",
+                        message=f"Case {index}/{scheduled_cases} timed out",
                         epoch_current=epoch_current,
                         current_case=case_meta,
                         payload={
@@ -3203,7 +4922,7 @@ def evaluate_suite(
                         event_type="case_completed",
                         phase=phase,
                         step="case_error",
-                        message=f"Case {index}/{total_cases} failed",
+                        message=f"Case {index}/{scheduled_cases} failed",
                         epoch_current=epoch_current,
                         current_case=case_meta,
                         payload={
@@ -3245,7 +4964,7 @@ def evaluate_suite(
                     event_type="case_completed",
                     phase=phase,
                     step="case_scored",
-                    message=f"Case {index}/{total_cases} scored",
+                    message=f"Case {index}/{scheduled_cases} scored",
                     epoch_current=epoch_current,
                     current_case=case_meta,
                     payload={
@@ -3282,32 +5001,117 @@ def evaluate_suite(
                 )
 
             if reference_scores:
-                triggered, stop_details = _should_early_stop_candidate_eval(
-                    baseline_scores=reference_scores,
-                    candidate_scores=scores,
-                    min_cases=early_stop_min_cases,
-                    mean_delta_threshold=early_stop_mean_delta_threshold,
-                )
-                if triggered:
-                    early_stop = {"triggered": True, **stop_details}
-                    if progress_tracker:
-                        progress_tracker.emit(
-                            event_type="phase_early_stopped",
-                            phase=phase,
-                            step="early_stop",
-                            message=(
-                                f"{phase}: early stop triggered after {int(stop_details.get('pair_count', 0))} case(s)"
-                            ),
-                            epoch_current=epoch_current,
-                            payload=early_stop,
-                        )
-                    break
+                pair_count = min(len(reference_scores), len(scores))
+                checkpoint_hit = pair_count in set(adaptive_checkpoints)
+                if adaptive_mode and checkpoint_hit:
+                    delta_stats = _paired_delta_stats(
+                        list(reference_scores[:pair_count]),
+                        list(scores[:pair_count]),
+                        bootstrap_resamples=max(100, int(bootstrap_resamples)),
+                        rng=random.Random((pair_count * 7919) + int(epoch_current or 0)),
+                    )
+                    deltas = [float(value) for value in (delta_stats.get("deltas") or [])]
+                    wins = sum(1 for value in deltas if value > 0.0)
+                    win_rate = (float(wins) / float(len(deltas))) if deltas else 0.0
+                    catastrophic_regression_count = sum(
+                        1 for value in deltas if value <= float(TAIL_RISK_CATASTROPHIC_DELTA_THRESHOLD)
+                    )
+                    running_mean_delta = float(delta_stats.get("mean_delta") or 0.0)
+                    ci_lower = float(delta_stats.get("ci_lower") or running_mean_delta)
+                    ci_upper = float(delta_stats.get("ci_upper") or running_mean_delta)
+                    event_payload = {
+                        "pair_count": pair_count,
+                        "running_mean_delta": running_mean_delta,
+                        "ci_lower": ci_lower,
+                        "ci_upper": ci_upper,
+                        "win_rate": win_rate,
+                        "catastrophic_regression_count": catastrophic_regression_count,
+                    }
+                    adaptive_eval_trace["events"].append(dict(event_payload))
+                    early_reject_reason = None
+                    if pair_count >= 6:
+                        if ci_upper < 0.0:
+                            early_reject_reason = "ci_upper_below_zero"
+                        elif catastrophic_regression_count >= 2:
+                            early_reject_reason = "catastrophic_regressions_ge_2"
+                        elif running_mean_delta < -0.75:
+                            early_reject_reason = "running_mean_delta_below_-0.75"
+                    early_accept = (
+                        pair_count >= 6
+                        and ci_lower > 0.20
+                        and win_rate >= 0.60
+                        and catastrophic_regression_count == 0
+                    )
+                    if early_reject_reason:
+                        adaptive_eval_trace["decision"] = "early_reject"
+                        adaptive_eval_trace["decision_reason"] = early_reject_reason
+                        early_stop = {
+                            "triggered": True,
+                            "pair_count": pair_count,
+                            "running_mean_delta": running_mean_delta,
+                            "threshold": float(early_stop_mean_delta_threshold),
+                            "reason": early_reject_reason,
+                        }
+                        if progress_tracker:
+                            progress_tracker.emit(
+                                event_type="phase_early_stopped",
+                                phase=phase,
+                                step="adaptive_early_reject",
+                                message=f"{phase}: adaptive early reject at checkpoint {pair_count}",
+                                epoch_current=epoch_current,
+                                payload={**early_stop, **event_payload},
+                            )
+                        break
+                    if early_accept:
+                        adaptive_eval_trace["decision"] = "early_accept"
+                        adaptive_eval_trace["decision_reason"] = "ci_lower_winrate_no_catastrophic"
+                        if progress_tracker:
+                            progress_tracker.emit(
+                                event_type="phase_early_stopped",
+                                phase=phase,
+                                step="adaptive_early_accept",
+                                message=f"{phase}: adaptive early accept at checkpoint {pair_count}",
+                                epoch_current=epoch_current,
+                                payload=event_payload,
+                            )
+                        break
+
+                if not adaptive_mode:
+                    triggered, stop_details = _should_early_stop_candidate_eval(
+                        baseline_scores=reference_scores,
+                        candidate_scores=scores,
+                        min_cases=early_stop_min_cases,
+                        mean_delta_threshold=early_stop_mean_delta_threshold,
+                    )
+                    if triggered:
+                        early_stop = {"triggered": True, **stop_details}
+                        if progress_tracker:
+                            progress_tracker.emit(
+                                event_type="phase_early_stopped",
+                                phase=phase,
+                                step="early_stop",
+                                message=(
+                                    f"{phase}: early stop triggered after {int(stop_details.get('pair_count', 0))} case(s)"
+                                ),
+                                epoch_current=epoch_current,
+                                payload=early_stop,
+                            )
+                        break
+
+    if adaptive_mode and str(adaptive_eval_trace.get("decision")) == "none":
+        adaptive_eval_trace["decision"] = "completed"
+        adaptive_eval_trace["decision_reason"] = (
+            "max_pairs_reached" if len(scores) >= int(scheduled_cases) else "completed_without_checkpoint_stop"
+        )
 
     return results, scores, {
-        "case_count_requested": total_cases,
+        "case_count_requested": requested_cases,
+        "case_count_scheduled": scheduled_cases,
         "case_count_evaluated": len(scores),
         "timeout_enforcement_mode": timeout_enforcement_mode,
         "early_stop": early_stop,
+        "evaluation_mode": "adaptive_sequential" if adaptive_mode else "fixed",
+        "adaptive_eval_trace": adaptive_eval_trace,
     }
 
 
@@ -3316,29 +5120,56 @@ def train_ab_loop(
     output_path: str,
     test_cases_path: str,
     epochs: int = 10,
-    num_test_cases_per_trial: int = 6,
+    num_test_cases_per_trial: int = 10,
     random_seed: int = 42,
     thinking_level: Literal["low", "med-synth", "med-plan", "high"] = "med-synth",
-    fail_threshold: float = 7.5,
+    fail_threshold: float | None = None,
     holdout_sample_size: int = 6,
     rca_case_budget: int = 3,
-    mutation_block_budget: int = 3,
+    mutation_block_budget: int = 1,
+    mutation_accept_threshold: int = MUTATION_ACCEPTANCE_TOTAL_MIN,
+    mutation_tournament_size: int = DEFAULT_MUTATION_TOURNAMENT_SIZE,
     mutation_retry_enabled: bool = True,
     mutation_max_retries: int = DEFAULT_MUTATION_MAX_RETRIES,
     generalizer_cadence: int = 3,
     generalizer_suspicious_delta_threshold: int = GENERALIZER_SUSPICIOUS_DELTA_THRESHOLD,
     bootstrap_resamples: int = 1000,
+    rca_threshold: float = DEFAULT_RCA_THRESHOLD,
+    rca_fallback_fraction: float = DEFAULT_RCA_FALLBACK_FRACTION,
+    selection_mode: str = DEFAULT_SELECTION_MODE,
+    runtime_gate_mean_ratio_max: float = RUNTIME_GATE_MEAN_MAX_RATIO,
+    runtime_gate_p90_ratio_max: float = RUNTIME_GATE_P90_MAX_RATIO,
+    runtime_gate_abs_mean_increase_max_seconds: float = RUNTIME_GATE_MAX_ABS_MEAN_INCREASE_SECONDS,
+    stability_gate_tool_failure_delta_max: float = STABILITY_GATE_MAX_TOOL_FAILURE_DELTA,
+    stability_gate_degraded_rate_delta_max: float = DEGRADATION_GATE_MAX_DELTA,
+    holdout_winrate_min: float = HOLDOUT_GATE_MIN_WIN_RATE,
+    quality_gate_min_mean_delta: float = QUALITY_GATE_MIN_MEAN_DELTA,
+    quality_gate_min_win_rate: float = QUALITY_GATE_MIN_WIN_RATE,
+    quality_gate_min_p10_delta: float = QUALITY_GATE_MIN_P10_DELTA,
+    quality_gate_min_worst_case_delta: float = QUALITY_GATE_MIN_WORST_CASE_DELTA,
+    tail_catastrophic_threshold: float = TAIL_RISK_CATASTROPHIC_DELTA_THRESHOLD,
+    tail_max_catastrophic_regressions: int = TAIL_RISK_MAX_CATASTROPHIC_REGRESSIONS,
+    eval_mode: str = DEFAULT_EVAL_MODE,
+    train_eval_min_pairs: int = DEFAULT_TRAIN_EVAL_MIN_PAIRS,
+    train_eval_max_pairs: int = DEFAULT_TRAIN_EVAL_MAX_PAIRS,
+    train_eval_checkpoints: list[int] | tuple[int, ...] | str | None = None,
+    holdout_eval_min_pairs: int = DEFAULT_HOLDOUT_EVAL_MIN_PAIRS,
+    holdout_eval_max_pairs: int = DEFAULT_HOLDOUT_EVAL_MAX_PAIRS,
+    holdout_eval_checkpoints: list[int] | tuple[int, ...] | str | None = None,
+    mutation_stage_a_top_k: int = DEFAULT_MUTATION_STAGE_A_TOP_K,
+    mutation_precheck_cases: int = DEFAULT_MUTATION_PRECHECK_CASES,
+    resource_target_reduction: float = DEFAULT_RESOURCE_TARGET_REDUCTION,
     holdout_split_ratio: float = DEFAULT_HOLDOUT_SPLIT_RATIO,
     progress_status_path: str = "data/training_status.json",
     progress_events_path: str = "data/training_events.jsonl",
     progress_events_archive_dir: str = "data/training_events",
     track_progress: bool = True,
 ) -> dict[str, Any]:
-    random.seed(random_seed)
     rng = random.Random(random_seed)
 
     current_prompts = load_prompts_file(base_prompts_path)
-    test_cases = load_test_cases(test_cases_path)
+    test_cases, dataset_diagnostics = load_test_cases_with_diagnostics(test_cases_path)
+    effective_rca_threshold = float(fail_threshold) if fail_threshold is not None else float(rca_threshold)
     train_pool, holdout_pool = stratified_split_cases(
         test_cases,
         holdout_ratio=holdout_split_ratio,
@@ -3352,7 +5183,36 @@ def train_ab_loop(
     holdout_sampler_state = _build_sampling_state(holdout_pool, rng) if holdout_pool else {"buckets": {}}
     block_details_map = get_prompted_block_details()
 
+    # Mutation coverage tracking (Phase 4C)
+    mutation_coverage: dict[str, dict[str, int]] = {}
+    case_history: dict[str, dict[str, Any]] = {}
+    block_impact_history: dict[str, dict[str, Any]] = {}
+
     store = PromptSuiteStore(output_path)
+    prior_generations = store.data.get("generations", []) if isinstance(store.data, dict) else []
+    if isinstance(prior_generations, list):
+        for record in reversed(prior_generations):
+            if not isinstance(record, dict):
+                continue
+            metadata = record.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            snapshot = metadata.get("case_history_snapshot")
+            if isinstance(snapshot, dict) and snapshot:
+                case_history = {
+                    str(case_id): dict(history)
+                    for case_id, history in snapshot.items()
+                    if isinstance(history, dict)
+                }
+            block_snapshot = metadata.get("block_impact_history_snapshot")
+            if isinstance(block_snapshot, dict) and block_snapshot:
+                block_impact_history = {
+                    str(block_id): dict(history)
+                    for block_id, history in block_snapshot.items()
+                    if isinstance(history, dict)
+                }
+            if case_history or block_impact_history:
+                break
     run_id = str(uuid.uuid4())
     events_archive_path = str((Path(progress_events_archive_dir) / f"{run_id}.jsonl").resolve())
     generation = 0
@@ -3374,6 +5234,9 @@ def train_ab_loop(
             "note": "initial",
             "run_id": run_id,
             "events_archive_path": events_archive_path,
+            "event_schema_version": EVENT_SCHEMA_VERSION,
+            "metadata_schema_version": METADATA_SCHEMA_VERSION,
+            "dataset_diagnostics": dataset_diagnostics,
             **split_metadata,
         },
     )
@@ -3385,6 +5248,8 @@ def train_ab_loop(
         epochs_total=epochs,
         enabled=track_progress,
     )
+    resource_telemetry = RunResourceTelemetry() if ENABLE_RESOURCE_TELEMETRY_V3 else None
+    resource_baseline_snapshot = resource_telemetry.snapshot() if resource_telemetry is not None else {}
 
     logger.info(
         f"Starting prompt A/B training: epochs={epochs}, sampled_cases={num_test_cases_per_trial}, thinking={thinking_level}"
@@ -3404,11 +5269,15 @@ def train_ab_loop(
             "holdout_sample_size": holdout_sample_size,
             "thinking_level": thinking_level,
             "fail_threshold": fail_threshold,
+            "rca_threshold": float(effective_rca_threshold),
+            "rca_fallback_fraction": float(rca_fallback_fraction),
+            "selection_mode": str(selection_mode),
             "random_seed": random_seed,
             "total_available_cases": len(test_cases),
-            "sample_strategy": "stratified_rotating_unseen_first",
+            "sample_strategy": str(selection_mode),
             "rca_case_budget": int(max(0, rca_case_budget)),
             "mutation_block_budget": int(max(0, mutation_block_budget)),
+            "mutation_accept_threshold": int(max(1, mutation_accept_threshold)),
             "generalizer_cadence": int(max(0, generalizer_cadence)),
             "generalizer_suspicious_delta_threshold": int(max(0, generalizer_suspicious_delta_threshold)),
             "mutation_retry_enabled": bool(mutation_retry_enabled),
@@ -3416,16 +5285,60 @@ def train_ab_loop(
             "bootstrap_resamples": int(max(1, bootstrap_resamples)),
             "train_split_size": len(train_pool),
             "holdout_split_size": len(holdout_pool),
+            "dataset_diagnostics": dataset_diagnostics,
+            "case_history_seeded_count": len(case_history),
+            "runtime_gate_mean_ratio_max": float(runtime_gate_mean_ratio_max),
+            "runtime_gate_p90_ratio_max": float(runtime_gate_p90_ratio_max),
+            "runtime_gate_abs_mean_increase_max_seconds": float(runtime_gate_abs_mean_increase_max_seconds),
+            "stability_gate_tool_failure_delta_max": float(stability_gate_tool_failure_delta_max),
+            "stability_gate_degraded_rate_delta_max": float(stability_gate_degraded_rate_delta_max),
+            "holdout_winrate_min": float(holdout_winrate_min),
+            "quality_gate_min_mean_delta": float(quality_gate_min_mean_delta),
+            "quality_gate_min_win_rate": float(quality_gate_min_win_rate),
+            "quality_gate_min_p10_delta": float(quality_gate_min_p10_delta),
+            "quality_gate_min_worst_case_delta": float(quality_gate_min_worst_case_delta),
+            "tail_catastrophic_threshold": float(tail_catastrophic_threshold),
+            "tail_max_catastrophic_regressions": int(max(0, tail_max_catastrophic_regressions)),
+            "eval_mode": str(eval_mode),
+            "train_eval_min_pairs": int(max(1, train_eval_min_pairs)),
+            "train_eval_max_pairs": int(max(1, train_eval_max_pairs)),
+            "train_eval_checkpoints": _parse_eval_checkpoints(
+                train_eval_checkpoints,
+                default=DEFAULT_TRAIN_EVAL_CHECKPOINTS,
+            ),
+            "holdout_eval_min_pairs": int(max(1, holdout_eval_min_pairs)),
+            "holdout_eval_max_pairs": int(max(1, holdout_eval_max_pairs)),
+            "holdout_eval_checkpoints": _parse_eval_checkpoints(
+                holdout_eval_checkpoints,
+                default=DEFAULT_HOLDOUT_EVAL_CHECKPOINTS,
+            ),
+            "mutation_stage_a_top_k": int(max(1, mutation_stage_a_top_k)),
+            "mutation_precheck_cases": int(max(0, mutation_precheck_cases)),
+            "resource_target_reduction": float(max(0.0, resource_target_reduction)),
+            "event_schema_version": EVENT_SCHEMA_VERSION,
+            "metadata_schema_version": METADATA_SCHEMA_VERSION,
             "events_archive_path": events_archive_path,
             "feature_flags": {
                 "ENABLE_CANDIDATE_GATES": ENABLE_CANDIDATE_GATES,
                 "ENABLE_TOOL_PROMPT_TEMPLATES": ENABLE_TOOL_PROMPT_TEMPLATES,
                 "ENABLE_MUTATION_RETRY_V2": ENABLE_MUTATION_RETRY_V2,
+                "ENABLE_TAIL_RISK_GATE": ENABLE_TAIL_RISK_GATE,
+                "ENABLE_NO_CHANGE_STRICT_SEMANTICS": ENABLE_NO_CHANGE_STRICT_SEMANTICS,
+                "ENABLE_BLOCK_IMPACT_RANKER": ENABLE_BLOCK_IMPACT_RANKER,
+                "ENABLE_RESOURCE_TELEMETRY_V3": ENABLE_RESOURCE_TELEMETRY_V3,
+                "ENABLE_ADAPTIVE_EVAL_V1": ENABLE_ADAPTIVE_EVAL_V1,
+                "ENABLE_BALANCED_GUARDRAILS_V1": ENABLE_BALANCED_GUARDRAILS_V1,
+                "ENABLE_MUTATION_BUDGET_OPT_V1": ENABLE_MUTATION_BUDGET_OPT_V1,
+                "ENABLE_REPLAY_REBALANCE_V1": ENABLE_REPLAY_REBALANCE_V1,
                 "TRAINING_CASE_TIME_BUDGET_SECONDS": TRAINING_CASE_TIME_BUDGET_SECONDS,
                 "STALL_WARNING_THRESHOLD_SECONDS": STALL_WARNING_THRESHOLD_SECONDS,
             },
         },
     )
+
+    global _ACTIVE_RESOURCE_TELEMETRY
+    previous_resource_telemetry = _ACTIVE_RESOURCE_TELEMETRY
+    _ACTIVE_RESOURCE_TELEMETRY = resource_telemetry if ENABLE_RESOURCE_TELEMETRY_V3 else None
 
     try:
         for epoch in range(epochs):
@@ -3439,11 +5352,33 @@ def train_ab_loop(
                 metrics={"generation": generation},
             )
 
-            selected = sample_cases_stratified(
-                sample_state=train_sampler_state,
-                sample_size=min(num_test_cases_per_trial, len(train_pool)),
-                rng=rng,
-            )
+            sample_budget = min(num_test_cases_per_trial, len(train_pool))
+            selection_diagnostics: list[dict[str, Any]] = []
+            if str(selection_mode) == "hybrid_coverage_replay":
+                selected, selection_diagnostics = select_cases_hybrid(
+                    sample_state=train_sampler_state,
+                    sample_size=sample_budget,
+                    rng=rng,
+                    case_history=case_history,
+                    epoch_current=epoch_current,
+                )
+            else:
+                selected = sample_cases_stratified(
+                    sample_state=train_sampler_state,
+                    sample_size=sample_budget,
+                    rng=rng,
+                )
+                selection_diagnostics = [
+                    {
+                        "case_id": _case_identifier(case),
+                        "slot": "coverage",
+                        "reason": "stratified_rotation",
+                        "category": case.get("category"),
+                        "difficulty": case.get("difficulty"),
+                    }
+                    for case in selected
+                ]
+            rng.shuffle(selected)
             tracker.emit(
                 event_type="sample_selected",
                 phase="sampling",
@@ -3453,7 +5388,8 @@ def train_ab_loop(
                 payload={
                     "sampled_case_ids": [case.get("id") for case in selected],
                     "sampled_categories": sorted({case.get("category") for case in selected if case.get("category")}),
-                    "sample_strategy": "stratified_rotating_unseen_first",
+                    "sample_strategy": str(selection_mode),
+                    "selection_diagnostics": selection_diagnostics,
                     "pool": "train",
                 },
             )
@@ -3466,14 +5402,35 @@ def train_ab_loop(
                 message=f"Epoch {epoch_current}: evaluating baseline prompts",
                 epoch_current=epoch_current,
             )
-            results_a, scores_a, phase_a_meta = evaluate_suite(
-                current_prompts,
-                selected,
-                thinking_level,
-                phase="phase_a_eval",
-                epoch_current=epoch_current,
-                progress_tracker=tracker,
-            )
+            if resource_telemetry is not None:
+                with resource_telemetry.phase("phase_a_eval"):
+                    results_a, scores_a, phase_a_meta = evaluate_suite(
+                        current_prompts,
+                        selected,
+                        thinking_level,
+                        phase="phase_a_eval",
+                        epoch_current=epoch_current,
+                        progress_tracker=tracker,
+                        eval_mode=eval_mode,
+                        eval_min_pairs=train_eval_min_pairs,
+                        eval_max_pairs=train_eval_max_pairs,
+                        eval_checkpoints=train_eval_checkpoints,
+                        bootstrap_resamples=bootstrap_resamples,
+                    )
+            else:
+                results_a, scores_a, phase_a_meta = evaluate_suite(
+                    current_prompts,
+                    selected,
+                    thinking_level,
+                    phase="phase_a_eval",
+                    epoch_current=epoch_current,
+                    progress_tracker=tracker,
+                    eval_mode=eval_mode,
+                    eval_min_pairs=train_eval_min_pairs,
+                    eval_max_pairs=train_eval_max_pairs,
+                    eval_checkpoints=train_eval_checkpoints,
+                    bootstrap_resamples=bootstrap_resamples,
+                )
             avg_score_a = sum(scores_a) / max(len(scores_a), 1)
             stats_a = _score_stats(scores_a)
             phase_a_eval_summary = _summarize_eval_results(results_a)
@@ -3502,9 +5459,16 @@ def train_ab_loop(
                 },
             )
 
-            failed = _select_rca_cases(results_a, rca_case_budget=rca_case_budget)
+            failed, rca_selection_diagnostics = _select_rca_cases(
+                results_a,
+                rca_case_budget=rca_case_budget,
+                rca_threshold=effective_rca_threshold,
+                rca_fallback_fraction=rca_fallback_fraction,
+                case_history=case_history,
+            )
             all_analyses: list[BlockAnalysisSchema] = []
             valid_block_ids = sorted(list(current_prompts.keys()))
+            high_level_rca: dict[str, Any] = {"summary": "No RCA themes generated", "themes": []}
             rca_case_ids = [
                 _case_identifier(item.get("case", {}))
                 for item in failed
@@ -3519,13 +5483,47 @@ def train_ab_loop(
                 payload={
                     "failed_cases": len(failed),
                     "rca_case_budget": int(max(0, rca_case_budget)),
+                    "rca_threshold": float(effective_rca_threshold),
+                    "rca_fallback_fraction": float(rca_fallback_fraction),
                     "rca_case_ids": rca_case_ids,
+                    "rca_selection_diagnostics": rca_selection_diagnostics,
                     "failed_case_prompts": [
                         str(item.get("prompt", ""))[:180]
                         for item in failed[:20]
                     ],
                 },
             )
+
+            if failed:
+                tracker.emit(
+                    event_type="rca_high_level_started",
+                    phase="rca",
+                    step="cohort_theme_rca",
+                    message=f"Epoch {epoch_current}: running high-level RCA themes",
+                    epoch_current=epoch_current,
+                    payload={
+                        "cohort_size": len(failed),
+                        "case_ids": rca_case_ids,
+                        "selection_rule": rca_selection_diagnostics.get("rule"),
+                    },
+                )
+                high_level_rca = run_high_level_rca(
+                    failed_results=failed,
+                    valid_blocks=valid_block_ids,
+                )
+                tracker.emit(
+                    event_type="rca_high_level_completed",
+                    phase="rca",
+                    step="cohort_theme_rca_done",
+                    message=f"Epoch {epoch_current}: high-level RCA completed",
+                    epoch_current=epoch_current,
+                    payload={
+                        "theme_count": len(high_level_rca.get("themes") or []),
+                        "summary": high_level_rca.get("summary"),
+                        "themes": high_level_rca.get("themes"),
+                        "model_used": high_level_rca.get("model_used"),
+                    },
+                )
 
             for failed_index, failed_case in enumerate(failed, start=1):
                 prompt_preview = str(failed_case.get("prompt", ""))[:140]
@@ -3575,6 +5573,7 @@ def train_ab_loop(
                             block_details_map=block_details_map,
                             criteria_context_text=criteria_context_text,
                             case_context=case_context,
+                            high_level_themes=list(high_level_rca.get("themes") or []),
                         )
                 else:
                     analyses = root_cause_analysis(
@@ -3585,8 +5584,13 @@ def train_ab_loop(
                         block_details_map=block_details_map,
                         criteria_context_text=criteria_context_text,
                         case_context=case_context,
+                        high_level_themes=list(high_level_rca.get("themes") or []),
                     )
                 all_analyses.extend(analyses)
+                case_theme_links = _dedupe_non_empty_strings(
+                    [theme_id for item in analyses for theme_id in (item.linked_theme_ids or [])],
+                    max_items=12,
+                )
                 tracker.emit(
                     event_type="rca_completed",
                     phase="rca",
@@ -3596,6 +5600,11 @@ def train_ab_loop(
                     payload={
                         "analyses_added": len(analyses),
                         "implicated_blocks": implicated_block_ids,
+                        "linked_theme_ids": case_theme_links,
+                        "recommended_fix_patterns": _dedupe_non_empty_strings(
+                            [pattern for item in analyses for pattern in (item.recommended_fix_patterns or [])],
+                            max_items=10,
+                        ),
                     },
                 )
 
@@ -3609,37 +5618,149 @@ def train_ab_loop(
                 payload={
                     "rca_items": len(all_analyses),
                     "mutation_block_budget": int(max(0, mutation_block_budget)),
+                    "mutation_block_budget_deprecated": True,
+                    "mutation_accept_threshold": int(max(1, mutation_accept_threshold)),
                     "mutation_retry_enabled": bool(mutation_retry_enabled and ENABLE_MUTATION_RETRY_V2),
                     "mutation_max_retries": int(max(0, mutation_max_retries)),
+                    "mutation_style_catalog": list(MUTATION_STYLE_DEFAULT_ORDER),
+                    "mutation_diversity_target": int(DEFAULT_MUTATION_DIVERSITY_TARGET),
+                    "mutation_stage_a_top_k": int(max(1, mutation_stage_a_top_k)),
+                    "mutation_precheck_cases": int(max(0, mutation_precheck_cases)),
+                    "mutation_budget_mode": "staged_v1" if ENABLE_MUTATION_BUDGET_OPT_V1 else "legacy_full",
                 },
             )
-            if tracker is not None:
-                with tracker.active_call(
-                    "prompt_improvements",
-                    metadata={"epoch": epoch_current, "rca_items": len(all_analyses)},
-                ):
-                    improvements, prompt_scoring = prompt_improvements(
-                        current_prompts=current_prompts,
-                        block_analyses=all_analyses,
-                        block_details_map=block_details_map,
-                        mutation_block_budget=mutation_block_budget,
-                        mutation_retry_enabled=bool(mutation_retry_enabled and ENABLE_MUTATION_RETRY_V2),
-                        mutation_max_retries=mutation_max_retries,
-                        progress_tracker=tracker,
-                        epoch_current=epoch_current,
-                    )
-            else:
-                improvements, prompt_scoring = prompt_improvements(
-                    current_prompts=current_prompts,
+            grouped_stage: dict[str, list[BlockAnalysisSchema]] = defaultdict(list)
+            for analysis in all_analyses:
+                if analysis.need_fix:
+                    grouped_stage[analysis.block_id].append(analysis)
+            ranked_stage_ids = [
+                block_id
+                for _, block_id in _rank_blocks_by_rca_impact(
+                    grouped_stage,
+                    block_impact_history=block_impact_history,
+                    enable_block_impact_ranker=ENABLE_BLOCK_IMPACT_RANKER,
+                )
+            ]
+            stage_a_count = int(max(1, mutation_stage_a_top_k))
+            stage_a_ids = ranked_stage_ids[:stage_a_count] if ranked_stage_ids else []
+            stage_b_ids = ranked_stage_ids[stage_a_count:] if ranked_stage_ids else []
+
+            def _run_prompt_improvements_once(
+                *,
+                suite: dict[str, str],
+                target_ids: list[str] | None,
+                stage_label: str,
+            ) -> tuple[dict[str, str], list[dict[str, Any]]]:
+                if resource_telemetry is not None:
+                    with resource_telemetry.phase(f"mutation_{stage_label}"):
+                        if tracker is not None:
+                            with tracker.active_call(
+                                "prompt_improvements",
+                                metadata={
+                                    "epoch": epoch_current,
+                                    "rca_items": len(all_analyses),
+                                    "stage": stage_label,
+                                    "target_blocks": target_ids or [],
+                                },
+                            ):
+                                return prompt_improvements(
+                                    current_prompts=suite,
+                                    block_analyses=all_analyses,
+                                    block_details_map=block_details_map,
+                                    mutation_block_budget=mutation_block_budget,
+                                    mutation_accept_threshold=mutation_accept_threshold,
+                                    mutation_tournament_size=mutation_tournament_size,
+                                    mutation_retry_enabled=bool(mutation_retry_enabled and ENABLE_MUTATION_RETRY_V2),
+                                    mutation_max_retries=mutation_max_retries,
+                                    block_impact_history=block_impact_history,
+                                    progress_tracker=tracker,
+                                    epoch_current=epoch_current,
+                                    target_block_ids_override=target_ids,
+                                )
+                        return prompt_improvements(
+                            current_prompts=suite,
+                            block_analyses=all_analyses,
+                            block_details_map=block_details_map,
+                            mutation_block_budget=mutation_block_budget,
+                            mutation_accept_threshold=mutation_accept_threshold,
+                            mutation_tournament_size=mutation_tournament_size,
+                            mutation_retry_enabled=bool(mutation_retry_enabled and ENABLE_MUTATION_RETRY_V2),
+                            mutation_max_retries=mutation_max_retries,
+                            block_impact_history=block_impact_history,
+                            progress_tracker=None,
+                            epoch_current=epoch_current,
+                            target_block_ids_override=target_ids,
+                        )
+                if tracker is not None:
+                    with tracker.active_call(
+                        "prompt_improvements",
+                        metadata={
+                            "epoch": epoch_current,
+                            "rca_items": len(all_analyses),
+                            "stage": stage_label,
+                            "target_blocks": target_ids or [],
+                        },
+                    ):
+                        return prompt_improvements(
+                            current_prompts=suite,
+                            block_analyses=all_analyses,
+                            block_details_map=block_details_map,
+                            mutation_block_budget=mutation_block_budget,
+                            mutation_accept_threshold=mutation_accept_threshold,
+                            mutation_tournament_size=mutation_tournament_size,
+                            mutation_retry_enabled=bool(mutation_retry_enabled and ENABLE_MUTATION_RETRY_V2),
+                            mutation_max_retries=mutation_max_retries,
+                            block_impact_history=block_impact_history,
+                            progress_tracker=tracker,
+                            epoch_current=epoch_current,
+                            target_block_ids_override=target_ids,
+                        )
+                return prompt_improvements(
+                    current_prompts=suite,
                     block_analyses=all_analyses,
                     block_details_map=block_details_map,
                     mutation_block_budget=mutation_block_budget,
+                    mutation_accept_threshold=mutation_accept_threshold,
+                    mutation_tournament_size=mutation_tournament_size,
                     mutation_retry_enabled=bool(mutation_retry_enabled and ENABLE_MUTATION_RETRY_V2),
                     mutation_max_retries=mutation_max_retries,
+                    block_impact_history=block_impact_history,
                     progress_tracker=None,
                     epoch_current=epoch_current,
+                    target_block_ids_override=target_ids,
                 )
-            candidate_prompts.update(improvements)
+
+            stage_a_improvements, stage_a_prompt_scoring = _run_prompt_improvements_once(
+                suite=current_prompts,
+                target_ids=stage_a_ids if ENABLE_MUTATION_BUDGET_OPT_V1 else None,
+                stage_label="stage_a",
+            )
+            candidate_prompts.update(stage_a_improvements)
+            prompt_scoring = list(stage_a_prompt_scoring)
+
+            stage_a_accepted = any(bool(item.get("accepted")) for item in stage_a_prompt_scoring if isinstance(item, dict))
+            ran_stage_b = False
+            if ENABLE_MUTATION_BUDGET_OPT_V1 and stage_b_ids and not stage_a_accepted:
+                ran_stage_b = True
+                tracker.emit(
+                    event_type="mutation_stage_expanded",
+                    phase="prompt_improvement",
+                    step="expand_stage_b",
+                    message=f"Epoch {epoch_current}: expanding mutation to Stage B blocks",
+                    epoch_current=epoch_current,
+                    payload={
+                        "stage_a_top_k": stage_a_count,
+                        "stage_a_accepted": bool(stage_a_accepted),
+                        "stage_b_block_count": len(stage_b_ids),
+                    },
+                )
+                stage_b_improvements, stage_b_prompt_scoring = _run_prompt_improvements_once(
+                    suite=candidate_prompts,
+                    target_ids=stage_b_ids,
+                    stage_label="stage_b",
+                )
+                candidate_prompts.update(stage_b_improvements)
+                prompt_scoring.extend(stage_b_prompt_scoring)
 
             changed_keys = [
                 key for key in candidate_prompts.keys() if candidate_prompts.get(key) != current_prompts.get(key)
@@ -3663,11 +5784,7 @@ def train_ab_loop(
                 item
                 for item in changed_blocks
                 if item.get("decision_reason")
-                in {
-                    "candidate_score_lt_baseline",
-                    "candidate_score_lt_tolerance",
-                    "fallback_candidate_score_lt_tolerance",
-                }
+                in {"rejected_below_absolute_threshold"}
             ]
             rejection_breakdown: dict[str, int] = {}
             rejection_issue_matrix: dict[str, dict[str, int]] = {}
@@ -3700,6 +5817,7 @@ def train_ab_loop(
                 for item in scored_blocks
                 if isinstance(item.get("delta_total"), (int, float))
             ]
+            mutation_style_summary = _summarize_mutation_style_diagnostics(prompt_scoring)
 
             tracker.emit(
                 event_type="prompt_scoring_snapshot",
@@ -3719,6 +5837,7 @@ def train_ab_loop(
                     "score_rejected_count": len(score_rejected_blocks),
                     "mutation_rejection_breakdown": rejection_breakdown,
                     "mutation_rejection_issue_matrix": rejection_issue_matrix,
+                    "mutation_style_summary": mutation_style_summary,
                 },
                 metrics={
                     "prompt_scored_blocks": len(scored_blocks),
@@ -3727,6 +5846,7 @@ def train_ab_loop(
                     "prompt_changed_blocks": len(changed_blocks),
                     "prompt_contract_rejected_blocks": len(contract_rejected_blocks),
                     "prompt_score_rejected_blocks": len(score_rejected_blocks),
+                    "mutation_style_blocks": mutation_style_summary.get("blocks_with_styles", 0),
                     "prompt_score_baseline_avg": (sum(baseline_totals) / len(baseline_totals)) if baseline_totals else 0.0,
                     "prompt_score_candidate_avg": (sum(candidate_totals) / len(candidate_totals)) if candidate_totals else 0.0,
                     "prompt_score_delta_avg": (sum(delta_totals) / len(delta_totals)) if delta_totals else 0.0,
@@ -3748,6 +5868,7 @@ def train_ab_loop(
                     "prompt_score_rejected_blocks": len(score_rejected_blocks),
                     "mutation_rejection_breakdown": rejection_breakdown,
                     "mutation_rejection_issue_matrix": rejection_issue_matrix,
+                    "mutation_style_summary": mutation_style_summary,
                 },
             )
             tracker.emit(
@@ -3762,8 +5883,132 @@ def train_ab_loop(
                 },
             )
 
+            # Update mutation coverage (Phase 4C)
+            for item in prompt_scoring:
+                bid = str(item.get("block_id") or "")
+                if not bid:
+                    continue
+                if bid not in mutation_coverage:
+                    mutation_coverage[bid] = {"targeted": 0, "mutations_generated": 0, "validation_passed": 0, "gates_passed": 0}
+                mutation_coverage[bid]["targeted"] += 1
+                if item.get("changed"):
+                    mutation_coverage[bid]["mutations_generated"] += 1
+                if item.get("accepted"):
+                    mutation_coverage[bid]["validation_passed"] += 1
+
+            precheck_trace: dict[str, Any] | None = None
+            if changed_keys and int(max(0, mutation_precheck_cases)) > 0:
+                precheck_budget = int(max(1, mutation_precheck_cases))
+                paired_baseline = list(zip(results_a, scores_a, selected))
+                paired_baseline.sort(
+                    key=lambda item: float(
+                        ((item[0] or {}).get("grade", {}) or {}).get("aggregate_score", 0.0) or 0.0
+                    )
+                )
+                precheck_bundle = paired_baseline[:precheck_budget]
+                precheck_cases = [bundle[2] for bundle in precheck_bundle if isinstance(bundle[2], dict)]
+                precheck_baseline_scores = [float(bundle[1]) for bundle in precheck_bundle]
+
+                if precheck_cases and len(precheck_baseline_scores) == len(precheck_cases):
+                    tracker.emit(
+                        event_type="precheck_started",
+                        phase="phase_b_precheck_eval",
+                        step="precheck_candidate",
+                        message=f"Epoch {epoch_current}: running candidate precheck on {len(precheck_cases)} case(s)",
+                        epoch_current=epoch_current,
+                        payload={
+                            "case_ids": [_case_identifier(case) for case in precheck_cases],
+                            "baseline_scores": precheck_baseline_scores,
+                        },
+                    )
+                    if resource_telemetry is not None:
+                        with resource_telemetry.phase("phase_b_precheck_eval"):
+                            precheck_results, precheck_scores, precheck_meta = evaluate_suite(
+                                candidate_prompts,
+                                precheck_cases,
+                                thinking_level,
+                                phase="phase_b_precheck_eval",
+                                epoch_current=epoch_current,
+                                progress_tracker=tracker,
+                                reference_scores=precheck_baseline_scores,
+                                early_stop_min_cases=EARLY_STOP_MIN_CASES,
+                                early_stop_mean_delta_threshold=EARLY_STOP_MEAN_DELTA_THRESHOLD,
+                                eval_mode=eval_mode,
+                                eval_min_pairs=min(4, len(precheck_cases)),
+                                eval_max_pairs=len(precheck_cases),
+                                eval_checkpoints=[min(4, len(precheck_cases)), len(precheck_cases)],
+                                bootstrap_resamples=bootstrap_resamples,
+                            )
+                    else:
+                        precheck_results, precheck_scores, precheck_meta = evaluate_suite(
+                            candidate_prompts,
+                            precheck_cases,
+                            thinking_level,
+                            phase="phase_b_precheck_eval",
+                            epoch_current=epoch_current,
+                            progress_tracker=tracker,
+                            reference_scores=precheck_baseline_scores,
+                            early_stop_min_cases=EARLY_STOP_MIN_CASES,
+                            early_stop_mean_delta_threshold=EARLY_STOP_MEAN_DELTA_THRESHOLD,
+                            eval_mode=eval_mode,
+                            eval_min_pairs=min(4, len(precheck_cases)),
+                            eval_max_pairs=len(precheck_cases),
+                            eval_checkpoints=[min(4, len(precheck_cases)), len(precheck_cases)],
+                            bootstrap_resamples=bootstrap_resamples,
+                        )
+
+                    precheck_delta_stats = _paired_delta_stats(
+                        precheck_baseline_scores[: len(precheck_scores)],
+                        precheck_scores,
+                        bootstrap_resamples=bootstrap_resamples,
+                        rng=rng,
+                    )
+                    precheck_deltas = [float(value) for value in (precheck_delta_stats.get("deltas") or [])]
+                    precheck_catastrophic_count = sum(
+                        1 for value in precheck_deltas if value <= float(tail_catastrophic_threshold)
+                    )
+                    precheck_mean_delta = float(precheck_delta_stats.get("mean_delta") or 0.0)
+                    precheck_ci_upper = float(precheck_delta_stats.get("ci_upper") or precheck_mean_delta)
+                    precheck_reject = (
+                        precheck_ci_upper < 0.0
+                        or precheck_catastrophic_count >= 2
+                        or precheck_mean_delta < -0.75
+                    )
+                    precheck_trace = {
+                        "ran": True,
+                        "case_count": len(precheck_cases),
+                        "case_ids": [_case_identifier(case) for case in precheck_cases],
+                        "delta_stats": precheck_delta_stats,
+                        "catastrophic_regression_count": precheck_catastrophic_count,
+                        "rejected": bool(precheck_reject),
+                        "meta": precheck_meta,
+                    }
+                    tracker.emit(
+                        event_type="precheck_completed",
+                        phase="phase_b_precheck_eval",
+                        step="precheck_candidate_done",
+                        message=f"Epoch {epoch_current}: candidate precheck {'rejected' if precheck_reject else 'passed'}",
+                        epoch_current=epoch_current,
+                        payload=precheck_trace,
+                    )
+                    if precheck_reject:
+                        changed_keys = []
+                        candidate_prompts = dict(current_prompts)
+                        tracker.emit(
+                            event_type="precheck_rejected_mutations",
+                            phase="phase_b_precheck_eval",
+                            step="reject_precheck",
+                            message=f"Epoch {epoch_current}: candidate rejected by precheck",
+                            epoch_current=epoch_current,
+                            payload=precheck_trace,
+                        )
+
             generalizer = None
-            if int(max(0, generalizer_cadence)) > 0 and (epoch_current % int(max(1, generalizer_cadence)) == 0):
+            if (
+                changed_keys
+                and int(max(0, generalizer_cadence)) > 0
+                and (epoch_current % int(max(1, generalizer_cadence)) == 0)
+            ):
                 tracker.emit(
                     event_type="generalizer_started",
                     phase="generalizer_check",
@@ -3831,7 +6076,13 @@ def train_ab_loop(
                         payload=generalizer,
                     )
 
+            candidate_exists = False
+            evaluation_mode = "skipped_no_changes"
+            truth_state = "synthetic"
             if changed_keys:
+                candidate_exists = True
+                evaluation_mode = "evaluated"
+                truth_state = "complete"
                 logger.info(f"Epoch {epoch_current}/{epochs} - Phase B candidate")
                 tracker.emit(
                     event_type="phase_started",
@@ -3841,20 +6092,48 @@ def train_ab_loop(
                     epoch_current=epoch_current,
                     payload={"changed_keys": changed_keys},
                 )
-                results_b, scores_b, phase_b_meta = evaluate_suite(
-                    candidate_prompts,
-                    selected,
-                    thinking_level,
-                    phase="phase_b_eval",
-                    epoch_current=epoch_current,
-                    progress_tracker=tracker,
-                    reference_scores=scores_a,
-                    early_stop_min_cases=EARLY_STOP_MIN_CASES,
-                    early_stop_mean_delta_threshold=EARLY_STOP_MEAN_DELTA_THRESHOLD,
-                )
+                if resource_telemetry is not None:
+                    with resource_telemetry.phase("phase_b_eval"):
+                        results_b, scores_b, phase_b_meta = evaluate_suite(
+                            candidate_prompts,
+                            selected,
+                            thinking_level,
+                            phase="phase_b_eval",
+                            epoch_current=epoch_current,
+                            progress_tracker=tracker,
+                            reference_scores=scores_a,
+                            early_stop_min_cases=EARLY_STOP_MIN_CASES,
+                            early_stop_mean_delta_threshold=EARLY_STOP_MEAN_DELTA_THRESHOLD,
+                            eval_mode=eval_mode,
+                            eval_min_pairs=train_eval_min_pairs,
+                            eval_max_pairs=train_eval_max_pairs,
+                            eval_checkpoints=train_eval_checkpoints,
+                            bootstrap_resamples=bootstrap_resamples,
+                        )
+                else:
+                    results_b, scores_b, phase_b_meta = evaluate_suite(
+                        candidate_prompts,
+                        selected,
+                        thinking_level,
+                        phase="phase_b_eval",
+                        epoch_current=epoch_current,
+                        progress_tracker=tracker,
+                        reference_scores=scores_a,
+                        early_stop_min_cases=EARLY_STOP_MIN_CASES,
+                        early_stop_mean_delta_threshold=EARLY_STOP_MEAN_DELTA_THRESHOLD,
+                        eval_mode=eval_mode,
+                        eval_min_pairs=train_eval_min_pairs,
+                        eval_max_pairs=train_eval_max_pairs,
+                        eval_checkpoints=train_eval_checkpoints,
+                        bootstrap_resamples=bootstrap_resamples,
+                    )
                 avg_score_b = sum(scores_b) / max(len(scores_b), 1)
                 stats_b = _score_stats(scores_b)
                 phase_b_eval_summary = _summarize_eval_results(results_b)
+                phase_b_meta = dict(phase_b_meta or {})
+                phase_b_meta["evaluation_mode"] = evaluation_mode
+                phase_b_meta["candidate_exists"] = candidate_exists
+                phase_b_meta["truth_state"] = truth_state
                 tracker.emit(
                     event_type="phase_completed",
                     phase="phase_b_eval",
@@ -3888,6 +6167,14 @@ def train_ab_loop(
                     "case_count_evaluated": len(scores_b),
                     "timeout_enforcement_mode": _timeout_enforcement_mode(TRAINING_CASE_TIME_BUDGET_SECONDS),
                     "early_stop": {"triggered": False},
+                    "evaluation_mode": evaluation_mode if ENABLE_NO_CHANGE_STRICT_SEMANTICS else "synthetic",
+                    "candidate_exists": False,
+                    "truth_state": "synthetic",
+                    "synthetic_scores_used": True,
+                    "adaptive_eval_trace": {"mode": "synthetic", "decision": "skipped_no_changes", "events": []},
+                    "skip_reason": "precheck_rejected"
+                    if precheck_trace and bool(precheck_trace.get("rejected"))
+                    else "no_candidate_changes",
                 }
                 tracker.emit(
                     event_type="phase_skipped",
@@ -3895,15 +6182,45 @@ def train_ab_loop(
                     step="evaluate_candidate_skipped",
                     message=f"Epoch {epoch_current}: candidate evaluation skipped (no changes)",
                     epoch_current=epoch_current,
+                    payload={
+                        "reason": phase_b_meta.get("skip_reason"),
+                        "evaluation_mode": phase_b_meta.get("evaluation_mode"),
+                        "candidate_exists": False,
+                        "truth_state": "synthetic",
+                    },
                 )
 
+            update_case_history(
+                case_history=case_history,
+                selected_cases=selected,
+                results_a=results_a,
+                results_b=results_b,
+                epoch_current=epoch_current,
+            )
+
             winner = "baseline"
+            # Exclude infrastructure-degraded pairs from delta stats (Phase 4A)
+            pair_count = min(len(results_a), len(results_b))
+            clean_scores_a, clean_scores_b = [], []
+            excluded_degraded = 0
+            for _idx in range(pair_count):
+                grade_a = results_a[_idx].get("grade", {}) if _idx < len(results_a) else {}
+                grade_b = results_b[_idx].get("grade", {}) if _idx < len(results_b) else {}
+                if grade_a.get("infrastructure_degraded") or grade_b.get("infrastructure_degraded"):
+                    excluded_degraded += 1
+                    continue
+                clean_scores_a.append(scores_a[_idx])
+                clean_scores_b.append(scores_b[_idx])
+            use_clean = len(clean_scores_a) >= 2
             train_delta_stats = _paired_delta_stats(
-                scores_a,
-                scores_b,
+                clean_scores_a if use_clean else scores_a,
+                clean_scores_b if use_clean else scores_b,
                 bootstrap_resamples=bootstrap_resamples,
                 rng=rng,
             )
+            if excluded_degraded > 0:
+                train_delta_stats["excluded_degraded_pairs"] = excluded_degraded
+                train_delta_stats["used_clean_scores"] = use_clean
             improvement_delta = float(train_delta_stats.get("mean_delta", avg_score_b - avg_score_a))
             prompt_delta_avg = (sum(delta_totals) / len(delta_totals)) if delta_totals else 0.0
             paired_eval_case_ids, paired_phase_a_eval_summary, paired_phase_b_eval_summary = _paired_eval_summaries(
@@ -3916,6 +6233,19 @@ def train_ab_loop(
                 phase_a_summary=paired_phase_a_eval_summary,
                 phase_b_summary=paired_phase_b_eval_summary,
                 enabled=ENABLE_CANDIDATE_GATES,
+                n_pairs=int(train_delta_stats.get("pair_count", 0)),
+                quality_gate_min_mean_delta=quality_gate_min_mean_delta,
+                quality_gate_min_win_rate=quality_gate_min_win_rate,
+                quality_gate_min_p10_delta=quality_gate_min_p10_delta,
+                quality_gate_min_worst_case_delta=quality_gate_min_worst_case_delta,
+                runtime_gate_mean_ratio_max=runtime_gate_mean_ratio_max,
+                runtime_gate_p90_ratio_max=runtime_gate_p90_ratio_max,
+                runtime_gate_abs_mean_increase_max_seconds=runtime_gate_abs_mean_increase_max_seconds,
+                stability_gate_tool_failure_delta_max=stability_gate_tool_failure_delta_max,
+                stability_gate_degraded_rate_delta_max=stability_gate_degraded_rate_delta_max,
+                tail_risk_gate_enabled=ENABLE_TAIL_RISK_GATE,
+                tail_risk_catastrophic_delta_threshold=tail_catastrophic_threshold,
+                tail_risk_max_catastrophic_regressions=tail_max_catastrophic_regressions,
             )
             gate_failure_reasons: list[str] = []
             holdout_case_ids: list[str] = []
@@ -3929,7 +6259,10 @@ def train_ab_loop(
             provisional_candidate = False
 
             if not changed_keys:
-                gate_failure_reasons.append("no_candidate_changes")
+                if precheck_trace and bool(precheck_trace.get("rejected")):
+                    gate_failure_reasons.append("precheck_rejected")
+                else:
+                    gate_failure_reasons.append("no_candidate_changes")
             elif ENABLE_CANDIDATE_GATES:
                 provisional_candidate = bool(gate_results.get("all_passed"))
                 if not provisional_candidate:
@@ -3943,7 +6276,10 @@ def train_ab_loop(
                 if holdout_pool:
                     selected_holdout = sample_cases_stratified(
                         sample_state=holdout_sampler_state,
-                        sample_size=min(holdout_sample_size, len(holdout_pool)),
+                        sample_size=min(
+                            max(int(holdout_sample_size), int(holdout_eval_max_pairs)),
+                            len(holdout_pool),
+                        ),
                         rng=rng,
                     )
                     holdout_case_ids = [_case_identifier(case) for case in selected_holdout]
@@ -3956,25 +6292,69 @@ def train_ab_loop(
                         payload={
                             "holdout_case_ids": holdout_case_ids,
                             "pool": "holdout",
-                            "sample_strategy": "stratified_rotating_unseen_first",
+                            "sample_strategy": "stratified_holdout_rotation",
                         },
                     )
-                    holdout_results_a, holdout_scores_a, holdout_meta_a = evaluate_suite(
-                        current_prompts,
-                        selected_holdout,
-                        thinking_level,
-                        phase="holdout_phase_a_eval",
-                        epoch_current=epoch_current,
-                        progress_tracker=tracker,
-                    )
-                    holdout_results_b, holdout_scores_b, holdout_meta_b = evaluate_suite(
-                        candidate_prompts,
-                        selected_holdout,
-                        thinking_level,
-                        phase="holdout_phase_b_eval",
-                        epoch_current=epoch_current,
-                        progress_tracker=tracker,
-                    )
+                    if resource_telemetry is not None:
+                        with resource_telemetry.phase("holdout_phase_a_eval"):
+                            holdout_results_a, holdout_scores_a, holdout_meta_a = evaluate_suite(
+                                current_prompts,
+                                selected_holdout,
+                                thinking_level,
+                                phase="holdout_phase_a_eval",
+                                epoch_current=epoch_current,
+                                progress_tracker=tracker,
+                                eval_mode="fixed",
+                                eval_min_pairs=holdout_eval_min_pairs,
+                                eval_max_pairs=holdout_eval_max_pairs,
+                                eval_checkpoints=holdout_eval_checkpoints,
+                                bootstrap_resamples=bootstrap_resamples,
+                            )
+                    else:
+                        holdout_results_a, holdout_scores_a, holdout_meta_a = evaluate_suite(
+                            current_prompts,
+                            selected_holdout,
+                            thinking_level,
+                            phase="holdout_phase_a_eval",
+                            epoch_current=epoch_current,
+                            progress_tracker=tracker,
+                            eval_mode="fixed",
+                            eval_min_pairs=holdout_eval_min_pairs,
+                            eval_max_pairs=holdout_eval_max_pairs,
+                            eval_checkpoints=holdout_eval_checkpoints,
+                            bootstrap_resamples=bootstrap_resamples,
+                        )
+                    if resource_telemetry is not None:
+                        with resource_telemetry.phase("holdout_phase_b_eval"):
+                            holdout_results_b, holdout_scores_b, holdout_meta_b = evaluate_suite(
+                                candidate_prompts,
+                                selected_holdout,
+                                thinking_level,
+                                phase="holdout_phase_b_eval",
+                                epoch_current=epoch_current,
+                                progress_tracker=tracker,
+                                reference_scores=holdout_scores_a,
+                                eval_mode=eval_mode,
+                                eval_min_pairs=holdout_eval_min_pairs,
+                                eval_max_pairs=holdout_eval_max_pairs,
+                                eval_checkpoints=holdout_eval_checkpoints,
+                                bootstrap_resamples=bootstrap_resamples,
+                            )
+                    else:
+                        holdout_results_b, holdout_scores_b, holdout_meta_b = evaluate_suite(
+                            candidate_prompts,
+                            selected_holdout,
+                            thinking_level,
+                            phase="holdout_phase_b_eval",
+                            epoch_current=epoch_current,
+                            progress_tracker=tracker,
+                            reference_scores=holdout_scores_a,
+                            eval_mode=eval_mode,
+                            eval_min_pairs=holdout_eval_min_pairs,
+                            eval_max_pairs=holdout_eval_max_pairs,
+                            eval_checkpoints=holdout_eval_checkpoints,
+                            bootstrap_resamples=bootstrap_resamples,
+                        )
                     holdout_phase_a_summary = _summarize_eval_results(holdout_results_a)
                     holdout_phase_b_summary = _summarize_eval_results(holdout_results_b)
                     holdout_delta_stats = _paired_delta_stats(
@@ -3983,24 +6363,102 @@ def train_ab_loop(
                         bootstrap_resamples=bootstrap_resamples,
                         rng=rng,
                     )
-                    holdout_confirmation = _evaluate_holdout_confirmation(holdout_delta_stats)
+                    holdout_confirmation = _evaluate_holdout_confirmation(
+                        holdout_delta_stats,
+                        holdout_winrate_min=holdout_winrate_min,
+                        holdout_min_mean_delta=-0.10,
+                        holdout_catastrophic_threshold=tail_catastrophic_threshold,
+                        holdout_max_catastrophic_regressions=tail_max_catastrophic_regressions,
+                    )
                     if not holdout_confirmation.get("passed"):
                         gate_failure_reasons.append("holdout_confirmation_gate")
                 else:
                     holdout_confirmation = {
                         "passed": True,
+                        "wins": 0,
+                        "pairs": 0,
+                        "win_rate": 0.0,
+                        "win_rate_min": float(holdout_winrate_min),
                         "mean_delta": 0.0,
+                        "mean_delta_min": -0.10,
                         "ci_lower": 0.0,
                         "ci_upper": 0.0,
-                        "rule": "holdout split unavailable",
+                        "catastrophic_threshold": float(tail_catastrophic_threshold),
+                        "max_catastrophic_regressions": int(max(0, tail_max_catastrophic_regressions)),
+                        "catastrophic_regression_count": 0,
+                        "checks": {
+                            "win_rate_minimum": True,
+                            "mean_delta_floor": True,
+                            "catastrophic_limit": True,
+                        },
+                        "rule": "holdout unavailable -> pass",
                     }
 
                 if holdout_confirmation and holdout_confirmation.get("passed"):
                     winner = "candidate"
 
+            rejection_reason_codes = _build_rejection_reason_codes(
+                gate_failure_reasons=gate_failure_reasons,
+                gate_results=gate_results,
+                candidate_exists=bool(candidate_exists),
+                evaluation_mode=str(evaluation_mode),
+            )
+            decision_why = {
+                "winner": winner,
+                "failed_checks": list(gate_failure_reasons),
+                "rejection_reason_codes": rejection_reason_codes,
+                "candidate_exists": bool(candidate_exists),
+                "evaluation_mode": str(evaluation_mode),
+                "truth_state": str(truth_state),
+                "resource_costs": {
+                    "phase_a": phase_a_eval_summary,
+                    "phase_b": phase_b_eval_summary,
+                    "holdout_phase_a": holdout_phase_a_summary,
+                    "holdout_phase_b": holdout_phase_b_summary,
+                },
+            }
+
             if winner == "candidate":
                 generation += 1
                 current_prompts = candidate_prompts
+                for bid in changed_keys:
+                    if bid not in mutation_coverage:
+                        mutation_coverage[bid] = {"targeted": 0, "mutations_generated": 0, "validation_passed": 0, "gates_passed": 0}
+                    mutation_coverage[bid]["gates_passed"] += 1
+
+            selection_slot_by_case_id = {
+                str(item.get("case_id")): str(item.get("slot") or "unknown")
+                for item in selection_diagnostics
+                if isinstance(item, dict) and item.get("case_id")
+            }
+            selection_slot_deltas: dict[str, list[float]] = {}
+            for idx, case in enumerate(selected[: min(len(scores_a), len(scores_b))]):
+                case_id = _case_identifier(case)
+                slot = selection_slot_by_case_id.get(case_id, "unknown")
+                selection_slot_deltas.setdefault(slot, []).append(float(scores_b[idx]) - float(scores_a[idx]))
+
+            def _improvement_rate(values: list[float]) -> float | None:
+                if not values:
+                    return None
+                return float(sum(1 for value in values if value > 0.0) / len(values))
+
+            replay_improvement_rate = _improvement_rate(selection_slot_deltas.get("replay", []))
+            coverage_improvement_rate = _improvement_rate(selection_slot_deltas.get("coverage", []))
+            selection_effectiveness = {
+                "slot_counts": {slot: len(values) for slot, values in sorted(selection_slot_deltas.items())},
+                "slot_mean_delta": {
+                    slot: (float(sum(values) / len(values)) if values else 0.0)
+                    for slot, values in sorted(selection_slot_deltas.items())
+                },
+                "replay_improvement_rate": replay_improvement_rate,
+                "coverage_improvement_rate": coverage_improvement_rate,
+                "exploration_improvement_rate": _improvement_rate(selection_slot_deltas.get("exploration", [])),
+                "replay_vs_coverage_delta": (
+                    float(replay_improvement_rate - coverage_improvement_rate)
+                    if replay_improvement_rate is not None and coverage_improvement_rate is not None
+                    else None
+                ),
+            }
 
             selection_stats = {
                 "train_delta_stats": train_delta_stats,
@@ -4009,6 +6467,15 @@ def train_ab_loop(
                 "early_stop_triggered": early_stop_triggered,
                 "prompt_delta_avg_total": prompt_delta_avg,
                 "paired_eval_case_ids": paired_eval_case_ids,
+                "selection_mode": str(selection_mode),
+                "selection_diagnostics": selection_diagnostics,
+                "rca_selection_diagnostics": rca_selection_diagnostics,
+                "selection_effectiveness": selection_effectiveness,
+                "holdout_winrate": (holdout_confirmation or {}).get("win_rate"),
+                "candidate_exists": bool(candidate_exists),
+                "evaluation_mode": str(evaluation_mode),
+                "truth_state": str(truth_state),
+                "precheck_trace": precheck_trace,
             }
             tracker.emit(
                 event_type="candidate_gate_decision",
@@ -4023,16 +6490,22 @@ def train_ab_loop(
                     "gates_enabled": ENABLE_CANDIDATE_GATES,
                     "gate_results": gate_results,
                     "gate_failure_reasons": gate_failure_reasons,
+                    "rejection_reason_codes": rejection_reason_codes,
                     "phase_a_eval_summary": phase_a_eval_summary,
                     "phase_b_eval_summary": phase_b_eval_summary,
                     "paired_phase_a_eval_summary": paired_phase_a_eval_summary,
                     "paired_phase_b_eval_summary": paired_phase_b_eval_summary,
                     "paired_eval_case_ids": paired_eval_case_ids,
                     "selection_stats": selection_stats,
+                    "candidate_exists": bool(candidate_exists),
+                    "evaluation_mode": str(evaluation_mode),
+                    "truth_state": str(truth_state),
+                    "decision_why": decision_why,
                 },
                 metrics={
                     "candidate_gates_enabled": 1 if ENABLE_CANDIDATE_GATES else 0,
                     "candidate_gate_passed": 1 if winner == "candidate" else 0,
+                    "candidate_exists": 1 if candidate_exists else 0,
                     "candidate_runtime_mean_ratio": gate_results.get("ratios", {}).get("mean_case_time_ratio") or 0.0,
                     "candidate_runtime_p90_ratio": gate_results.get("ratios", {}).get("p90_case_time_ratio") or 0.0,
                     "candidate_prompt_delta_avg_total": prompt_delta_avg,
@@ -4070,9 +6543,79 @@ def train_ab_loop(
                 "holdout_phase_a": _timeout_stats(holdout_results_a) if holdout_phase_a_summary is not None else None,
                 "holdout_phase_b": _timeout_stats(holdout_results_b) if holdout_phase_b_summary is not None else None,
             }
+            _update_block_impact_history(
+                block_impact_history=block_impact_history,
+                mutated_block_ids=list(changed_keys),
+                winner=winner,
+                train_delta_stats=train_delta_stats,
+            )
+
+            resource_profile = {
+                "llm_calls": 0,
+                "llm_tokens_in": 0,
+                "llm_tokens_out": 0,
+                "phase_wall_seconds": {},
+                "pipeline_seconds": float(phase_a_eval_summary.get("sum_pipeline_run_s", 0.0) or 0.0)
+                + float(phase_b_eval_summary.get("sum_pipeline_run_s", 0.0) or 0.0),
+                "grading_seconds": float(phase_a_eval_summary.get("sum_grading_s", 0.0) or 0.0)
+                + float(phase_b_eval_summary.get("sum_grading_s", 0.0) or 0.0),
+                "rca_seconds": 0.0,
+                "mutation_seconds": 0.0,
+            }
+            if holdout_phase_a_summary is not None:
+                resource_profile["pipeline_seconds"] += float(
+                    holdout_phase_a_summary.get("sum_pipeline_run_s", 0.0) or 0.0
+                )
+                resource_profile["grading_seconds"] += float(
+                    holdout_phase_a_summary.get("sum_grading_s", 0.0) or 0.0
+                )
+            if holdout_phase_b_summary is not None:
+                resource_profile["pipeline_seconds"] += float(
+                    holdout_phase_b_summary.get("sum_pipeline_run_s", 0.0) or 0.0
+                )
+                resource_profile["grading_seconds"] += float(
+                    holdout_phase_b_summary.get("sum_grading_s", 0.0) or 0.0
+                )
+
+            if resource_telemetry is not None:
+                resource_delta = resource_telemetry.delta_since(resource_baseline_snapshot)
+                resource_baseline_snapshot = resource_telemetry.snapshot()
+                resource_profile["llm_calls"] = int(resource_delta.get("llm_calls", 0) or 0)
+                resource_profile["llm_tokens_in"] = int(resource_delta.get("llm_tokens_in", 0) or 0)
+                resource_profile["llm_tokens_out"] = int(resource_delta.get("llm_tokens_out", 0) or 0)
+                resource_profile["phase_wall_seconds"] = dict(resource_delta.get("phase_wall_seconds") or {})
+                phase_wall = resource_profile["phase_wall_seconds"]
+                resource_profile["rca_seconds"] = float(
+                    (phase_wall.get("rca", 0.0) or 0.0)
+                    + (phase_wall.get("rca_high_level", 0.0) or 0.0)
+                )
+                resource_profile["mutation_seconds"] = float(
+                    (phase_wall.get("mutation_stage_a", 0.0) or 0.0)
+                    + (phase_wall.get("mutation_stage_b", 0.0) or 0.0)
+                    + (phase_wall.get("prompt_improvement", 0.0) or 0.0)
+                )
+            total_tokens = int(resource_profile.get("llm_tokens_in", 0) or 0) + int(
+                resource_profile.get("llm_tokens_out", 0) or 0
+            )
+            total_wall_seconds = sum(
+                float(value or 0.0)
+                for value in (resource_profile.get("phase_wall_seconds") or {}).values()
+            )
+            improvement_per_1k_tokens = (
+                float(improvement_delta) / (float(total_tokens) / 1000.0) if total_tokens > 0 else None
+            )
+            improvement_per_phase_second = (
+                float(improvement_delta) / float(total_wall_seconds) if total_wall_seconds > 0 else None
+            )
+
+            data_quality_flags = ["complete"]
+            if not candidate_exists:
+                data_quality_flags = ["synthetic"]
 
             metadata = {
                 "epoch": epoch,
+                "epoch_index": epoch,
+                "epoch_number": epoch_current,
                 "run_id": run_id,
                 "avg_score_a": avg_score_a,
                 "avg_score_b": avg_score_b,
@@ -4085,6 +6628,11 @@ def train_ab_loop(
                 "winner": winner,
                 "changed_keys": changed_keys if winner == "candidate" else [],
                 "mutated_block_ids": changed_keys,
+                "candidate_exists": bool(candidate_exists),
+                "evaluation_mode": str(evaluation_mode),
+                "truth_state": str(truth_state),
+                "legacy_inferred": False,
+                "data_quality_flags": data_quality_flags,
                 "scores_a": scores_a,
                 "scores_b": scores_b,
                 "thinking_level": thinking_level,
@@ -4098,20 +6646,88 @@ def train_ab_loop(
                 "paired_eval_case_ids": paired_eval_case_ids,
                 "phase_a_eval_meta": phase_a_meta,
                 "phase_b_eval_meta": phase_b_meta,
+                "adaptive_eval_trace": {
+                    "train_phase_b": (phase_b_meta or {}).get("adaptive_eval_trace"),
+                    "holdout_phase_b": (holdout_meta_b or {}).get("adaptive_eval_trace") if holdout_meta_b else None,
+                },
+                "provisional_decision_trace": {
+                    "provisional_candidate": bool(provisional_candidate),
+                    "gate_failure_reasons": list(gate_failure_reasons),
+                    "gate_results": gate_results,
+                    "evaluation_mode": str(evaluation_mode),
+                },
+                "holdout_decision_trace": {
+                    "holdout_case_ids": holdout_case_ids,
+                    "holdout_confirmation": holdout_confirmation,
+                    "holdout_delta_stats": holdout_delta_stats,
+                    "holdout_phase_a_meta": holdout_meta_a,
+                    "holdout_phase_b_meta": holdout_meta_b,
+                },
                 "holdout_phase_a_eval_summary": holdout_phase_a_summary,
                 "holdout_phase_b_eval_summary": holdout_phase_b_summary,
                 "holdout_phase_a_eval_meta": holdout_meta_a,
                 "holdout_phase_b_eval_meta": holdout_meta_b,
                 "candidate_gate_results": gate_results,
                 "candidate_gate_failure_reasons": gate_failure_reasons,
+                "rejection_reason_codes": rejection_reason_codes,
+                "selection_blocked_reason": (
+                    "precheck_rejected"
+                    if (not candidate_exists and precheck_trace and bool(precheck_trace.get("rejected")))
+                    else ("no_candidate_changes" if not candidate_exists else None)
+                ),
+                "decision_why": decision_why,
                 "prompt_scoring": prompt_scoring,
                 "mutation_rejection_breakdown": rejection_breakdown,
                 "mutation_rejection_issue_matrix": rejection_issue_matrix,
-                "sample_strategy": "stratified_rotating_unseen_first",
+                "sample_strategy": str(selection_mode),
                 "train_case_ids": [_case_identifier(case) for case in selected],
                 "holdout_case_ids": holdout_case_ids,
                 "rca_case_ids": rca_case_ids,
                 "selection_stats": selection_stats,
+                "selection_effectiveness": selection_effectiveness,
+                "selection_diagnostics": selection_diagnostics,
+                "rca_high_level_summary": high_level_rca,
+                "precheck_trace": precheck_trace,
+                "mutation_accept_threshold": int(max(1, mutation_accept_threshold)),
+                "holdout_winrate": (holdout_confirmation or {}).get("win_rate"),
+                "resource_profile": resource_profile,
+                "improvement_per_1k_tokens": improvement_per_1k_tokens,
+                "improvement_per_phase_second": improvement_per_phase_second,
+                "evaluation_layers": {
+                    "heuristic_mutation_scorer": {
+                        "name": "prompt_criteria_scorer",
+                        "role": "search_ranking_only",
+                        "authoritative_for_promotion": False,
+                    },
+                    "end_to_end_train": {
+                        "name": "paired_case_evaluation_train",
+                        "role": "provisional_promotion_truth",
+                        "authoritative_for_promotion": True,
+                    },
+                    "end_to_end_holdout": {
+                        "name": "paired_case_evaluation_holdout",
+                        "role": "final_confirmation",
+                        "authoritative_for_promotion": True,
+                    },
+                },
+                "gate_rule_versions": {
+                    "quality": "multi_constraint_quality_v3",
+                    "runtime": "balanced_lenient_v2",
+                    "stability": "balanced_lenient_v2",
+                    "tail_risk": "catastrophic_guardrail_v1",
+                    "holdout": "winrate_v2",
+                },
+                "runtime_gate_profile": {
+                    "mean_ratio_max": float(runtime_gate_mean_ratio_max),
+                    "p90_ratio_max": float(runtime_gate_p90_ratio_max),
+                    "abs_mean_increase_max_seconds": float(runtime_gate_abs_mean_increase_max_seconds),
+                },
+                "stability_gate_profile": {
+                    "tool_failure_delta_max": float(stability_gate_tool_failure_delta_max),
+                    "degraded_rate_delta_max": float(stability_gate_degraded_rate_delta_max),
+                },
+                "event_schema_version": EVENT_SCHEMA_VERSION,
+                "metadata_schema_version": METADATA_SCHEMA_VERSION,
                 "train_split": split_metadata["train_split"],
                 "holdout_split": split_metadata["holdout_split"],
                 "early_stop": phase_b_meta.get("early_stop", {"triggered": False}),
@@ -4119,6 +6735,8 @@ def train_ab_loop(
                 "mutation_retry_summary": mutation_retry_summary,
                 "mutation_attempts": mutation_attempts,
                 "timeout_stats": timeout_stats,
+                "case_history_snapshot": case_history,
+                "block_impact_history_snapshot": block_impact_history,
                 "prompt_scoring_summary": {
                     "changed_blocks": len(changed_blocks),
                     "scored_blocks": len(scored_blocks),
@@ -4130,8 +6748,28 @@ def train_ab_loop(
                     "candidate_avg_total": (sum(candidate_totals) / len(candidate_totals)) if candidate_totals else 0.0,
                     "delta_avg_total": (sum(delta_totals) / len(delta_totals)) if delta_totals else 0.0,
                 },
+                "mutation_style_summary": mutation_style_summary,
+                "mutation_staging": {
+                    "enabled": bool(ENABLE_MUTATION_BUDGET_OPT_V1),
+                    "stage_a_top_k": int(max(1, mutation_stage_a_top_k)),
+                    "stage_a_target_ids": stage_a_ids,
+                    "stage_b_target_ids": stage_b_ids,
+                    "stage_b_ran": bool(ran_stage_b),
+                },
+                "resource_target_reduction": float(max(0.0, resource_target_reduction)),
+                "mutation_stage_a_top_k": int(max(1, mutation_stage_a_top_k)),
+                "mutation_precheck_cases": int(max(0, mutation_precheck_cases)),
+                "eval_mode": str(eval_mode),
             }
             store.save_generation(current_prompts, generation, metadata)
+            tracker.emit(
+                event_type="mutation_coverage_summary",
+                phase="prompt_improvement",
+                step="coverage_summary",
+                message=f"Epoch {epoch_current}: mutation coverage summary",
+                epoch_current=epoch_current,
+                payload={"mutation_coverage": dict(mutation_coverage)},
+            )
             tracker.emit(
                 event_type="epoch_completed",
                 phase="epoch",
@@ -4143,6 +6781,9 @@ def train_ab_loop(
                     "changed_keys": metadata["changed_keys"],
                     "num_failures_in_a": len(failed),
                     "num_rca_items": len(all_analyses),
+                    "avg_score_a": avg_score_a,
+                    "avg_score_b": avg_score_b,
+                    "improvement_delta": improvement_delta,
                     "candidate_gate_failure_reasons": gate_failure_reasons,
                     "candidate_gate_results": gate_results,
                     "selection_stats": selection_stats,
@@ -4178,7 +6819,7 @@ def train_ab_loop(
             "progress_status_path": progress_status_path,
             "progress_events_path": progress_events_path,
             "events_archive_path": events_archive_path,
-            "sample_strategy": "stratified_rotating_unseen_first",
+            "sample_strategy": str(selection_mode),
             "train_split_size": len(train_pool),
             "holdout_split_size": len(holdout_pool),
         }
@@ -4188,6 +6829,8 @@ def train_ab_loop(
         tracker.fail(str(exc))
         logger.exception(f"Training run failed: {exc}")
         raise
+    finally:
+        _ACTIVE_RESOURCE_TELEMETRY = previous_resource_telemetry
 
 
 def run_training_loop(
@@ -4195,15 +6838,42 @@ def run_training_loop(
     output_path: str = "data/prompt_suite_generations.json",
     test_cases_path: str = "data/prompt_train_cases.json",
     epochs: int = 10,
-    num_test_cases_per_trial: int = 6,
+    num_test_cases_per_trial: int = 10,
     holdout_sample_size: int = 6,
     rca_case_budget: int = 3,
-    mutation_block_budget: int = 3,
+    mutation_block_budget: int = 1,
+    mutation_accept_threshold: int = MUTATION_ACCEPTANCE_TOTAL_MIN,
+    mutation_tournament_size: int = DEFAULT_MUTATION_TOURNAMENT_SIZE,
     mutation_retry_enabled: bool = True,
     mutation_max_retries: int = DEFAULT_MUTATION_MAX_RETRIES,
     generalizer_cadence: int = 3,
     generalizer_suspicious_delta_threshold: int = GENERALIZER_SUSPICIOUS_DELTA_THRESHOLD,
     bootstrap_resamples: int = 1000,
+    rca_threshold: float = DEFAULT_RCA_THRESHOLD,
+    rca_fallback_fraction: float = DEFAULT_RCA_FALLBACK_FRACTION,
+    selection_mode: str = DEFAULT_SELECTION_MODE,
+    runtime_gate_mean_ratio_max: float = RUNTIME_GATE_MEAN_MAX_RATIO,
+    runtime_gate_p90_ratio_max: float = RUNTIME_GATE_P90_MAX_RATIO,
+    runtime_gate_abs_mean_increase_max_seconds: float = RUNTIME_GATE_MAX_ABS_MEAN_INCREASE_SECONDS,
+    stability_gate_tool_failure_delta_max: float = STABILITY_GATE_MAX_TOOL_FAILURE_DELTA,
+    stability_gate_degraded_rate_delta_max: float = DEGRADATION_GATE_MAX_DELTA,
+    holdout_winrate_min: float = HOLDOUT_GATE_MIN_WIN_RATE,
+    quality_gate_min_mean_delta: float = QUALITY_GATE_MIN_MEAN_DELTA,
+    quality_gate_min_win_rate: float = QUALITY_GATE_MIN_WIN_RATE,
+    quality_gate_min_p10_delta: float = QUALITY_GATE_MIN_P10_DELTA,
+    quality_gate_min_worst_case_delta: float = QUALITY_GATE_MIN_WORST_CASE_DELTA,
+    tail_catastrophic_threshold: float = TAIL_RISK_CATASTROPHIC_DELTA_THRESHOLD,
+    tail_max_catastrophic_regressions: int = TAIL_RISK_MAX_CATASTROPHIC_REGRESSIONS,
+    eval_mode: str = DEFAULT_EVAL_MODE,
+    train_eval_min_pairs: int = DEFAULT_TRAIN_EVAL_MIN_PAIRS,
+    train_eval_max_pairs: int = DEFAULT_TRAIN_EVAL_MAX_PAIRS,
+    train_eval_checkpoints: list[int] | tuple[int, ...] | str | None = None,
+    holdout_eval_min_pairs: int = DEFAULT_HOLDOUT_EVAL_MIN_PAIRS,
+    holdout_eval_max_pairs: int = DEFAULT_HOLDOUT_EVAL_MAX_PAIRS,
+    holdout_eval_checkpoints: list[int] | tuple[int, ...] | str | None = None,
+    mutation_stage_a_top_k: int = DEFAULT_MUTATION_STAGE_A_TOP_K,
+    mutation_precheck_cases: int = DEFAULT_MUTATION_PRECHECK_CASES,
+    resource_target_reduction: float = DEFAULT_RESOURCE_TARGET_REDUCTION,
     holdout_split_ratio: float = DEFAULT_HOLDOUT_SPLIT_RATIO,
     random_seed: int = 42,
     thinking_level: Literal["low", "med-synth", "med-plan", "high"] = "med-synth",
@@ -4221,11 +6891,38 @@ def run_training_loop(
         holdout_sample_size=holdout_sample_size,
         rca_case_budget=rca_case_budget,
         mutation_block_budget=mutation_block_budget,
+        mutation_accept_threshold=mutation_accept_threshold,
+        mutation_tournament_size=mutation_tournament_size,
         mutation_retry_enabled=mutation_retry_enabled,
         mutation_max_retries=mutation_max_retries,
         generalizer_cadence=generalizer_cadence,
         generalizer_suspicious_delta_threshold=generalizer_suspicious_delta_threshold,
         bootstrap_resamples=bootstrap_resamples,
+        rca_threshold=rca_threshold,
+        rca_fallback_fraction=rca_fallback_fraction,
+        selection_mode=selection_mode,
+        runtime_gate_mean_ratio_max=runtime_gate_mean_ratio_max,
+        runtime_gate_p90_ratio_max=runtime_gate_p90_ratio_max,
+        runtime_gate_abs_mean_increase_max_seconds=runtime_gate_abs_mean_increase_max_seconds,
+        stability_gate_tool_failure_delta_max=stability_gate_tool_failure_delta_max,
+        stability_gate_degraded_rate_delta_max=stability_gate_degraded_rate_delta_max,
+        holdout_winrate_min=holdout_winrate_min,
+        quality_gate_min_mean_delta=quality_gate_min_mean_delta,
+        quality_gate_min_win_rate=quality_gate_min_win_rate,
+        quality_gate_min_p10_delta=quality_gate_min_p10_delta,
+        quality_gate_min_worst_case_delta=quality_gate_min_worst_case_delta,
+        tail_catastrophic_threshold=tail_catastrophic_threshold,
+        tail_max_catastrophic_regressions=tail_max_catastrophic_regressions,
+        eval_mode=eval_mode,
+        train_eval_min_pairs=train_eval_min_pairs,
+        train_eval_max_pairs=train_eval_max_pairs,
+        train_eval_checkpoints=train_eval_checkpoints,
+        holdout_eval_min_pairs=holdout_eval_min_pairs,
+        holdout_eval_max_pairs=holdout_eval_max_pairs,
+        holdout_eval_checkpoints=holdout_eval_checkpoints,
+        mutation_stage_a_top_k=mutation_stage_a_top_k,
+        mutation_precheck_cases=mutation_precheck_cases,
+        resource_target_reduction=resource_target_reduction,
         holdout_split_ratio=holdout_split_ratio,
         random_seed=random_seed,
         thinking_level=thinking_level,

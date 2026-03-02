@@ -438,8 +438,13 @@ class Pipeline:
             return response
         return "[Graceful degradation] The pipeline could not synthesize a complete answer from the available context."
 
-    def _ensure_inline_citation_markers(self, response: str, citations: dict[str, str]) -> str:
+    def _ensure_inline_citation_markers(self, response: str, citations: dict[str, str], objective: str = "") -> str:
         if not citations:
+            return response
+
+        # Only auto-insert citations when the query requests them (Phase 3B)
+        _citation_signals = ("cite", "source", "reference", "according to", "evidence", "bibliography", "footnote")
+        if objective and not any(signal in objective.lower() for signal in _citation_signals):
             return response
 
         if re.search(r"\[(\d+)\]\(https?://", response) or re.search(r"\[(\d+)\]", response):
@@ -2099,7 +2104,7 @@ class Pipeline:
             assembly_trace["step_coverage"] = step_coverage
 
             citation_links = self._collect_citation_links(tool_context)
-            final_response = self._ensure_inline_citation_markers(final_response, citation_links)
+            final_response = self._ensure_inline_citation_markers(final_response, citation_links, objective=prompt)
             assembly_trace["after_inline_citations"] = final_response
             image_embeddings, image_embedding_issues = self._collect_image_embeddings(tool_context)
             final_response = self._enrich_response(final_response, tool_context, image_embeddings)

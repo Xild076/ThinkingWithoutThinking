@@ -17,6 +17,12 @@ I took heavy inspiration from an old GPT prompt engineering widget where it aske
 
 For self improvement, I took inspiration from the a/b testing system most LLM benchmark sites use.
 
+## Proof of Improvement
+
+Here is a image demonstrating how the system learns:
+
+![Improvement](golden_run.png)
+
 ## Repository Layout
 
 - `src/pipeline.py` — pipeline orchestration.

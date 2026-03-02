@@ -43,6 +43,10 @@ class VisualizationResult:
     accepted_prompt_updates: int
     net_improvement_delta: float
     quality_score: float
+    quality_gate_pass_rate: float
+    runtime_gate_pass_rate: float
+    stability_gate_pass_rate: float
+    holdout_pass_rate: float
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -58,6 +62,10 @@ class VisualizationResult:
             "accepted_prompt_updates": self.accepted_prompt_updates,
             "net_improvement_delta": self.net_improvement_delta,
             "quality_score": self.quality_score,
+            "quality_gate_pass_rate": self.quality_gate_pass_rate,
+            "runtime_gate_pass_rate": self.runtime_gate_pass_rate,
+            "stability_gate_pass_rate": self.stability_gate_pass_rate,
+            "holdout_pass_rate": self.holdout_pass_rate,
         }
 
 
@@ -166,7 +174,8 @@ def _build_rows(selected_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for record in _epoch_records(selected_records):
         metadata = record.get("metadata") or {}
-        epoch = int(metadata.get("epoch", -1))
+        epoch_index = int(metadata.get("epoch", -1))
+        epoch_number = epoch_index + 1
         scores_a = [float(value) for value in (metadata.get("scores_a") or []) if isinstance(value, (int, float))]
         scores_b = [float(value) for value in (metadata.get("scores_b") or []) if isinstance(value, (int, float))]
         pair_count = min(len(scores_a), len(scores_b))
@@ -184,7 +193,9 @@ def _build_rows(selected_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         rows.append(
             {
-                "epoch": epoch,
+                "epoch": epoch_number,
+                "epoch_index": epoch_index,
+                "epoch_number": epoch_number,
                 "winner": str(metadata.get("winner") or "unknown"),
                 "avg_score_a": _safe_float(metadata.get("avg_score_a"), 0.0),
                 "avg_score_b": _safe_float(metadata.get("avg_score_b"), 0.0),
@@ -210,6 +221,7 @@ def _build_rows(selected_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "mutation_attempts": metadata.get("mutation_attempts") or [],
                 "rca_case_ids": metadata.get("rca_case_ids") or [],
                 "mutated_block_ids": metadata.get("mutated_block_ids") or [],
+                "selection_stats": selection_stats,
                 "events_archive_path": metadata.get("events_archive_path"),
                 "early_stop": metadata.get("early_stop") or {},
                 "timeout_count": int(phase_b_timeout.get("timeout_count") or 0),
@@ -231,7 +243,7 @@ def _build_block_delta_matrix(epoch_records: list[dict[str, Any]], block_ids: li
 
     for record in epoch_records:
         metadata = record.get("metadata") or {}
-        epoch_values.append(int(metadata.get("epoch", -1)))
+        epoch_values.append(int(metadata.get("epoch", -1)) + 1)
         row = [0.0 for _ in block_ids]
         scoring = metadata.get("prompt_scoring") or []
         if isinstance(scoring, list):
@@ -500,6 +512,10 @@ def _save_html_report(
         <div class=\"card\"><div class=\"label\">Improved Epochs</div><div class=\"value\">{summary['improved_epochs']}</div></div>
         <div class=\"card\"><div class=\"label\">Accepted Epochs</div><div class=\"value\">{summary['accepted_prompt_updates']}</div></div>
         <div class=\"card\"><div class=\"label\">Net Δ</div><div class=\"value\">{summary['net_improvement_delta']:.3f}</div></div>
+        <div class=\"card\"><div class=\"label\">Quality Gate Pass</div><div class=\"value\">{summary.get('quality_gate_pass_rate', 0.0) * 100:.1f}%</div></div>
+        <div class=\"card\"><div class=\"label\">Runtime Gate Pass</div><div class=\"value\">{summary.get('runtime_gate_pass_rate', 0.0) * 100:.1f}%</div></div>
+        <div class=\"card\"><div class=\"label\">Stability Gate Pass</div><div class=\"value\">{summary.get('stability_gate_pass_rate', 0.0) * 100:.1f}%</div></div>
+        <div class=\"card\"><div class=\"label\">Holdout Pass</div><div class=\"value\">{summary.get('holdout_pass_rate', 0.0) * 100:.1f}%</div></div>
     </div>
 
     <img class=\"dash\" src=\"data:image/png;base64,{image_base64}\" alt=\"Prompt improvement dashboard\" />
@@ -563,6 +579,17 @@ def _render_single_run(
     improved_epochs = sum(1 for row in rows if _safe_float(row.get("improvement_delta"), 0.0) > 0)
     accepted_prompt_updates = sum(1 for row in rows if str(row.get("winner", "")) == "candidate")
     net_improvement_delta = sum(_safe_float(row.get("improvement_delta"), 0.0) for row in rows)
+    quality_gate_pass_rate = sum(1 for row in rows if bool(row.get("quality_gate_passed"))) / max(len(rows), 1)
+    runtime_gate_pass_rate = sum(1 for row in rows if bool(row.get("runtime_gate_passed"))) / max(len(rows), 1)
+    stability_gate_pass_rate = sum(1 for row in rows if bool(row.get("stability_gate_passed"))) / max(len(rows), 1)
+    holdout_pass_rate = (
+        sum(
+            1
+            for row in rows
+            if bool(((row.get("selection_stats") or {}).get("holdout_confirmation") or {}).get("passed"))
+        )
+        / max(len(rows), 1)
+    )
 
     summary = {
         "run_id": run_id,
@@ -573,6 +600,10 @@ def _render_single_run(
         "accepted_prompt_updates": accepted_prompt_updates,
         "net_improvement_delta": net_improvement_delta,
         "quality_score": quality_score,
+        "quality_gate_pass_rate": quality_gate_pass_rate,
+        "runtime_gate_pass_rate": runtime_gate_pass_rate,
+        "stability_gate_pass_rate": stability_gate_pass_rate,
+        "holdout_pass_rate": holdout_pass_rate,
         "png_path": str(png_path.resolve()),
         "html_path": str(html_path.resolve()),
         "rows": rows,
@@ -592,6 +623,10 @@ def _render_single_run(
         accepted_prompt_updates=accepted_prompt_updates,
         net_improvement_delta=net_improvement_delta,
         quality_score=quality_score,
+        quality_gate_pass_rate=quality_gate_pass_rate,
+        runtime_gate_pass_rate=runtime_gate_pass_rate,
+        stability_gate_pass_rate=stability_gate_pass_rate,
+        holdout_pass_rate=holdout_pass_rate,
     )
 
 
@@ -625,22 +660,49 @@ def _render_index_report(
     index_html_path = output_dir / "prompt_improvement_index.html"
 
     ordered = sorted(runs, key=lambda item: item.quality_score, reverse=True)
+    generated_at = datetime.now(timezone.utc)
+    generated_at_iso = generated_at.isoformat(timespec="seconds")
+    generated_at_unix = int(generated_at.timestamp())
+    freshness_ttl_hours = 24
     payload = {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": generated_at_iso,
+        "generated_at_unix": generated_at_unix,
+        "freshness_ttl_hours": freshness_ttl_hours,
+        "stale_after_unix": generated_at_unix + (freshness_ttl_hours * 3600),
         "selected_mode": selected_mode,
         "runs_count": len(ordered),
         "runs": [run.to_dict() for run in ordered],
     }
     index_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
+    avg_quality = (
+        sum(run.quality_score for run in ordered) / max(len(ordered), 1)
+    )
+    avg_quality_gate = (
+        sum(run.quality_gate_pass_rate for run in ordered) / max(len(ordered), 1)
+    )
+    avg_holdout = (
+        sum(run.holdout_pass_rate for run in ordered) / max(len(ordered), 1)
+    )
+    total_epochs = sum(int(run.epochs_count) for run in ordered)
+
     rows_html = "\n".join(
-        "<tr>"
+        "<tr "
+        f"data-run-id='{run.run_id}' "
+        f"data-quality='{run.quality_score:.6f}' "
+        f"data-net-delta='{run.net_improvement_delta:.6f}' "
+        f"data-epochs='{run.epochs_count}' "
+        ">"
         f"<td>{idx + 1}</td>"
-        f"<td>{run.run_id}</td>"
+        f"<td><code>{run.run_id}</code></td>"
         f"<td>{run.epochs_count}</td>"
         f"<td>{run.accepted_prompt_updates}</td>"
         f"<td>{run.net_improvement_delta:.3f}</td>"
         f"<td>{run.quality_score:.2f}</td>"
+        f"<td>{run.quality_gate_pass_rate * 100:.1f}%</td>"
+        f"<td>{run.runtime_gate_pass_rate * 100:.1f}%</td>"
+        f"<td>{run.stability_gate_pass_rate * 100:.1f}%</td>"
+        f"<td>{run.holdout_pass_rate * 100:.1f}%</td>"
         f"<td><a href='{Path(run.html_path).name}'>dashboard</a></td>"
         "</tr>"
         for idx, run in enumerate(ordered)
@@ -653,35 +715,143 @@ def _render_index_report(
     <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
     <title>Prompt Improvement Index</title>
     <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; background: #0f1115; color: #e8ecf1; }}
-        h1 {{ margin: 0 0 8px 0; }}
-        .muted {{ color: #a7b0bc; }}
-        table {{ border-collapse: collapse; width: 100%; margin-top: 18px; }}
-        th, td {{ border: 1px solid #2a3240; padding: 8px 10px; font-size: 13px; text-align: left; }}
-        th {{ background: #171b22; }}
-        tr:nth-child(even) td {{ background: #12161d; }}
-        a {{ color: #8ec5ff; text-decoration: none; }}
+        :root {{
+            --bg: #fff8eb;
+            --ink: #1f2635;
+            --soft: #5d677a;
+            --card: #fff;
+            --line: #e6dcc6;
+            --accent: #cb5c20;
+            --accent2: #2b8a6e;
+            --sans: "Space Grotesk", "Avenir Next", "Trebuchet MS", sans-serif;
+            --mono: "JetBrains Mono", Menlo, monospace;
+        }}
+        * {{ box-sizing: border-box; }}
+        body {{
+            margin: 0;
+            font-family: var(--sans);
+            color: var(--ink);
+            background:
+              radial-gradient(58rem 28rem at -10% -8%, rgba(203, 92, 32, 0.18), transparent),
+              radial-gradient(50rem 24rem at 105% -5%, rgba(43, 138, 110, 0.15), transparent),
+              var(--bg);
+        }}
+        .wrap {{ max-width: 1400px; margin: 0 auto; padding: 18px; display: grid; gap: 12px; }}
+        .card {{ background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; }}
+        h1 {{ margin: 0; font-size: 1.2rem; }}
+        .muted {{ color: var(--soft); font-size: 0.78rem; }}
+        .toolbar {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }}
+        .toolbar input, .toolbar select {{
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 7px 11px;
+            font-size: 0.74rem;
+            background: #fffdf8;
+        }}
+        .grid {{ display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 10px; }}
+        .metric {{ border: 1px solid var(--line); border-radius: 10px; background: #fffdf8; padding: 9px; }}
+        .metric .k {{ font-size: 0.66rem; text-transform: uppercase; color: var(--soft); font-weight: 700; }}
+        .metric .v {{ font-family: var(--mono); font-size: 1rem; margin-top: 2px; }}
+        .table-wrap {{ max-height: 70vh; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }}
+        table {{ border-collapse: collapse; width: 100%; font-size: 0.76rem; }}
+        th, td {{ border-bottom: 1px solid var(--line); padding: 8px 9px; text-align: left; }}
+        th {{ position: sticky; top: 0; background: #fffdf8; color: var(--soft); font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; }}
+        tr:hover td {{ background: #fff8eb; }}
+        code {{ font-family: var(--mono); font-size: 0.7rem; }}
+        a {{ color: var(--accent); text-decoration: none; font-weight: 700; }}
+        @media (max-width: 900px) {{
+            .grid {{ grid-template-columns: repeat(2, minmax(130px, 1fr)); }}
+        }}
     </style>
 </head>
 <body>
-    <h1>Prompt Improvement Index</h1>
-    <p class=\"muted\">Selection mode: {selected_mode} | Runs rendered: {len(ordered)}</p>
-    <table>
-        <thead>
-            <tr>
-                <th>#</th>
-                <th>Run ID</th>
-                <th>Epochs</th>
-                <th>Accepted Epochs</th>
-                <th>Net Δ</th>
-                <th>Quality Score</th>
-                <th>Dashboard</th>
-            </tr>
-        </thead>
-        <tbody>
-            {rows_html}
-        </tbody>
-    </table>
+    <div class=\"wrap\">
+      <section class=\"card\">
+        <h1>Prompt Improvement Index</h1>
+        <p class=\"muted\">Selection mode: {selected_mode} | Runs rendered: {len(ordered)} | Generated (UTC): {payload['generated_at']} | Freshness TTL: {freshness_ttl_hours}h</p>
+        <div class=\"toolbar\">
+          <input id=\"runSearch\" placeholder=\"Search run id...\" />
+          <select id=\"sortMode\">
+            <option value=\"quality\">Sort: quality</option>
+            <option value=\"delta\">Sort: net delta</option>
+            <option value=\"epochs\">Sort: epochs</option>
+          </select>
+        </div>
+      </section>
+
+      <section class=\"card\">
+        <div class=\"grid\">
+          <article class=\"metric\"><div class=\"k\">Runs</div><div class=\"v\">{len(ordered)}</div></article>
+          <article class=\"metric\"><div class=\"k\">Total Epochs</div><div class=\"v\">{total_epochs}</div></article>
+          <article class=\"metric\"><div class=\"k\">Avg Quality</div><div class=\"v\">{avg_quality:.2f}</div></article>
+          <article class=\"metric\"><div class=\"k\">Avg Q Gate Pass</div><div class=\"v\">{avg_quality_gate * 100:.1f}%</div></article>
+          <article class=\"metric\"><div class=\"k\">Avg Holdout Pass</div><div class=\"v\">{avg_holdout * 100:.1f}%</div></article>
+        </div>
+      </section>
+
+      <section class=\"card\">
+        <div class=\"table-wrap\">
+          <table>
+            <thead>
+              <tr>
+                  <th>#</th>
+                  <th>Run ID</th>
+                  <th>Epochs</th>
+                  <th>Accepted Epochs</th>
+                  <th>Net Δ</th>
+                  <th>Quality Score</th>
+                  <th>Q Gate Pass</th>
+                  <th>Runtime Pass</th>
+                  <th>Stability Pass</th>
+                  <th>Holdout Pass</th>
+                  <th>Dashboard</th>
+              </tr>
+            </thead>
+            <tbody id=\"rowsBody\">
+                {rows_html}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <script>
+    (() => {{
+      const rowsBody = document.getElementById('rowsBody');
+      const search = document.getElementById('runSearch');
+      const sort = document.getElementById('sortMode');
+
+      const apply = () => {{
+        const q = String(search.value || '').trim().toLowerCase();
+        const mode = String(sort.value || 'quality');
+        const rows = Array.from(rowsBody.querySelectorAll('tr'));
+
+        rows.forEach((row) => {{
+          const runId = String(row.dataset.runId || '').toLowerCase();
+          row.style.display = q && !runId.includes(q) ? 'none' : '';
+        }});
+
+        rows.sort((a, b) => {{
+          if (mode === 'delta') {{
+            return Number(b.dataset.netDelta || 0) - Number(a.dataset.netDelta || 0);
+          }}
+          if (mode === 'epochs') {{
+            return Number(b.dataset.epochs || 0) - Number(a.dataset.epochs || 0);
+          }}
+          return Number(b.dataset.quality || 0) - Number(a.dataset.quality || 0);
+        }});
+        rows.forEach((row, idx) => {{
+          rowsBody.appendChild(row);
+          const rankCell = row.querySelector('td');
+          if (rankCell) rankCell.textContent = String(idx + 1);
+        }});
+      }};
+
+      search.addEventListener('input', apply);
+      sort.addEventListener('change', apply);
+      apply();
+    }})();
+    </script>
 </body>
 </html>
 """

@@ -163,6 +163,8 @@ button{appearance:none;border:none;border-radius:var(--rs);padding:8px 12px;font
 .event-search{width:100%;border:1px solid var(--border);background:var(--surface-alt);color:var(--ink);border-radius:999px;padding:7px 14px;font-size:.82rem;font-family:var(--sans);margin-bottom:8px;transition:border-color var(--t)}
 .event-search:focus{outline:none;border-color:var(--border-f)}
 .event-search::placeholder{color:var(--ink3)}
+.event-filter-row{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px}
+.event-filter-select{border:1px solid var(--border);background:var(--surface-alt);color:var(--ink2);border-radius:999px;padding:6px 10px;font-size:.74rem;font-family:var(--sans)}
 .event-list{display:flex;flex-direction:column;gap:4px;min-width:0}
 .event{border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:var(--rs);background:var(--surface-alt);overflow:hidden;animation:slideUp 200ms ease}
 .event.warn-e{border-left-color:var(--warn)}.event.bad-e{border-left-color:var(--bad)}.event.ok-e{border-left-color:var(--ok)}.event.hidden{display:none}
@@ -225,6 +227,7 @@ pre{margin:0;font-size:.72rem;line-height:1.35;font-family:var(--mono);white-spa
       <span class="kv-key">Message</span><span class="kv-val" id="kv-msg">—</span>
       <span class="kv-key">Run ETA</span><span class="kv-val" id="kv-run-eta">—</span>
       <span class="kv-key">Phase ETA</span><span class="kv-val" id="kv-phase-eta">—</span>
+      <span class="kv-key">Case ETA</span><span class="kv-val" id="kv-case-eta">—</span>
       <span class="kv-key">Updated</span><span class="kv-val" id="kv-updated">—</span>
     </div>
 
@@ -271,6 +274,10 @@ pre{margin:0;font-size:.72rem;line-height:1.35;font-family:var(--mono);white-spa
       <div class="metric-card"><div class="metric-label">Avg Case Time</div><div class="metric-value" id="m-avg-case">—</div><div class="metric-sub" id="m-avg-case-sub"></div></div>
       <div class="metric-card"><div class="metric-label">P90 Case Time</div><div class="metric-value" id="m-p90">—</div><div class="metric-sub" id="m-p90-sub"></div></div>
       <div class="metric-card"><div class="metric-label">Throughput</div><div class="metric-value" id="m-thru">—</div><div class="metric-sub" id="m-thru-sub">cases/min</div></div>
+      <div class="metric-card"><div class="metric-label">Events / Min</div><div class="metric-value" id="m-evpm">—</div><div class="metric-sub" id="m-evpm-sub">stream telemetry</div></div>
+      <div class="metric-card"><div class="metric-label">Emit Latency</div><div class="metric-value" id="m-emit-lat">—</div><div class="metric-sub" id="m-emit-lat-sub">ms</div></div>
+      <div class="metric-card"><div class="metric-label">Write Latency</div><div class="metric-value" id="m-write-lat">—</div><div class="metric-sub" id="m-write-lat-sub">ms</div></div>
+      <div class="metric-card"><div class="metric-label">Stream Lag</div><div class="metric-value" id="m-stream-lag">—</div><div class="metric-sub" id="m-stream-lag-sub">ms</div></div>
     </div>
 
     <div class="tab-bar">
@@ -321,6 +328,36 @@ pre{margin:0;font-size:.72rem;line-height:1.35;font-family:var(--mono);white-spa
             <div class="legend-item"><div class="legend-dot" style="background:var(--ch-a)"></div>Pipeline</div>
             <div class="legend-item"><div class="legend-dot" style="background:var(--ch-c)"></div>Grading</div>
             <div class="legend-item"><div class="legend-dot" style="background:var(--ch-e)"></div>Case Total</div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Gate Signals</div>
+          <canvas class="chart-canvas" id="chart-gates"></canvas>
+          <div class="chart-tooltip" id="tip-gates"></div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-c)"></div>Runtime Ratio</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-e)"></div>P90 Ratio</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-b)"></div>Prompt Δ</div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Tracker Latency (ms)</div>
+          <canvas class="chart-canvas" id="chart-latency"></canvas>
+          <div class="chart-tooltip" id="tip-latency"></div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-c)"></div>Emit</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-e)"></div>Write</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-d)"></div>Stream Lag</div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">ETA Projection (seconds)</div>
+          <canvas class="chart-canvas" id="chart-eta"></canvas>
+          <div class="chart-tooltip" id="tip-eta"></div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-a)"></div>Run ETA</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-d)"></div>Phase ETA</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--ch-c)"></div>Case ETA</div>
           </div>
         </div>
       </div>
@@ -377,8 +414,15 @@ pre{margin:0;font-size:.72rem;line-height:1.35;font-family:var(--mono);white-spa
             <span class="k">Projection Variance</span><span class="v" id="rh-proj-var">—</span>
             <span class="k">Degraded Rate</span><span class="v" id="rh-degraded-rate">—</span>
             <span class="k">Tool Fail / Case</span><span class="v" id="rh-tool-fails">—</span>
+            <span class="k">Events/Min</span><span class="v" id="rh-events-per-min">—</span>
+            <span class="k">Emit Latency</span><span class="v" id="rh-emit-lat">—</span>
+            <span class="k">Write Latency</span><span class="v" id="rh-write-lat">—</span>
+            <span class="k">Stream Lag</span><span class="v" id="rh-stream-lag">—</span>
             <span class="k">Active Call</span><span class="v" id="rh-active-call">—</span>
             <span class="k">Stall Warnings</span><span class="v" id="rh-stall-count">0</span>
+            <span class="k">Event Schema</span><span class="v" id="rh-event-schema">—</span>
+            <span class="k">Metadata Schema</span><span class="v" id="rh-meta-schema">—</span>
+            <span class="k">Selection Mode</span><span class="v" id="rh-selection-mode">—</span>
           </div>
         </div>
         <div class="diag-card">
@@ -398,7 +442,20 @@ pre{margin:0;font-size:.72rem;line-height:1.35;font-family:var(--mono);white-spa
             <span class="k">Failed Gates</span><span class="v" id="gd-failed">—</span>
             <span class="k">Runtime Ratio</span><span class="v" id="gd-runtime-ratio">—</span>
             <span class="k">P90 Ratio</span><span class="v" id="gd-p90-ratio">—</span>
+            <span class="k">Holdout Winrate</span><span class="v" id="gd-holdout-winrate">—</span>
+            <span class="k">Prompt Δ Mean</span><span class="v" id="gd-prompt-delta">—</span>
+            <span class="k">Mutation Threshold</span><span class="v" id="gd-mutation-threshold">—</span>
             <span class="k">Gate Mode</span><span class="v" id="gd-enabled">—</span>
+          </div>
+        </div>
+        <div class="diag-card">
+          <div class="section-title">RCA Cohort</div>
+          <div class="diag-kv">
+            <span class="k">Theme Count</span><span class="v" id="rca-theme-count">—</span>
+            <span class="k">Cohort Cases</span><span class="v" id="rca-case-count">—</span>
+            <span class="k">Selection Rule</span><span class="v" id="rca-selection-rule">—</span>
+            <span class="k">Trigger</span><span class="v" id="rca-trigger">—</span>
+            <span class="k">Summary</span><span class="v" id="rca-summary">—</span>
           </div>
         </div>
       </div>
@@ -464,12 +521,38 @@ pre{margin:0;font-size:.72rem;line-height:1.35;font-family:var(--mono);white-spa
           <tbody id="gate-tbody"></tbody>
         </table>
       </div>
+      <div class="table-wrap">
+        <div class="section-title">Selection Diagnostics (Latest Epoch)</div>
+        <table class="data-table" id="selection-table">
+          <thead><tr>
+            <th>Epoch</th>
+            <th>Case ID</th>
+            <th>Slot</th>
+            <th>Reason</th>
+            <th>Replay Cause</th>
+            <th>Category</th>
+            <th>Difficulty</th>
+          </tr></thead>
+          <tbody id="selection-tbody"></tbody>
+        </table>
+      </div>
     </section>
 
     <!-- Events -->
     <section class="panel tab-panel" id="tab-events">
       <div class="event-panel" id="event-panel">
         <input class="event-search" id="event-search" placeholder="Filter events..."/>
+        <div class="event-filter-row">
+          <select class="event-filter-select" id="event-severity">
+            <option value="all">Severity: all</option>
+            <option value="ok-e">ok</option>
+            <option value="warn-e">warn</option>
+            <option value="bad-e">bad</option>
+          </select>
+          <select class="event-filter-select" id="event-phase">
+            <option value="all">Phase: all</option>
+          </select>
+        </div>
         <div class="event-list" id="event-list"></div>
       </div>
     </section>
@@ -482,18 +565,24 @@ const $=id=>document.getElementById(id);
 const chState=$('ch-state'),chEvents=$('ch-events'),chEta=$('ch-eta'),chAlerts=$('ch-alerts');
 const progLabel=$('prog-label'),progPct=$('prog-pct'),progFill=$('prog-fill');
 const eventList=$('event-list'),eventSearch=$('event-search'),eventBadge=$('event-badge');
+const eventSeverity=$('event-severity'),eventPhase=$('event-phase');
 const alertList=$('alert-list'),alertBadge=$('alert-badge');
 const toastBox=$('toast-container');
 
 /* ─── State ─── */
 let eventTotal=0,alertCount=0;
 let enableMaxDetailPanels=true;
+const MAX_EVENT_ROWS=1200;
+const knownEventPhases=new Set(['all']);
 
 const trend={
   scoresA:[],scoresB:[],deltas:[],failures:[],rca:[],
   promptAccept:[],promptReject:[],promptScored:[],
   promptChanged:[],promptContractReject:[],promptScoreReject:[],
-  rtPipeline:[],rtGrading:[],rtCase:[]
+  rtPipeline:[],rtGrading:[],rtCase:[],
+  gateMeanRatio:[],gateP90Ratio:[],gatePromptDelta:[],
+  etaRunSec:[],etaPhaseSec:[],etaCaseSec:[],
+  eventsPerMin:[],emitLatencyMs:[],writeLatencyMs:[],streamLagMs:[]
 };
 
 const diag={
@@ -505,13 +594,26 @@ const diag={
   toolHealth:{},
   gateDecisions:[],
   latestGateDecision:null,
+  selectionDiagnostics:[],
+  selectionEpoch:null,
+  latestRcaHighLevel:null,
+  latestRcaSelection:null,
   activeCall:null,
   stalledWarningCount:0,
   mutationRejectionBreakdown:{},
   mutationRejectionIssueMatrix:{},
   etaConfidence:'low',
   etaVariance:null,
-  caseByPhaseAndId:{phase_a_eval:{},phase_b_eval:{}}
+  lastEtaTrendTs:0,
+  lastEtaTrendKey:null,
+  caseByPhaseAndId:{phase_a_eval:{},phase_b_eval:{}},
+  latestProgressMetrics:{},
+  runConfig:{
+    selectionMode:null,
+    mutationAcceptThreshold:null,
+    eventSchemaVersion:null,
+    metadataSchemaVersion:null,
+  }
 };
 
 /* prompt detail state */
@@ -574,6 +676,7 @@ const MAX_TREND=50;
 function cap(arr){while(arr.length>MAX_TREND)arr.shift();}
 function toNum(v){const n=parseFloat(v);return isFinite(n)?n:null;}
 function sf(v,d=2){const n=toNum(v);return n==null?'—':n.toFixed(d);}
+function fmtEpochHuman(v){const n=toNum(v);if(n==null)return'—';return String(n<=0?n+1:n);}
 function mean(a){if(!a.length)return null;return a.reduce((s,x)=>s+x,0)/a.length;}
 function pct(a,p){if(!a.length)return null;const s=[...a].sort((a,b)=>a-b);const i=Math.ceil(p/100*s.length)-1;return s[Math.max(0,i)];}
 function stddev(a){if(!a.length)return null;const m=mean(a);if(m==null)return null;const v=a.reduce((s,x)=>s+Math.pow(x-m,2),0)/a.length;return Math.sqrt(v);}
@@ -636,10 +739,31 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
 });
 
 /* ─── Event search ─── */
-eventSearch.addEventListener('input',()=>{
-  const q=eventSearch.value.toLowerCase();
-  eventList.querySelectorAll('.event').forEach(el=>el.classList.toggle('hidden',q&&!el.textContent.toLowerCase().includes(q)));
-});
+function ensureEventPhaseOption(phase){
+  const p=String(phase||'').trim();
+  if(!p||knownEventPhases.has(p))return;
+  knownEventPhases.add(p);
+  const opt=document.createElement('option');
+  opt.value=p;
+  opt.textContent=`Phase: ${p}`;
+  eventPhase.appendChild(opt);
+}
+
+function applyEventFilters(){
+  const q=(eventSearch.value||'').toLowerCase().trim();
+  const sev=eventSeverity.value||'all';
+  const phase=eventPhase.value||'all';
+  eventList.querySelectorAll('.event').forEach(el=>{
+    const matchesSearch=!q||el.textContent.toLowerCase().includes(q);
+    const matchesSeverity=sev==='all'||(el.dataset.severity||'')===sev;
+    const matchesPhase=phase==='all'||(el.dataset.phase||'')===phase;
+    el.classList.toggle('hidden',!(matchesSearch&&matchesSeverity&&matchesPhase));
+  });
+}
+
+eventSearch.addEventListener('input',applyEventFilters);
+eventSeverity.addEventListener('change',applyEventFilters);
+eventPhase.addEventListener('change',applyEventFilters);
 
 /* ─── Table sorting ─── */
 function setupTableSort(tableId,tbodyId){
@@ -757,31 +881,77 @@ function drawLineChart(canvasId,tipId,series,xLabels){
   canvas.onmouseleave=()=>{tip.style.display='none';};
 }
 
-function drawAllCharts(){
-  const n=trend.scoresA.length;
-  const xLabels=Array.from({length:n},(_,i)=>`E${i+1}`);
+function labelsForSeries(series,prefix='N'){
+  const maxLen=Math.max(0,...series.map(s=>Array.isArray(s.data)?s.data.length:0));
+  return Array.from({length:maxLen},(_,i)=>`${prefix}${i+1}`);
+}
 
+function drawAllCharts(){
   drawLineChart('chart-scores','tip-scores',[
     {data:trend.scoresA,color:'--ch-a',label:'Baseline'},
     {data:trend.scoresB,color:'--ch-b',label:'Candidate'}
-  ],xLabels);
+  ],labelsForSeries([
+    {data:trend.scoresA},
+    {data:trend.scoresB}
+  ],'E'));
 
   drawLineChart('chart-failures','tip-failures',[
     {data:trend.failures,color:'--ch-d',label:'Failures'},
     {data:trend.rca,color:'--ch-e',label:'RCA'}
-  ],xLabels);
+  ],labelsForSeries([
+    {data:trend.failures},
+    {data:trend.rca}
+  ],'E'));
 
   drawLineChart('chart-prompts','tip-prompts',[
     {data:trend.promptAccept,color:'--ch-b',label:'Accepted'},
     {data:trend.promptReject,color:'--ch-d',label:'Rejected'},
     {data:trend.promptScored,color:'--ch-c',label:'Scored'}
-  ],xLabels);
+  ],labelsForSeries([
+    {data:trend.promptAccept},
+    {data:trend.promptReject},
+    {data:trend.promptScored}
+  ],'P'));
 
   drawLineChart('chart-runtime','tip-runtime',[
     {data:trend.rtPipeline,color:'--ch-a',label:'Pipeline'},
     {data:trend.rtGrading,color:'--ch-c',label:'Grading'},
     {data:trend.rtCase,color:'--ch-e',label:'Case'}
-  ],xLabels);
+  ],labelsForSeries([
+    {data:trend.rtPipeline},
+    {data:trend.rtGrading},
+    {data:trend.rtCase}
+  ],'C'));
+
+  drawLineChart('chart-gates','tip-gates',[
+    {data:trend.gateMeanRatio,color:'--ch-c',label:'Runtime Ratio'},
+    {data:trend.gateP90Ratio,color:'--ch-e',label:'P90 Ratio'},
+    {data:trend.gatePromptDelta,color:'--ch-b',label:'Prompt Delta'}
+  ],labelsForSeries([
+    {data:trend.gateMeanRatio},
+    {data:trend.gateP90Ratio},
+    {data:trend.gatePromptDelta}
+  ],'G'));
+
+  drawLineChart('chart-latency','tip-latency',[
+    {data:trend.emitLatencyMs,color:'--ch-c',label:'Emit Latency'},
+    {data:trend.writeLatencyMs,color:'--ch-e',label:'Write Latency'},
+    {data:trend.streamLagMs,color:'--ch-d',label:'Stream Lag'}
+  ],labelsForSeries([
+    {data:trend.emitLatencyMs},
+    {data:trend.writeLatencyMs},
+    {data:trend.streamLagMs}
+  ],'L'));
+
+  drawLineChart('chart-eta','tip-eta',[
+    {data:trend.etaRunSec,color:'--ch-a',label:'Run ETA'},
+    {data:trend.etaPhaseSec,color:'--ch-d',label:'Phase ETA'},
+    {data:trend.etaCaseSec,color:'--ch-c',label:'Case ETA'}
+  ],labelsForSeries([
+    {data:trend.etaRunSec},
+    {data:trend.etaPhaseSec},
+    {data:trend.etaCaseSec}
+  ],'T'));
 }
 
 /* ─── Metric cards ─── */
@@ -815,6 +985,16 @@ function updateMetrics(){
 
   const throughput=elapsed&&diag.allCaseTimes.length?(diag.allCaseTimes.length/(elapsed/60)):null;
   setMetric('m-thru',throughput!=null?throughput.toFixed(1):'—','cases/min');
+
+  const progress=diag.latestProgressMetrics||{};
+  const evpm=toNum(progress.events_per_min);
+  const emitMs=toNum(progress.avg_emit_latency_ms);
+  const writeMs=toNum(progress.avg_tracker_write_latency_ms);
+  const lagMs=toNum(progress.stream_lag_ms);
+  setMetric('m-evpm',evpm!=null?evpm.toFixed(2):'—',evpm!=null?'events/min':'stream telemetry');
+  setMetric('m-emit-lat',emitMs!=null?emitMs.toFixed(2):'—',emitMs!=null?'ms avg':'ms');
+  setMetric('m-write-lat',writeMs!=null?writeMs.toFixed(2):'—',writeMs!=null?'ms avg':'ms');
+  setMetric('m-stream-lag',lagMs!=null?lagMs.toFixed(1):'—',lagMs!=null?'ms':'ms');
 }
 
 /* ─── ETA estimation ─── */
@@ -826,33 +1006,45 @@ function estimateEta(){
   if(!phaseAvg){
     diag.etaConfidence='low';
     diag.etaVariance=null;
-    return{run:'—',phase:'—',case:'—',confidence:'low',variance:null};
+    return{
+      run:'—',
+      phase:'—',
+      case:'—',
+      runSeconds:null,
+      phaseSeconds:null,
+      caseSeconds:null,
+      confidence:'low',
+      variance:null
+    };
   }
 
-  const caseEta=fmtDur(phaseAvg);
+  const caseEtaSeconds=phaseAvg;
+  const caseEta=fmtDur(caseEtaSeconds);
 
   const totalCasesInPhase=diag.caseTotals[phase]||0;
   const doneCasesInPhase=diag.casesPerPhase[phase]||phaseTimes.length;
   const remainingPhaseCases=totalCasesInPhase?Math.max(0,totalCasesInPhase-doneCasesInPhase):null;
-  const phaseEta=remainingPhaseCases!=null?fmtDur(remainingPhaseCases*phaseAvg):'—';
+  const phaseEtaSeconds=remainingPhaseCases!=null?remainingPhaseCases*phaseAvg:null;
+  const phaseEta=phaseEtaSeconds!=null?fmtDur(phaseEtaSeconds):'—';
 
-  let runEta='—';
+  let runEtaSeconds=null;
   const observedCasesPerEpoch=Object.values(diag.casesPerEpoch).filter(v=>toNum(v)!=null&&v>0);
   const avgCasesPerEpoch=observedCasesPerEpoch.length?mean(observedCasesPerEpoch):Math.max(...Object.values(diag.caseTotals),0);
   const expectedTotalCases=(diag.totalEpochs&&avgCasesPerEpoch)?diag.totalEpochs*avgCasesPerEpoch:null;
   if(expectedTotalCases&&runAvg){
     const remainingCases=Math.max(0,expectedTotalCases-diag.allCaseTimes.length);
-    runEta=remainingCases>0?fmtDur(remainingCases*runAvg):'—';
+    runEtaSeconds=remainingCases*runAvg;
   }
 
-  if(runEta==='—'&&diag.runStartTs&&diag.totalEpochs){
+  if(runEtaSeconds==null&&diag.runStartTs&&diag.totalEpochs){
     const elapsed=(Date.now()-diag.runStartTs)/1000;
     const phaseProgress=(totalCasesInPhase&&doneCasesInPhase)?Math.min(1,doneCasesInPhase/totalCasesInPhase):0;
     const progress=((Math.max(0,diag.currentEpoch-1))+phaseProgress)/diag.totalEpochs;
     if(progress>0&&elapsed>0){
-      runEta=fmtDur(Math.max(0,(elapsed/progress)-elapsed));
+      runEtaSeconds=Math.max(0,(elapsed/progress)-elapsed);
     }
   }
+  const runEta=runEtaSeconds!=null?fmtDur(runEtaSeconds):'—';
 
   const source=phaseTimes.length>=3?phaseTimes:diag.allCaseTimes;
   const spread=stddev(source);
@@ -864,7 +1056,72 @@ function estimateEta(){
   diag.etaConfidence=confidence;
   diag.etaVariance=cv;
 
-  return{run:runEta,phase:phaseEta,case:caseEta,confidence,variance:cv};
+  return{
+    run:runEta,
+    phase:phaseEta,
+    case:caseEta,
+    runSeconds:runEtaSeconds,
+    phaseSeconds:phaseEtaSeconds,
+    caseSeconds:caseEtaSeconds,
+    confidence,
+    variance:cv
+  };
+}
+
+function updateRunConfigFromPayload(payload){
+  if(!payload||typeof payload!=='object')return;
+  const selection=payload.selection_mode||payload.sample_strategy||payload.selectionMode;
+  if(selection)diag.runConfig.selectionMode=String(selection);
+  const acceptThreshold=toNum(payload.mutation_accept_threshold);
+  if(acceptThreshold!=null)diag.runConfig.mutationAcceptThreshold=acceptThreshold;
+  if(payload.event_schema_version!=null)diag.runConfig.eventSchemaVersion=payload.event_schema_version;
+  if(payload.metadata_schema_version!=null)diag.runConfig.metadataSchemaVersion=payload.metadata_schema_version;
+}
+
+function ingestProgressMetrics(metrics){
+  if(!metrics||typeof metrics!=='object')return;
+  const eventsPerMin=toNum(metrics.events_per_min);
+  const emitLatency=toNum(metrics.avg_emit_latency_ms);
+  const writeLatency=toNum(metrics.avg_tracker_write_latency_ms);
+  const streamLag=toNum(metrics.stream_lag_ms);
+  const pushIfChanged=(arr,val)=>{
+    if(val==null)return;
+    const last=arr.length?arr[arr.length-1]:null;
+    if(last!=null&&Math.abs(last-val)<1e-9)return;
+    arr.push(val);
+    cap(arr);
+  };
+  pushIfChanged(trend.eventsPerMin,eventsPerMin);
+  pushIfChanged(trend.emitLatencyMs,emitLatency);
+  pushIfChanged(trend.writeLatencyMs,writeLatency);
+  pushIfChanged(trend.streamLagMs,streamLag);
+  if(eventsPerMin!=null)diag.latestProgressMetrics.events_per_min=eventsPerMin;
+  if(emitLatency!=null)diag.latestProgressMetrics.avg_emit_latency_ms=emitLatency;
+  if(writeLatency!=null)diag.latestProgressMetrics.avg_tracker_write_latency_ms=writeLatency;
+  if(streamLag!=null)diag.latestProgressMetrics.stream_lag_ms=streamLag;
+}
+
+function recordEtaTrend(etas){
+  const runSec=toNum(etas?.runSeconds);
+  const phaseSec=toNum(etas?.phaseSeconds);
+  const caseSec=toNum(etas?.caseSeconds);
+  if(runSec==null&&phaseSec==null&&caseSec==null)return;
+  const now=Date.now();
+  if(now-(diag.lastEtaTrendTs||0)<900)return;
+  const key=[
+    runSec!=null?Math.round(runSec):'n',
+    phaseSec!=null?Math.round(phaseSec):'n',
+    caseSec!=null?Math.round(caseSec):'n',
+  ].join('|');
+  if(key===diag.lastEtaTrendKey&&now-(diag.lastEtaTrendTs||0)<1800)return;
+  diag.lastEtaTrendTs=now;
+  diag.lastEtaTrendKey=key;
+  trend.etaRunSec.push(runSec);
+  trend.etaPhaseSec.push(phaseSec);
+  trend.etaCaseSec.push(caseSec);
+  cap(trend.etaRunSec);
+  cap(trend.etaPhaseSec);
+  cap(trend.etaCaseSec);
 }
 
 /* ─── Warnings ─── */
@@ -1024,6 +1281,18 @@ function renderDiagnostics(){
   $('rh-proj-var').textContent=diag.etaVariance!=null?diag.etaVariance.toFixed(3):'—';
   $('rh-degraded-rate').textContent=`${(degradedRate*100).toFixed(1)}%`;
   $('rh-tool-fails').textContent=avgToolFails.toFixed(2);
+  const progress=diag.latestProgressMetrics||{};
+  const eventsPerMin=toNum(progress.events_per_min);
+  const emitLatency=toNum(progress.avg_emit_latency_ms);
+  const writeLatency=toNum(progress.avg_tracker_write_latency_ms);
+  const streamLag=toNum(progress.stream_lag_ms);
+  $('rh-events-per-min').textContent=eventsPerMin!=null?eventsPerMin.toFixed(2):'—';
+  $('rh-emit-lat').textContent=emitLatency!=null?`${emitLatency.toFixed(2)} ms`:'—';
+  $('rh-write-lat').textContent=writeLatency!=null?`${writeLatency.toFixed(2)} ms`:'—';
+  $('rh-stream-lag').textContent=streamLag!=null?`${streamLag.toFixed(2)} ms`:'—';
+  $('rh-event-schema').textContent=diag.runConfig.eventSchemaVersion||'—';
+  $('rh-meta-schema').textContent=diag.runConfig.metadataSchemaVersion||'—';
+  $('rh-selection-mode').textContent=diag.runConfig.selectionMode||'—';
 
   const latestPrompt=latestPromptSnapshot||{};
   const latestVal=(arr)=>arr.length?arr[arr.length-1]:0;
@@ -1038,7 +1307,20 @@ function renderDiagnostics(){
   $('gd-failed').textContent=(gd?.failedGates||[]).join(', ')||'—';
   $('gd-runtime-ratio').textContent=gd?.meanRatio!=null?gd.meanRatio.toFixed(3):'—';
   $('gd-p90-ratio').textContent=gd?.p90Ratio!=null?gd.p90Ratio.toFixed(3):'—';
+  $('gd-holdout-winrate').textContent=gd?.holdoutWinrate!=null?`${(gd.holdoutWinrate*100).toFixed(1)}%`:'—';
+  $('gd-prompt-delta').textContent=gd?.promptDelta!=null?gd.promptDelta.toFixed(3):'—';
+  const mt=toNum(gd?.mutationAcceptThreshold??diag.runConfig.mutationAcceptThreshold);
+  $('gd-mutation-threshold').textContent=mt!=null?`${mt}/30`:'—';
   $('gd-enabled').textContent=gd?.enabled==null?'—':(gd.enabled?'enabled':'disabled');
+  const rca=diag.latestRcaHighLevel||{};
+  const rcaSel=diag.latestRcaSelection||{};
+  const themeCount=toNum(rca.theme_count??rca.themeCount??(Array.isArray(rca.themes)?rca.themes.length:null));
+  const cohortCount=toNum(rcaSel.case_count??rcaSel.failed_cases);
+  $('rca-theme-count').textContent=themeCount!=null?String(themeCount):'—';
+  $('rca-case-count').textContent=cohortCount!=null?String(cohortCount):'—';
+  $('rca-selection-rule').textContent=rcaSel.rule||rca.selection_rule||'—';
+  $('rca-trigger').textContent=rcaSel.trigger||rca.trigger||'—';
+  $('rca-summary').textContent=rca.summary||'—';
 
   const caseBody=$('case-tbody');
   if(!diag.caseRecords.length){
@@ -1107,7 +1389,7 @@ function renderDiagnostics(){
     gateBody.innerHTML='<tr><td colspan=\"6\" style=\"color:var(--ink3);font-style:italic\">No gate decisions yet.</td></tr>';
   }else{
     gateBody.innerHTML=[...diag.gateDecisions].slice(-40).reverse().map(g=>`<tr>
-      <td>${g.epoch||'—'}</td>
+      <td>${fmtEpochHuman(g.epoch)}</td>
       <td>${esc(g.winner||'—')}</td>
       <td>${esc((g.failedGates||[]).join(', ')||'—')}</td>
       <td>${g.meanRatio!=null?g.meanRatio.toFixed(3):'—'}</td>
@@ -1115,19 +1397,44 @@ function renderDiagnostics(){
       <td>${g.promptDelta!=null?g.promptDelta.toFixed(3):'—'}</td>
     </tr>`).join('');
   }
+
+  const selectionBody=$('selection-tbody');
+  const selectionRows=Array.isArray(diag.selectionDiagnostics)?diag.selectionDiagnostics:[];
+  if(!selectionRows.length){
+    selectionBody.innerHTML='<tr><td colspan=\"7\" style=\"color:var(--ink3);font-style:italic\">No selection diagnostics yet.</td></tr>';
+  }else{
+    selectionBody.innerHTML=selectionRows.map(row=>`<tr>
+      <td>${fmtEpochHuman(diag.selectionEpoch)}</td>
+      <td>${esc(row.case_id||'—')}</td>
+      <td>${esc(row.slot||'—')}</td>
+      <td>${esc(row.reason||'—')}</td>
+      <td>${esc(row.replay_cause||'—')}</td>
+      <td>${esc(row.category||'—')}</td>
+      <td>${esc(row.difficulty||'—')}</td>
+    </tr>`).join('');
+  }
 }
 
 /* ─── Event rendering ─── */
 function eventCls(ev){
+  const explicit=String(ev.severity||ev.level||'').toLowerCase();
+  if(['error','critical','bad'].includes(explicit))return'bad-e';
+  if(['warn','warning'].includes(explicit))return'warn-e';
+  if(['ok','success'].includes(explicit))return'ok-e';
   const t=ev.event_type||'';
-  if(t.includes('error')||t.includes('fail'))return'bad-e';
-  if(t.includes('warn'))return'warn-e';
+  if(t.includes('error')||t.includes('fail')||t.includes('rejected')||t.includes('timeout'))return'bad-e';
+  if(t.includes('warn')||t.includes('stalled'))return'warn-e';
   if(t.includes('complete')||t.includes('accepted'))return'ok-e';
   return'';
 }
 
 function createEventNode(event){
-  const el=document.createElement('article');el.className=`event ${eventCls(event)}`.trim();
+  const sevClass=eventCls(event);
+  const phaseVal=String(event.phase||'').trim();
+  const el=document.createElement('article');el.className=`event ${sevClass}`.trim();
+  el.dataset.severity=sevClass;
+  el.dataset.phase=phaseVal;
+  if(phaseVal)ensureEventPhaseOption(phaseVal);
   const hdr=document.createElement('div');hdr.className='event-header';
   const ts=formatClockTime(event.timestamp??event.timestamp_unix);
   hdr.innerHTML=`<span class="event-title">${esc(event.event_type||'event')}</span><span class="event-meta">${esc(event.phase||'')} ${ts}<span class="event-chevron">▸</span></span>`;
@@ -1145,8 +1452,16 @@ function appendEvent(event){
   chEvents.textContent=`${eventTotal} events`;
   eventBadge.textContent=eventTotal;eventBadge.style.display='inline';
   const el=createEventNode(event);
+  const panel=$('event-panel');
+  const nearBottom=(panel.scrollHeight-panel.scrollTop-panel.clientHeight)<=24;
   eventList.appendChild(el);
-  const panel=$('event-panel');panel.scrollTop=panel.scrollHeight;
+  while(eventList.children.length>MAX_EVENT_ROWS){
+    eventList.removeChild(eventList.firstElementChild);
+  }
+  if((eventSearch.value||'').trim()||eventSeverity.value!=='all'||eventPhase.value!=='all'){
+    applyEventFilters();
+  }
+  if(nearBottom)panel.scrollTop=panel.scrollHeight;
 }
 
 /* ─── Event ingestion ─── */
@@ -1166,6 +1481,12 @@ function ingestEvent(event){
   diag.eventCount++;
   const et=event.event_type||'';
   const p=event.payload||event;
+  if(event.phase)ensureEventPhaseOption(event.phase);
+  if(event.event_schema_version!=null)diag.runConfig.eventSchemaVersion=event.event_schema_version;
+  updateRunConfigFromPayload(p);
+  if(p.selection_stats&&typeof p.selection_stats==='object')updateRunConfigFromPayload(p.selection_stats);
+  ingestProgressMetrics(event.metrics);
+  if(et==='phase_profile_snapshot')ingestProgressMetrics(p);
   if(event.active_call&&typeof event.active_call==='object')diag.activeCall=event.active_call;
   if(p.active_call&&typeof p.active_call==='object')diag.activeCall=p.active_call;
 
@@ -1240,6 +1561,38 @@ function ingestEvent(event){
     }
   }
 
+  if(et==='sample_selected'){
+    if(Array.isArray(p.selection_diagnostics)){
+      diag.selectionDiagnostics=p.selection_diagnostics.slice(0,120);
+      diag.selectionEpoch=event.epoch_current||diag.currentEpoch||null;
+    }
+    updateRunConfigFromPayload(p);
+  }
+
+  if(et==='rca_batch_started'){
+    const rcaSel=p.rca_selection_diagnostics&&typeof p.rca_selection_diagnostics==='object'
+      ?p.rca_selection_diagnostics
+      :{};
+    diag.latestRcaSelection={
+      rule:rcaSel.rule||null,
+      trigger:rcaSel.trigger||null,
+      case_count:toNum(p.failed_cases),
+      fallback_applied:Boolean(rcaSel.fallback_applied),
+      threshold:toNum(rcaSel.threshold),
+      fallback_fraction:toNum(rcaSel.fallback_fraction),
+    };
+  }
+
+  if(et==='rca_high_level_completed'){
+    diag.latestRcaHighLevel={
+      theme_count:toNum(p.theme_count),
+      summary:p.summary||null,
+      themes:Array.isArray(p.themes)?p.themes:[],
+      model_used:p.model_used||null,
+      selection_rule:p.selection_rule||null,
+    };
+  }
+
   if(et==='epoch_completed'){
     const ep=diag.currentEpoch;
     const sa=toNum(p.avg_score_a||p.baseline_avg);
@@ -1299,7 +1652,10 @@ function ingestEvent(event){
   if(et==='candidate_gate_decision'){
     const gates=p.gate_results||{};
     const ratios=gates.ratios||{};
-    const failed=Array.isArray(gates.failed_gates)?gates.failed_gates:[];
+    const failed=Array.isArray(gates.failed_gates)
+      ?gates.failed_gates
+      :(Array.isArray(p.gate_failure_reasons)?p.gate_failure_reasons:[]);
+    const holdoutWinrate=toNum(p.selection_stats?.holdout_winrate??p.holdout_winrate);
     const gateRecord={
       epoch:event.epoch_current||diag.currentEpoch||0,
       winner:p.winner||'baseline',
@@ -1309,7 +1665,12 @@ function ingestEvent(event){
       meanRatio:toNum(ratios.mean_case_time_ratio),
       p90Ratio:toNum(ratios.p90_case_time_ratio),
       promptDelta:toNum(p.prompt_delta_avg_total),
+      holdoutWinrate,
+      mutationAcceptThreshold:toNum(diag.runConfig.mutationAcceptThreshold),
     };
+    if(gateRecord.meanRatio!=null){trend.gateMeanRatio.push(gateRecord.meanRatio);cap(trend.gateMeanRatio);}
+    if(gateRecord.p90Ratio!=null){trend.gateP90Ratio.push(gateRecord.p90Ratio);cap(trend.gateP90Ratio);}
+    if(gateRecord.promptDelta!=null){trend.gatePromptDelta.push(gateRecord.promptDelta);cap(trend.gatePromptDelta);}
     diag.gateDecisions.push(gateRecord);
     if(diag.gateDecisions.length>100)diag.gateDecisions.shift();
     diag.latestGateDecision=gateRecord;
@@ -1329,9 +1690,13 @@ function renderStatus(data){
   if(data.feature_flags&&typeof data.feature_flags.ENABLE_MAX_DETAIL_UI_PANELS==='boolean'){
     enableMaxDetailPanels=data.feature_flags.ENABLE_MAX_DETAIL_UI_PANELS;
     const diagTabBtn=document.querySelector('.tab-btn[data-tab=\"diagnostics\"]');
-    if(diagTabBtn)diagTabBtn.style.display=enableMaxDetailPanels?'':'none';
+    if(diagTabBtn)diagTabBtn.title=enableMaxDetailPanels?'Detailed diagnostics enabled':'Detailed diagnostics flagged off (compat mode)';
   }
   const t=data.tracking;
+  if(t.event_schema_version!=null)diag.runConfig.eventSchemaVersion=t.event_schema_version;
+  if(t.metadata_schema_version!=null)diag.runConfig.metadataSchemaVersion=t.metadata_schema_version;
+  if(t.phase)ensureEventPhaseOption(t.phase);
+  ingestProgressMetrics(t.metrics||{});
   if(t.active_call&&typeof t.active_call==='object')diag.activeCall=t.active_call;
   if(t.stalled_warning_count!=null)diag.stalledWarningCount=toNum(t.stalled_warning_count)||0;
   if(!diag.runStartTs&&t.started_at){
@@ -1367,8 +1732,10 @@ function renderStatus(data){
   progFill.style.width=`${pctVal}%`;
 
   const etas=estimateEta();
+  recordEtaTrend(etas);
   $('kv-run-eta').textContent=etas.run;
   $('kv-phase-eta').textContent=etas.phase;
+  $('kv-case-eta').textContent=etas.case;
   chEta.textContent=etas.run==='—'?'—':`eta ${etas.run} (${(etas.confidence||'low').toUpperCase()})`;
 
   const upd=t.updated_at??t.updated_at_unix??t.timestamp??t.timestamp_unix;
@@ -1466,17 +1833,30 @@ function exportData(){
 function clearAll(){
   eventList.innerHTML='';eventTotal=0;alertCount=0;seenKeys.clear();
   chEvents.textContent='0 events';eventBadge.style.display='none';
+  eventSearch.value='';
+  eventSeverity.value='all';
+  eventPhase.innerHTML='<option value="all">Phase: all</option>';
+  knownEventPhases.clear();
+  knownEventPhases.add('all');
   Object.keys(trend).forEach(k=>{trend[k]=[];});
   diag.phaseTimings={};diag.caseTimes=[];diag.allCaseTimes=[];diag.phaseCaseTimes={};diag.lastEventTs=null;diag.eventCount=0;
   diag.runStartTs=null;diag.epochStartTs=null;diag.phaseStartTs=null;
   diag.currentEpoch=0;diag.totalEpochs=0;diag.currentPhase='';
   diag.casesPerEpoch={};diag.casesPerPhase={};diag.caseTotals={};
   diag.caseRecords=[];diag.toolHealth={};diag.gateDecisions=[];diag.latestGateDecision=null;
+  diag.selectionDiagnostics=[];diag.selectionEpoch=null;diag.latestRcaHighLevel=null;diag.latestRcaSelection=null;
   diag.activeCall=null;diag.stalledWarningCount=0;diag.mutationRejectionBreakdown={};diag.mutationRejectionIssueMatrix={};
-  diag.etaConfidence='low';diag.etaVariance=null;diag.caseByPhaseAndId={phase_a_eval:{},phase_b_eval:{}};
+  diag.etaConfidence='low';diag.etaVariance=null;diag.lastEtaTrendTs=0;diag.lastEtaTrendKey=null;
+  diag.caseByPhaseAndId={phase_a_eval:{},phase_b_eval:{}};
+  diag.latestProgressMetrics={};
+  diag.runConfig={selectionMode:null,mutationAcceptThreshold:null,eventSchemaVersion:null,metadataSchemaVersion:null};
   latestPromptSnapshot=null;
   currentCaseMeta=null;caseStartedAt=null;lastCaseScore=null;
   stopCaseTimer();pdPanel.style.display='none';
+  $('kv-run-eta').textContent='—';
+  $('kv-phase-eta').textContent='—';
+  $('kv-case-eta').textContent='—';
+  chEta.textContent='—';
   refreshAll();
   showToast('Cleared all data','ok');
 }

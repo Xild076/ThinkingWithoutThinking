@@ -136,11 +136,38 @@ def cmd_train(args: argparse.Namespace) -> int:
         holdout_sample_size=args.holdout_sample_size,
         rca_case_budget=args.rca_case_budget,
         mutation_block_budget=args.mutation_block_budget,
+        mutation_accept_threshold=args.mutation_accept_threshold,
+        mutation_tournament_size=args.mutation_tournament_size,
         mutation_retry_enabled=args.mutation_retry_enabled,
         mutation_max_retries=args.mutation_max_retries,
         generalizer_cadence=args.generalizer_cadence,
         generalizer_suspicious_delta_threshold=args.generalizer_suspicious_delta_threshold,
         bootstrap_resamples=args.bootstrap_resamples,
+        rca_threshold=args.rca_threshold,
+        rca_fallback_fraction=args.rca_fallback_fraction,
+        selection_mode=args.selection_mode,
+        runtime_gate_mean_ratio_max=args.runtime_gate_mean_ratio_max,
+        runtime_gate_p90_ratio_max=args.runtime_gate_p90_ratio_max,
+        runtime_gate_abs_mean_increase_max_seconds=args.runtime_gate_abs_mean_increase_max_seconds,
+        stability_gate_tool_failure_delta_max=args.stability_gate_tool_failure_delta_max,
+        stability_gate_degraded_rate_delta_max=args.stability_gate_degraded_rate_delta_max,
+        holdout_winrate_min=args.holdout_winrate_min,
+        quality_gate_min_mean_delta=args.quality_gate_min_mean_delta,
+        quality_gate_min_win_rate=args.quality_gate_min_win_rate,
+        quality_gate_min_p10_delta=args.quality_gate_min_p10_delta,
+        quality_gate_min_worst_case_delta=args.quality_gate_min_worst_case_delta,
+        tail_catastrophic_threshold=args.tail_catastrophic_threshold,
+        tail_max_catastrophic_regressions=args.tail_max_catastrophic_regressions,
+        eval_mode=args.eval_mode,
+        train_eval_min_pairs=args.train_eval_min_pairs,
+        train_eval_max_pairs=args.train_eval_max_pairs,
+        train_eval_checkpoints=args.train_eval_checkpoints,
+        holdout_eval_min_pairs=args.holdout_eval_min_pairs,
+        holdout_eval_max_pairs=args.holdout_eval_max_pairs,
+        holdout_eval_checkpoints=args.holdout_eval_checkpoints,
+        mutation_stage_a_top_k=args.mutation_stage_a_top_k,
+        mutation_precheck_cases=args.mutation_precheck_cases,
+        resource_target_reduction=args.resource_target_reduction,
         holdout_split_ratio=args.holdout_split_ratio,
         random_seed=args.seed,
         thinking_level=args.thinking,
@@ -249,16 +276,48 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--output", type=str, default="data/prompt_suite_generations.json")
     train_p.add_argument("--dataset", type=str, default="data/prompt_train_cases.json")
     train_p.add_argument("--epochs", type=int, default=10)
-    train_p.add_argument("--train-sample-size", type=int, default=6)
+    train_p.add_argument("--train-sample-size", type=int, default=10)
     train_p.add_argument("--sample-size", dest="train_sample_size", type=int, help=argparse.SUPPRESS)
     train_p.add_argument("--holdout-sample-size", type=int, default=6)
     train_p.add_argument("--rca-case-budget", type=int, default=3)
-    train_p.add_argument("--mutation-block-budget", type=int, default=3)
+    train_p.add_argument("--rca-threshold", type=float, default=7.0)
+    train_p.add_argument("--rca-fallback-fraction", type=float, default=0.5)
+    train_p.add_argument("--selection-mode", type=str, default="hybrid_coverage_replay")
+    train_p.add_argument(
+        "--mutation-block-budget",
+        type=int,
+        default=1,
+        help="Deprecated compatibility arg. Ignored when need_fix blocks exist.",
+    )
+    train_p.add_argument("--mutation-accept-threshold", type=int, default=24)
+    train_p.add_argument("--mutation-tournament-size", type=int, default=3)
     train_p.add_argument("--mutation-retry-enabled", action=argparse.BooleanOptionalAction, default=True)
     train_p.add_argument("--mutation-max-retries", type=int, default=3)
     train_p.add_argument("--generalizer-cadence", type=int, default=3)
-    train_p.add_argument("--generalizer-suspicious-delta-threshold", type=int, default=3)
+    train_p.add_argument("--generalizer-suspicious-delta-threshold", type=int, default=5)
     train_p.add_argument("--bootstrap-resamples", type=int, default=1000)
+    train_p.add_argument("--eval-mode", type=str, default="adaptive_sequential")
+    train_p.add_argument("--train-eval-min-pairs", type=int, default=4)
+    train_p.add_argument("--train-eval-max-pairs", type=int, default=10)
+    train_p.add_argument("--train-eval-checkpoints", type=str, default="4,6,8,10")
+    train_p.add_argument("--holdout-eval-min-pairs", type=int, default=4)
+    train_p.add_argument("--holdout-eval-max-pairs", type=int, default=8)
+    train_p.add_argument("--holdout-eval-checkpoints", type=str, default="4,6,8")
+    train_p.add_argument("--quality-gate-min-mean-delta", type=float, default=0.0)
+    train_p.add_argument("--quality-gate-min-win-rate", type=float, default=0.50)
+    train_p.add_argument("--quality-gate-min-p10-delta", type=float, default=-1.25)
+    train_p.add_argument("--quality-gate-min-worst-case-delta", type=float, default=-3.0)
+    train_p.add_argument("--tail-catastrophic-threshold", type=float, default=-3.0)
+    train_p.add_argument("--tail-max-catastrophic-regressions", type=int, default=1)
+    train_p.add_argument("--runtime-gate-mean-ratio-max", type=float, default=1.60)
+    train_p.add_argument("--runtime-gate-p90-ratio-max", type=float, default=1.90)
+    train_p.add_argument("--runtime-gate-abs-mean-increase-max-seconds", type=float, default=180.0)
+    train_p.add_argument("--stability-gate-tool-failure-delta-max", type=float, default=0.90)
+    train_p.add_argument("--stability-gate-degraded-rate-delta-max", type=float, default=0.35)
+    train_p.add_argument("--holdout-winrate-min", type=float, default=0.50)
+    train_p.add_argument("--mutation-stage-a-top-k", type=int, default=4)
+    train_p.add_argument("--mutation-precheck-cases", type=int, default=4)
+    train_p.add_argument("--resource-target-reduction", type=float, default=0.35)
     train_p.add_argument("--holdout-split-ratio", type=float, default=0.2)
     train_p.add_argument("--seed", type=int, default=42)
     train_p.add_argument("--progress-status", type=str, default="data/training_status.json")

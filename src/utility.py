@@ -261,8 +261,6 @@ def _is_non_retryable_error(error_text: str) -> bool:
         "context length",
         "too many tokens",
         "request too large",
-        "tokens per minute",
-        "tpm",
         "json_invalid",
         "unknown model",
         "package is not installed",
@@ -306,7 +304,7 @@ def _request_timeout_seconds(
         base += 8.0
 
     return min(140.0, max(30.0, base))
-
+7
 TEMPERATURE_LIMITS: dict[str, tuple[float, float]] = {
     "gemma": (0.0, 2.0),
     "nemotron": (0.0, 1.0),

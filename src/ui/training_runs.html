@@ -1,257 +1,974 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Training Runs Explorer</title>
-  <style>
-    :root {
-      --bg: #0f1218;
-      --panel: #141a23;
-      --panel-2: #1a2230;
-      --text: #e8edf6;
-      --muted: #9aa6bb;
-      --accent: #6bb8ff;
-      --ok: #44c17c;
-      --bad: #ff7b7b;
-      --warn: #ffcf66;
-      --border: #2a3342;
-    }
-    body {
-      margin: 0;
-      font-family: "Avenir Next", "Segoe UI", sans-serif;
-      background: radial-gradient(circle at top right, #1a2534 0, var(--bg) 40%);
-      color: var(--text);
-    }
-    .wrap {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 20px;
-    }
-    h1, h2 {
-      margin: 0 0 10px 0;
-      letter-spacing: 0.02em;
-    }
-    .muted { color: var(--muted); }
-    .grid {
-      display: grid;
-      grid-template-columns: 1.1fr 1fr;
-      gap: 14px;
-      margin-top: 14px;
-    }
-    .panel {
-      background: linear-gradient(180deg, var(--panel), var(--panel-2));
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 12px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-    th, td {
-      border-bottom: 1px solid var(--border);
-      padding: 8px;
-      text-align: left;
-      vertical-align: top;
-    }
-    tr:hover td {
-      background: rgba(255,255,255,0.03);
-    }
-    button {
-      border: 1px solid #325072;
-      color: #d8ecff;
-      background: #1d3a59;
-      border-radius: 8px;
-      padding: 6px 10px;
-      cursor: pointer;
-      font-size: 12px;
-    }
-    button:hover { background: #24507c; }
-    .pill {
-      display: inline-block;
-      border-radius: 999px;
-      padding: 2px 8px;
-      font-size: 12px;
-      border: 1px solid var(--border);
-      margin-right: 6px;
-    }
-    .ok { color: var(--ok); }
-    .bad { color: var(--bad); }
-    .warn { color: var(--warn); }
-    pre {
-      background: #0e131c;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px;
-      overflow: auto;
-      font-size: 12px;
-      max-height: 360px;
-    }
-    @media (max-width: 980px) {
-      .grid { grid-template-columns: 1fr; }
-    }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Training Runs Explorer</title>
+<style>
+:root {
+  --bg: #fff8ee;
+  --bg-2: #f7ecd9;
+  --ink: #1f2534;
+  --soft: #616a7e;
+  --card: #ffffff;
+  --line: #e8dcc6;
+  --accent: #ca5d1f;
+  --accent-2: #24846d;
+  --ok: #1f7a34;
+  --warn: #bf7e20;
+  --bad: #b74242;
+  --mono: "JetBrains Mono", "Fira Code", Menlo, monospace;
+  --sans: "Space Grotesk", "Avenir Next", "Trebuchet MS", sans-serif;
+  --shadow: 0 10px 28px rgba(37, 50, 71, 0.1);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: var(--sans);
+  color: var(--ink);
+  background:
+    radial-gradient(68rem 34rem at -10% -8%, rgba(202, 93, 31, 0.18), transparent),
+    radial-gradient(60rem 32rem at 102% -5%, rgba(36, 132, 109, 0.16), transparent),
+    linear-gradient(145deg, var(--bg), var(--bg-2));
+}
+.app {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 14px;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+.sidebar {
+  position: sticky;
+  top: 14px;
+  height: fit-content;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+.h1 { margin: 0; font-size: 1.08rem; }
+.muted { color: var(--soft); }
+.small { font-size: 0.74rem; }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f9f2e3;
+  color: var(--ink);
+  font-size: 0.73rem;
+  font-weight: 700;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.input, .select {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 11px;
+  font-size: 0.74rem;
+  background: #fffdf8;
+}
+.table-wrap {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: auto;
+  max-height: min(70vh, 860px);
+  background: #fffdf8;
+}
+table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+th, td { padding: 7px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+th {
+  font-size: 0.66rem;
+  color: var(--soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+  background: #fffdf8;
+  z-index: 1;
+}
+tr:hover td { background: #fff8eb; }
+.pill {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  display: inline-block;
+}
+.pill.ok { color: var(--ok); border-color: rgba(31, 122, 52, 0.35); background: rgba(31, 122, 52, 0.08); }
+.pill.warn { color: var(--warn); border-color: rgba(191, 126, 32, 0.35); background: rgba(191, 126, 32, 0.12); }
+.pill.bad { color: var(--bad); border-color: rgba(183, 66, 66, 0.35); background: rgba(183, 66, 66, 0.1); }
+.pill.na { color: #3d4a63; border-color: rgba(61, 74, 99, 0.35); background: rgba(61, 74, 99, 0.1); }
+.main {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.links { display: flex; gap: 8px; flex-wrap: wrap; }
+.links a {
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 6px 10px;
+  color: var(--soft);
+  background: #fdf7ea;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+.links a:hover { color: var(--accent); border-color: var(--accent); }
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(120px, 1fr));
+  gap: 9px;
+}
+.metric { padding: 10px; }
+.metric .k { font-size: 0.66rem; text-transform: uppercase; color: var(--soft); font-weight: 700; }
+.metric .v { margin-top: 2px; font-family: var(--mono); font-size: 1.03rem; font-weight: 700; }
+.panel { padding: 12px; }
+.panel h2 { margin: 0 0 8px; font-size: 0.9rem; }
+.grid-2 { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.tab {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f9f2e2;
+  color: var(--soft);
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tab.active { color: #fff; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-color: transparent; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  font-size: 0.75rem;
+}
+.kv b { color: var(--soft); }
+.kv span { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.waterfall { display: grid; gap: 8px; }
+.wrow { display: grid; grid-template-columns: 110px 1fr 70px; gap: 8px; align-items: center; font-size: 0.74rem; }
+.wbar {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f2e6d0;
+  height: 10px;
+  overflow: hidden;
+}
+.wbar > div { height: 100%; width: 0; transition: width 220ms ease; }
+.list {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fffdf9;
+  max-height: 360px;
+  overflow: auto;
+  padding: 6px;
+  display: grid;
+  gap: 6px;
+}
+.item {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 10px;
+  background: #fff;
+  padding: 7px;
+}
+.item h4 { margin: 0 0 4px; font-size: 0.75rem; }
+.item p { margin: 0; color: var(--soft); font-size: 0.72rem; }
+.code {
+  border: 1px solid #1a1f2d;
+  background: #1f2432;
+  color: #cad4ee;
+  border-radius: 12px;
+  font-family: var(--mono);
+  font-size: 0.67rem;
+  padding: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+.chart-box {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fffdf8;
+  padding: 8px;
+}
+.chart-title {
+  margin: 0 0 6px;
+  font-size: 0.69rem;
+  color: var(--soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.sparkline {
+  width: 100%;
+  min-height: 120px;
+  display: block;
+}
+.synthetic {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(36, 132, 109, 0.06),
+    rgba(36, 132, 109, 0.06) 7px,
+    rgba(202, 93, 31, 0.06) 7px,
+    rgba(202, 93, 31, 0.06) 14px
+  );
+}
+.compare-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.compare-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fffdf8;
+  padding: 9px;
+}
+.compare-card h3 { margin: 0 0 5px; font-size: 0.74rem; }
+.compare-card p { margin: 0; font-family: var(--mono); font-size: 0.7rem; color: var(--soft); }
+.delta-pos { color: var(--ok); }
+.delta-neg { color: var(--bad); }
+@media (max-width: 1360px) {
+  .metrics { grid-template-columns: repeat(4, minmax(120px, 1fr)); }
+}
+@media (max-width: 1200px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar { position: static; }
+  .grid-2 { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .metrics { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+  .compare-grid { grid-template-columns: 1fr; }
+}
+</style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>Training Runs Explorer</h1>
-    <p class="muted">Trace causality across runs: sampling -> RCA -> mutation -> gates -> acceptance.</p>
-
-    <div class="panel">
-      <h2>Runs</h2>
-      <p class="muted" id="runs-meta">Loading...</p>
-      <table id="runs-table">
-        <thead>
-          <tr>
-            <th>Run ID</th>
-            <th>Epochs</th>
-            <th>Latest Winner</th>
-            <th>Latest Delta</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-
-    <div class="grid">
-      <div class="panel">
-        <h2>Run Summary</h2>
-        <div id="run-summary" class="muted">Select a run.</div>
+  <div class="app">
+    <aside class="card sidebar">
+      <h1 class="h1">Run Catalog</h1>
+      <div class="muted small">Browse runs, compare behavior, and drill into epoch-level RCA, mutation, and gate outcomes.</div>
+      <div class="row">
+        <input id="runSearch" class="input" placeholder="Search run id..." style="flex:1;min-width:180px" />
+        <select id="runSort" class="select">
+          <option value="recent">Sort: recent</option>
+          <option value="delta">Sort: delta</option>
+          <option value="epochs">Sort: epochs</option>
+        </select>
       </div>
-      <div class="panel">
-        <h2>Epochs</h2>
-        <table id="epochs-table">
+      <div class="row">
+        <button class="btn" id="refreshRuns">Refresh Runs</button>
+        <button class="btn" id="clearCompare">Clear Compare</button>
+      </div>
+      <div class="muted small" id="runsMeta">Loading...</div>
+
+      <div class="table-wrap">
+        <table>
           <thead>
             <tr>
-              <th>Epoch</th>
+              <th>Run</th>
+              <th>Epochs</th>
               <th>Winner</th>
-              <th>Δ</th>
-              <th>Gate Failures</th>
-              <th>Cases</th>
+              <th>Delta</th>
+              <th>Open</th>
+              <th>Cmp</th>
             </tr>
           </thead>
-          <tbody></tbody>
+          <tbody id="runsBody"></tbody>
         </table>
       </div>
-    </div>
+    </aside>
 
-    <div class="panel" style="margin-top: 14px;">
-      <h2>Epoch Case Deltas</h2>
-      <div id="cases-meta" class="muted">Select an epoch.</div>
-      <pre id="cases-json">No epoch selected.</pre>
-    </div>
+    <main class="main">
+      <div class="header">
+        <h1 class="h1">Training Runs Explorer</h1>
+        <div class="links">
+          <a href="/training">Live Monitor</a>
+          <a href="/">Pipeline UI</a>
+        </div>
+      </div>
+
+      <section class="metrics" id="summaryMetrics"></section>
+
+      <section class="card panel">
+        <h2>Run Overview</h2>
+        <div class="grid-2">
+          <div class="kv" id="summaryKv"></div>
+          <div>
+            <div class="row" style="margin-bottom:8px">
+              <span class="pill" id="compareA">A: n/a</span>
+              <span class="pill" id="compareB">B: n/a</span>
+            </div>
+            <div class="row" id="runProvenance" style="margin-bottom:8px"></div>
+            <div class="code" id="compareBox">Select runs A and B to compare.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card panel">
+        <div class="tabs" id="tabs"></div>
+        <div id="panel-epochs" class="tab-panel active" style="margin-top:10px">
+          <div class="chart-box" style="margin-bottom:10px">
+            <div class="chart-title">Epoch Delta Timeline</div>
+            <svg id="epochTimeline" class="sparkline" viewBox="0 0 900 120" preserveAspectRatio="none"></svg>
+          </div>
+          <div class="table-wrap" style="max-height:44vh">
+            <table>
+              <thead>
+                <tr>
+                  <th>Epoch</th>
+                  <th>Winner</th>
+                  <th>Delta</th>
+                  <th>Holdout Winrate</th>
+                  <th>Gate Failures</th>
+                  <th>Changed Blocks</th>
+                  <th>Open</th>
+                </tr>
+              </thead>
+              <tbody id="epochsBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="panel-gates" class="tab-panel" style="margin-top:10px">
+          <h2>Gate Waterfall</h2>
+          <div class="waterfall" id="gateWaterfall"></div>
+          <h2 style="margin-top:10px">Gate Timeline JSON</h2>
+          <div class="code" id="gateJson">No epoch selected.</div>
+        </div>
+
+        <div id="panel-rca" class="tab-panel" style="margin-top:10px">
+          <h2>High-Level RCA Themes</h2>
+          <div class="list" id="themesList"></div>
+        </div>
+
+        <div id="panel-mutations" class="tab-panel" style="margin-top:10px">
+          <h2>Mutation Decisions</h2>
+          <div class="list" id="mutationList"></div>
+        </div>
+
+        <div id="panel-selection" class="tab-panel" style="margin-top:10px">
+          <h2>Selection Summary</h2>
+          <div class="kv" id="selectionKv"></div>
+          <h2 style="margin-top:10px">Selection Diagnostics JSON</h2>
+          <div class="code" id="selectionDiag">No epoch selected.</div>
+        </div>
+
+        <div id="panel-cases" class="tab-panel" style="margin-top:10px">
+          <h2>Case Delta Pairs</h2>
+          <div class="chart-box" style="margin-bottom:10px">
+            <div class="chart-title">Case Delta Distribution</div>
+            <svg id="caseDeltaChart" class="sparkline" viewBox="0 0 900 120" preserveAspectRatio="none"></svg>
+          </div>
+          <div class="code" id="casePairs">No epoch selected.</div>
+        </div>
+
+        <div id="panel-compare" class="tab-panel" style="margin-top:10px">
+          <h2>Compare Summary</h2>
+          <div class="compare-grid" id="compareGrid"></div>
+        </div>
+      </section>
+    </main>
   </div>
 
-  <script>
-    const runsTbody = document.querySelector('#runs-table tbody');
-    const runsMeta = document.getElementById('runs-meta');
-    const runSummary = document.getElementById('run-summary');
-    const epochsTbody = document.querySelector('#epochs-table tbody');
-    const casesMeta = document.getElementById('cases-meta');
-    const casesJson = document.getElementById('cases-json');
+<script>
+(() => {
+  const V3_BASE = '/training/v3';
+  const TABS = [
+    ['epochs', 'Epochs'],
+    ['gates', 'Gates'],
+    ['rca', 'RCA'],
+    ['mutations', 'Mutations'],
+    ['selection', 'Selection'],
+    ['cases', 'Cases'],
+    ['compare', 'Compare'],
+  ];
 
-    let currentRunId = null;
+  const el = {
+    runSearch: document.getElementById('runSearch'),
+    runSort: document.getElementById('runSort'),
+    refreshRuns: document.getElementById('refreshRuns'),
+    clearCompare: document.getElementById('clearCompare'),
+    runsMeta: document.getElementById('runsMeta'),
+    runsBody: document.getElementById('runsBody'),
+    summaryMetrics: document.getElementById('summaryMetrics'),
+    summaryKv: document.getElementById('summaryKv'),
+    compareA: document.getElementById('compareA'),
+    compareB: document.getElementById('compareB'),
+    compareBox: document.getElementById('compareBox'),
+    runProvenance: document.getElementById('runProvenance'),
+    tabs: document.getElementById('tabs'),
+    epochsBody: document.getElementById('epochsBody'),
+    epochTimeline: document.getElementById('epochTimeline'),
+    gateWaterfall: document.getElementById('gateWaterfall'),
+    gateJson: document.getElementById('gateJson'),
+    themesList: document.getElementById('themesList'),
+    mutationList: document.getElementById('mutationList'),
+    selectionKv: document.getElementById('selectionKv'),
+    selectionDiag: document.getElementById('selectionDiag'),
+    casePairs: document.getElementById('casePairs'),
+    caseDeltaChart: document.getElementById('caseDeltaChart'),
+    compareGrid: document.getElementById('compareGrid'),
+  };
 
-    function fmtNumber(value, digits = 3) {
-      if (value === null || value === undefined || Number.isNaN(Number(value))) return 'n/a';
-      return Number(value).toFixed(digits);
-    }
+  const state = {
+    runs: [],
+    filteredRuns: [],
+    activeRunId: null,
+    activeEpoch: null,
+    activeEpochIndex: null,
+    compareA: null,
+    compareB: null,
+    activeTab: 'epochs',
+    epochsByRun: new Map(),
+    usingV3: true,
+  };
 
-    function winnerClass(winner) {
-      if (winner === 'candidate') return 'ok';
-      if (winner === 'baseline') return 'bad';
-      return 'warn';
-    }
+  const fetchJSON = async (url) => {
+    const res = await fetch(url, { cache: 'no-store' });
+    return res.json();
+  };
 
-    async function fetchJSON(url) {
-      const res = await fetch(url);
-      return await res.json();
-    }
+  const fetchCompat = async (v3Url, legacyUrl, adapter = null) => {
+    try {
+      const v3 = await fetchJSON(v3Url);
+      if (v3 && v3.status !== 'error') return { payload: v3, usingV3: true };
+    } catch (_) {}
+    if (!legacyUrl) return { payload: null, usingV3: false };
+    const legacy = await fetchJSON(legacyUrl);
+    return { payload: adapter ? adapter(legacy) : legacy, usingV3: false };
+  };
 
-    async function loadRuns() {
-      const payload = await fetchJSON('/training/runs');
-      const runs = payload.runs || [];
-      runsMeta.textContent = `${runs.length} runs found`;
-      runsTbody.innerHTML = '';
-      for (const run of runs) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td><code>${run.run_id}</code></td>
-          <td>${run.epochs_count}</td>
-          <td><span class="pill ${winnerClass(run.latest_winner)}">${run.latest_winner || 'n/a'}</span></td>
-          <td>${fmtNumber(run.latest_improvement_delta)}</td>
-          <td><button data-run="${run.run_id}">Open</button></td>
-        `;
-        runsTbody.appendChild(tr);
-      }
-      runsTbody.querySelectorAll('button[data-run]').forEach((btn) => {
-        btn.addEventListener('click', () => loadRun(btn.getAttribute('data-run')));
+  const fmt = (value, digits = 3) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toFixed(digits) : 'n/a';
+  };
+
+  const gateState = (value) => {
+    if (value === true) return 'pass';
+    if (value === false) return 'fail';
+    return 'not_applicable';
+  };
+
+  const gateClass = (stateName) => {
+    if (stateName === 'pass') return 'ok';
+    if (stateName === 'fail') return 'bad';
+    return 'na';
+  };
+
+  const clsWinner = (winner) => {
+    if (winner === 'candidate') return 'ok';
+    if (winner === 'baseline') return 'bad';
+    return 'na';
+  };
+
+  const renderTabs = () => {
+    el.tabs.innerHTML = TABS.map(([id, label]) => `<button class="tab ${state.activeTab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`).join('');
+    document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.remove('active'));
+    const activePanel = document.getElementById(`panel-${state.activeTab}`);
+    if (activePanel) activePanel.classList.add('active');
+    el.tabs.querySelectorAll('button[data-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.activeTab = btn.dataset.tab;
+        renderTabs();
       });
-      if (runs.length) {
-        loadRun(runs[0].run_id);
-      }
-    }
-
-    async function loadRun(runId) {
-      currentRunId = runId;
-      const [summaryPayload, epochsPayload] = await Promise.all([
-        fetchJSON(`/training/runs/${runId}/summary`),
-        fetchJSON(`/training/runs/${runId}/epochs`),
-      ]);
-
-      if (summaryPayload.status !== 'ok') {
-        runSummary.textContent = summaryPayload.message || 'Failed to load summary.';
-        return;
-      }
-
-      runSummary.innerHTML = `
-        <p><span class="pill">Run</span> <code>${summaryPayload.run_id}</code></p>
-        <p><span class="pill">Epochs</span> ${summaryPayload.epochs_count}</p>
-        <p><span class="pill">Accepted Epochs</span> ${summaryPayload.accepted_epochs}</p>
-        <p><span class="pill">Improved Epochs</span> ${summaryPayload.improved_epochs}</p>
-        <p><span class="pill">Net Delta</span> ${fmtNumber(summaryPayload.net_improvement_delta)}</p>
-        <p><span class="pill">Latest Winner</span> <span class="${winnerClass(summaryPayload.latest_winner)}">${summaryPayload.latest_winner}</span></p>
-        <p class="muted">Events archive: <code>${summaryPayload.events_archive_path || 'n/a'}</code></p>
-      `;
-
-      epochsTbody.innerHTML = '';
-      const epochs = epochsPayload.epochs || [];
-      for (const epochRow of epochs) {
-        const failures = (epochRow.candidate_gate_failure_reasons || []).join(', ') || 'none';
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${epochRow.epoch}</td>
-          <td><span class="pill ${winnerClass(epochRow.winner)}">${epochRow.winner}</span></td>
-          <td>${fmtNumber(epochRow.improvement_delta)}</td>
-          <td>${failures}</td>
-          <td><button data-epoch="${epochRow.epoch}">Cases</button></td>
-        `;
-        epochsTbody.appendChild(tr);
-      }
-
-      epochsTbody.querySelectorAll('button[data-epoch]').forEach((btn) => {
-        btn.addEventListener('click', () => loadEpochCases(runId, btn.getAttribute('data-epoch')));
-      });
-    }
-
-    async function loadEpochCases(runId, epoch) {
-      const payload = await fetchJSON(`/training/runs/${runId}/epoch/${epoch}/cases`);
-      if (payload.status !== 'ok') {
-        casesMeta.textContent = payload.message || 'Failed to load cases.';
-        return;
-      }
-      const deltas = (payload.cases || []).map((item) => Number(item.delta || 0));
-      const meanDelta = deltas.length ? deltas.reduce((a, b) => a + b, 0) / deltas.length : 0;
-      casesMeta.textContent = `Run ${runId} | Epoch ${epoch} | paired cases: ${payload.pair_count} | mean delta: ${fmtNumber(meanDelta)}`;
-      casesJson.textContent = JSON.stringify(payload.cases, null, 2);
-    }
-
-    loadRuns().catch((err) => {
-      runsMeta.textContent = `Failed to load runs: ${err}`;
     });
-  </script>
+  };
+
+  const adaptRunsLegacy = (payload) => {
+    const runs = Array.isArray(payload.runs) ? payload.runs : [];
+    return {
+      status: payload.status || 'ok',
+      schema_version: '3.0',
+      runs: runs.map((run) => ({
+        schema_version: '3.0',
+        run_id: run.run_id,
+        epoch_count: Number(run.epochs_count || 0),
+        latest_winner: run.latest_winner,
+        latest_truth_state: 'legacy_inferred',
+        start_timestamp: run.start_timestamp,
+        end_timestamp: run.end_timestamp,
+        net_improvement_delta: Number(run.latest_improvement_delta || 0),
+        data_quality_flags: ['legacy_inferred'],
+      })),
+      runs_count: runs.length,
+    };
+  };
+
+  const adaptSummaryLegacy = (payload) => ({
+    status: payload.status || 'ok',
+    schema_version: '3.0',
+    run_id: payload.run_id,
+    epoch_count: Number(payload.epochs_count || 0),
+    improved_epochs: Number(payload.improved_epochs || 0),
+    accepted_epochs: Number(payload.accepted_epochs || 0),
+    net_improvement_delta: Number(payload.net_improvement_delta || 0),
+    latest_epoch_index: Number(payload.latest_epoch || 0),
+    latest_epoch_number: Number(payload.latest_epoch || 0) + 1,
+    latest_winner: payload.latest_winner,
+    latest_gate_states: {},
+    data_quality_flags: ['legacy_inferred'],
+    source_schema_version: String(payload.latest_metadata_schema_version || 'legacy'),
+    latest_event_schema_version: payload.latest_event_schema_version,
+    latest_metadata_schema_version: payload.latest_metadata_schema_version,
+  });
+
+  const adaptEpochsLegacy = (payload) => {
+    const epochs = Array.isArray(payload.epochs) ? payload.epochs : [];
+    return {
+      status: payload.status || 'ok',
+      schema_version: '3.0',
+      run_id: payload.run_id,
+      epochs: epochs.map((row) => {
+        const fail = Array.isArray(row.candidate_gate_failure_reasons) ? row.candidate_gate_failure_reasons : [];
+        const gates = (row.candidate_gate_results || {}).gates || {};
+        const holdout = ((row.selection_stats || {}).holdout_confirmation) || null;
+        const noChanges = fail.includes('no_candidate_changes');
+        return {
+          schema_version: '3.0',
+          epoch_index: Number(row.epoch || 0),
+          epoch_number: Number(row.epoch || 0) + 1,
+          candidate_exists: !noChanges,
+          evaluation_mode: noChanges ? 'skipped_no_changes' : 'evaluated',
+          truth_state: noChanges ? 'synthetic' : 'legacy_inferred',
+          legacy_inferred: true,
+          data_quality_flags: [noChanges ? 'synthetic' : 'partial', 'legacy_inferred'],
+          winner: row.winner,
+          scores: {
+            avg_score_a: row.avg_score_a,
+            avg_score_b: noChanges ? null : row.avg_score_b,
+            improvement_delta: noChanges ? null : row.improvement_delta,
+            mean_delta: noChanges ? null : row.improvement_delta,
+          },
+          changed_keys: row.changed_keys || [],
+          prompt_scoring_summary: row.prompt_scoring_summary || {},
+          holdout_winrate: row.holdout_winrate,
+          rejection_reason_codes: fail.map((code, idx) => ({ code, rank: idx + 1, severity: 'medium', legacy_inferred: true })),
+          gates: {
+            quality: { gate_state: noChanges ? 'not_applicable' : gateState((gates.quality_gate || {}).passed), payload: gates.quality_gate || null },
+            runtime: { gate_state: noChanges ? 'not_applicable' : gateState((gates.runtime_gate || {}).passed), payload: gates.runtime_gate || null },
+            stability: { gate_state: noChanges ? 'not_applicable' : gateState((gates.stability_gate || {}).passed), payload: gates.stability_gate || null },
+            tail_risk: { gate_state: noChanges ? 'not_applicable' : gateState((gates.tail_risk_gate || {}).passed), payload: gates.tail_risk_gate || null },
+            holdout: { gate_state: holdout ? gateState(holdout.passed) : 'not_applicable', payload: holdout },
+          },
+        };
+      }),
+      epochs_count: epochs.length,
+    };
+  };
+
+  const applyRunFilters = () => {
+    const q = String(el.runSearch.value || '').trim().toLowerCase();
+    const mode = el.runSort.value || 'recent';
+
+    let rows = [...state.runs];
+    if (q) {
+      rows = rows.filter((r) => String(r.run_id || '').toLowerCase().includes(q));
+    }
+
+    if (mode === 'delta') {
+      rows.sort((a, b) => Number(b.net_improvement_delta || 0) - Number(a.net_improvement_delta || 0));
+    } else if (mode === 'epochs') {
+      rows.sort((a, b) => Number(b.epoch_count || 0) - Number(a.epoch_count || 0));
+    } else {
+      rows.sort((a, b) => Number(b.end_timestamp || 0) - Number(a.end_timestamp || 0));
+    }
+
+    state.filteredRuns = rows;
+  };
+
+  const renderRuns = () => {
+    applyRunFilters();
+    el.runsMeta.textContent = `${state.filteredRuns.length} run(s) visible`;
+
+    el.runsBody.innerHTML = state.filteredRuns.map((run) => {
+      const active = run.run_id === state.activeRunId ? 'active' : '';
+      return `<tr>
+        <td><code>${String(run.run_id || '').slice(0, 10)}...</code></td>
+        <td>${run.epoch_count || 0}</td>
+        <td><span class="pill ${clsWinner(run.latest_winner)}">${run.latest_winner || 'n/a'}</span></td>
+        <td>${fmt(run.net_improvement_delta, 3)}</td>
+        <td><button class="btn ${active}" data-open="${run.run_id}">Open</button></td>
+        <td><button class="btn" data-compare="${run.run_id}">Toggle</button></td>
+      </tr>`;
+    }).join('');
+
+    el.runsBody.querySelectorAll('button[data-open]').forEach((btn) => {
+      btn.addEventListener('click', () => loadRun(btn.dataset.open));
+    });
+    el.runsBody.querySelectorAll('button[data-compare]').forEach((btn) => {
+      btn.addEventListener('click', () => toggleCompare(btn.dataset.compare));
+    });
+  };
+
+  const renderComparePills = () => {
+    el.compareA.textContent = `A: ${state.compareA ? String(state.compareA).slice(0, 8) + '...' : 'n/a'}`;
+    el.compareB.textContent = `B: ${state.compareB ? String(state.compareB).slice(0, 8) + '...' : 'n/a'}`;
+  };
+
+  const toggleCompare = (runId) => {
+    if (state.compareA === runId) state.compareA = null;
+    else if (state.compareB === runId) state.compareB = null;
+    else if (!state.compareA) state.compareA = runId;
+    else if (!state.compareB) state.compareB = runId;
+    else { state.compareA = runId; state.compareB = null; }
+
+    renderComparePills();
+    renderCompareDetails();
+  };
+
+  const renderSummaryMetrics = (summary) => {
+    const metrics = [
+      ['Epochs', summary.epoch_count],
+      ['Improved Epochs', summary.improved_epochs],
+      ['Accepted Epochs', summary.accepted_epochs],
+      ['Net Delta', fmt(summary.net_improvement_delta, 3)],
+      ['Latest Winner', summary.latest_winner || 'n/a'],
+      ['Latest Epoch', summary.latest_epoch_number || 'n/a'],
+      ['Truth State', summary.latest_truth_state || 'n/a'],
+      ['Schema', summary.source_schema_version || summary.schema_version || 'n/a'],
+    ];
+    el.summaryMetrics.innerHTML = metrics.map(([k, v]) => `<article class="card metric"><div class="k">${k}</div><div class="v">${v}</div></article>`).join('');
+  };
+
+  const renderSummaryKv = (summary) => {
+    const rows = [
+      ['run_id', summary.run_id],
+      ['epoch_count', summary.epoch_count],
+      ['improved_epochs', summary.improved_epochs],
+      ['accepted_epochs', summary.accepted_epochs],
+      ['net_improvement_delta', fmt(summary.net_improvement_delta, 3)],
+      ['latest_winner', summary.latest_winner || 'n/a'],
+      ['latest_epoch_number', summary.latest_epoch_number ?? 'n/a'],
+      ['latest_epoch_index', summary.latest_epoch_index ?? 'n/a'],
+      ['latest_gate_states', JSON.stringify(summary.latest_gate_states || {})],
+      ['data_quality_flags', JSON.stringify(summary.data_quality_flags || [])],
+    ];
+    el.summaryKv.innerHTML = rows.map(([k, v]) => `<b>${k}</b><span title="${String(v)}">${String(v)}</span>`).join('');
+    const flags = Array.isArray(summary.data_quality_flags) ? summary.data_quality_flags : [];
+    el.runProvenance.innerHTML = [
+      `<span class="pill ${state.usingV3 ? 'ok' : 'warn'}">${state.usingV3 ? 'v3 API' : 'legacy fallback'}</span>`,
+      `<span class="pill na">schema=${summary.source_schema_version || summary.schema_version || 'legacy'}</span>`,
+      `<span class="pill na">flags=${flags.join('|') || 'none'}</span>`,
+    ].join('');
+  };
+
+  const drawEpochTimeline = (rows) => {
+    const svg = el.epochTimeline;
+    if (!svg) return;
+    if (!rows.length) {
+      svg.innerHTML = '';
+      return;
+    }
+    const values = rows.map((row) => Number((row.scores || {}).improvement_delta));
+    const finiteValues = values.filter((value) => Number.isFinite(value));
+    if (!finiteValues.length) {
+      svg.innerHTML = '';
+      return;
+    }
+    const minV = Math.min(...finiteValues, 0);
+    const maxV = Math.max(...finiteValues, 0);
+    const span = Math.max(0.001, maxV - minV);
+    const toX = (idx) => (idx / Math.max(1, rows.length - 1)) * 900;
+    const toY = (value) => 110 - (((value - minV) / span) * 100);
+    const points = finiteValues.map((value, idx) => `${toX(idx)},${toY(value)}`).join(' ');
+    const zeroY = toY(0);
+    svg.innerHTML = `
+      <line x1="0" y1="${zeroY}" x2="900" y2="${zeroY}" stroke="#d8cab0" stroke-width="1" />
+      <polyline fill="none" stroke="#24846d" stroke-width="2.5" points="${points}" />
+      ${finiteValues.map((value, idx) => {
+        const fill = value >= 0 ? '#24846d' : '#b74242';
+        return `<circle cx="${toX(idx)}" cy="${toY(value)}" r="3.2" fill="${fill}" />`;
+      }).join('')}
+    `;
+  };
+
+  const renderEpochs = (rows) => {
+    el.epochsBody.innerHTML = rows.map((r) => {
+      const reasonCodes = Array.isArray(r.rejection_reason_codes) ? r.rejection_reason_codes : [];
+      const fail = reasonCodes.map((item) => item.code).join(', ') || 'none';
+      const changed = Number((r.prompt_scoring_summary || {}).changed_blocks || 0);
+      const holdout = r.holdout_winrate != null ? fmt(r.holdout_winrate, 2) : 'n/a';
+      const rowClass = (r.candidate_exists === false || r.truth_state === 'synthetic') ? 'synthetic' : '';
+      return `<tr>
+        <td>${r.epoch_number}</td>
+        <td><span class="pill ${clsWinner(r.winner)}">${r.winner || 'n/a'}</span></td>
+        <td class="${rowClass}">${fmt((r.scores || {}).improvement_delta, 3)}</td>
+        <td>${holdout}</td>
+        <td title="${fail}">${fail}</td>
+        <td>${changed}</td>
+        <td><button class="btn" data-epoch-number="${r.epoch_number}" data-epoch-index="${r.epoch_index}">Details</button></td>
+      </tr>`;
+    }).join('');
+
+    el.epochsBody.querySelectorAll('button[data-epoch-number]').forEach((btn) => {
+      btn.addEventListener('click', () => loadEpochDetails(state.activeRunId, Number(btn.dataset.epochNumber), Number(btn.dataset.epochIndex)));
+    });
+    drawEpochTimeline(rows);
+  };
+
+  const normalizedGates = (payload) => {
+    if (payload && payload.gates) return payload.gates;
+    const gateResults = (payload || {}).candidate_gate_results || {};
+    const gates = gateResults.gates || {};
+    const holdout = payload ? payload.holdout_confirmation : null;
+    return {
+      quality: { gate_state: gateState((gates.quality_gate || {}).passed), payload: gates.quality_gate || null },
+      runtime: { gate_state: gateState((gates.runtime_gate || {}).passed), payload: gates.runtime_gate || null },
+      stability: { gate_state: gateState((gates.stability_gate || {}).passed), payload: gates.stability_gate || null },
+      tail_risk: { gate_state: gateState((gates.tail_risk_gate || {}).passed), payload: gates.tail_risk_gate || null },
+      holdout: { gate_state: holdout ? gateState(holdout.passed) : 'not_applicable', payload: holdout || null },
+    };
+  };
+
+  const renderGateWaterfall = (payload) => {
+    const gates = normalizedGates(payload);
+    const items = [
+      ['quality', gates.quality],
+      ['runtime', gates.runtime],
+      ['stability', gates.stability],
+      ['tail_risk', gates.tail_risk],
+      ['holdout', gates.holdout],
+    ];
+
+    el.gateWaterfall.innerHTML = items.map(([name, gate]) => {
+      const stateName = (gate || {}).gate_state || 'not_applicable';
+      const width = stateName === 'pass' ? 100 : (stateName === 'fail' ? 45 : 20);
+      const color = stateName === 'pass'
+        ? 'linear-gradient(90deg,#2b8f46,#24846d)'
+        : (stateName === 'fail'
+          ? 'linear-gradient(90deg,#b74242,#bf7e20)'
+          : 'linear-gradient(90deg,#5c6a83,#7d8ca8)');
+      const meta = gate && gate.payload && gate.payload.rule ? gate.payload.rule : 'n/a';
+      return `<div class="wrow"><b>${name}</b><div class="wbar"><div style="width:${width}%;background:${color}"></div></div><span class="pill ${gateClass(stateName)}" title="${meta}">${stateName}</span></div>`;
+    }).join('');
+  };
+
+  const renderThemes = (payload) => {
+    const themes = payload.themes || [];
+    el.themesList.innerHTML = themes.length ? themes.map((t) => {
+      const blocks = (t.implicated_blocks || []).join(', ') || 'n/a';
+      return `<article class="item"><h4>${t.theme_id || 'theme'} | sev ${t.severity ?? 'n/a'}</h4><p>${t.description || ''}</p><p style="margin-top:4px"><b>blocks:</b> ${blocks}</p></article>`;
+    }).join('') : '<div class="muted small">No RCA themes for this epoch.</div>';
+  };
+
+  const renderMutations = (payload) => {
+    const decisions = payload.decisions || [];
+    el.mutationList.innerHTML = decisions.length ? decisions.slice(0, 140).map((m) => {
+      const decision = String(m.decision_reason || 'n/a');
+      const cls = decision.includes('accepted') ? 'ok' : (decision.includes('contract') || decision.includes('placeholder') ? 'bad' : 'warn');
+      return `<article class="item"><h4>${m.block_id || 'block'} <span class="pill ${cls}" style="margin-left:6px">${decision}</span></h4><p>accepted=${Boolean(m.accepted)} | candidate_total=${m.candidate_total ?? 'n/a'} | baseline_total=${m.baseline_total ?? 'n/a'} | threshold=${payload.mutation_accept_threshold ?? 'n/a'}</p></article>`;
+    }).join('') : '<div class="muted small">No mutation decisions for this epoch.</div>';
+  };
+
+  const renderSelection = (payload) => {
+    const stats = payload.selection_stats || {};
+    const rca = payload.rca_selection_diagnostics || stats.rca_selection_diagnostics || {};
+    const diag = payload.selection_diagnostics || [];
+    const slots = diag.reduce((acc, d) => {
+      const slot = String(d.slot || 'unknown');
+      acc[slot] = (acc[slot] || 0) + 1;
+      return acc;
+    }, {});
+
+    const rows = [
+      ['selection_mode', stats.selection_mode || 'n/a'],
+      ['coverage_slots', slots.coverage || 0],
+      ['replay_slots', slots.replay || 0],
+      ['exploration_slots', slots.exploration || 0],
+      ['rca_rule', rca.rule || 'n/a'],
+      ['rca_threshold', rca.threshold ?? 'n/a'],
+      ['fallback_fraction', rca.fallback_fraction ?? 'n/a'],
+      ['holdout_winrate', stats.holdout_winrate != null ? fmt(stats.holdout_winrate, 3) : 'n/a'],
+      ['evaluation_mode', payload.evaluation_mode || 'n/a'],
+      ['truth_state', payload.truth_state || 'n/a'],
+    ];
+    el.selectionKv.innerHTML = rows.map(([k, v]) => `<b>${k}</b><span>${v}</span>`).join('');
+    el.selectionDiag.textContent = JSON.stringify(payload, null, 2);
+  };
+
+  const drawCaseDeltaChart = (rows) => {
+    const svg = el.caseDeltaChart;
+    if (!svg) return;
+    if (!rows.length) {
+      svg.innerHTML = '';
+      return;
+    }
+    const values = rows.map((row) => Number(row.delta || 0));
+    const minV = Math.min(...values, 0);
+    const maxV = Math.max(...values, 0);
+    const span = Math.max(0.001, maxV - minV);
+    const barW = Math.max(4, 900 / Math.max(1, values.length));
+    const toY = (value) => 110 - (((value - minV) / span) * 100);
+    const zeroY = toY(0);
+    svg.innerHTML = `
+      <line x1="0" y1="${zeroY}" x2="900" y2="${zeroY}" stroke="#d8cab0" stroke-width="1" />
+      ${values.map((value, idx) => {
+        const x = idx * barW;
+        const y = toY(Math.max(0, value));
+        const h = Math.abs(toY(value) - zeroY);
+        const top = value >= 0 ? y : zeroY;
+        const fill = value >= 0 ? '#24846d' : '#b74242';
+        return `<rect x="${x}" y="${top}" width="${Math.max(2, barW - 1)}" height="${Math.max(1, h)}" fill="${fill}" opacity="0.86" />`;
+      }).join('')}
+    `;
+  };
+
+  const renderCasePairs = (payload) => {
+    const rows = payload.cases || [];
+    if (payload.candidate_exists === false) {
+      el.casePairs.textContent = JSON.stringify({
+        summary: {
+          pair_count: 0,
+          note: 'candidate_not_evaluated',
+          evaluation_mode: payload.evaluation_mode || 'skipped_no_changes',
+          truth_state: payload.truth_state || 'synthetic',
+        },
+        rows: [],
+      }, null, 2);
+      drawCaseDeltaChart([]);
+      return;
+    }
+    const mean = rows.length ? rows.reduce((a, r) => a + Number(r.delta || 0), 0) / rows.length : 0;
+    const pos = rows.filter((r) => Number(r.delta || 0) > 0).length;
+    const neg = rows.filter((r) => Number(r.delta || 0) < 0).length;
+    const head = { pair_count: payload.pair_count || 0, mean_delta: mean, positives: pos, negatives: neg };
+    el.casePairs.textContent = JSON.stringify({ summary: head, rows }, null, 2);
+    drawCaseDeltaChart(rows);
+  };
+
+  const renderCompareDetails = async () => {
+    if (!state.compareA || !state.compareB) {
+      el.compareBox.textContent = 'Select runs A and B to compare.';
+      el.compareGrid.innerHTML = '<div class="muted small">Select two runs for compare analytics.</div>';
+      return;
+    }
+
+    const [sumA, sumB, epochsA, epochsB] = await Promise.all([
+      fetchCompat(`${V3_BASE}/runs/${state.compareA}/summary`, `/training/runs/${state.compareA}/summary`, adaptSummaryLegacy),
+      fetchCompat(`${V3_BASE}/runs/${state.compareB}/summary`, `/training/runs/${state.compareB}/summary`, adaptSummaryLegacy),
+      fetchCompat(`${V3_BASE}/runs/${state.compareA}/epochs`, `/training/runs/${state.compareA}/epochs`, adaptEpochsLegacy),
+      fetchCompat(`${V3_BASE}/runs/${state.compareB}/epochs`, `/training/runs/${state.compareB}/epochs`, adaptEpochsLegacy),
+    ]);
+
+    const a = sumA.payload || {};
+    const b = sumB.payload || {};
+    const rowsA = (epochsA.payload || {}).epochs || [];
+    const rowsB = (epochsB.payload || {}).epochs || [];
+    const meanA = rowsA.length ? rowsA.reduce((acc, row) => acc + Number((row.scores || {}).improvement_delta || 0), 0) / rowsA.length : 0;
+    const meanB = rowsB.length ? rowsB.reduce((acc, row) => acc + Number((row.scores || {}).improvement_delta || 0), 0) / rowsB.length : 0;
+    const netA = Number(a.net_improvement_delta || 0);
+    const netB = Number(b.net_improvement_delta || 0);
+    const diffNet = netB - netA;
+    const diffMean = meanB - meanA;
+
+    const payload = {
+      run_a: { run_id: state.compareA, epochs: a.epoch_count, accepted: a.accepted_epochs, net_delta: netA, mean_epoch_delta: meanA },
+      run_b: { run_id: state.compareB, epochs: b.epoch_count, accepted: b.accepted_epochs, net_delta: netB, mean_epoch_delta: meanB },
+      diffs: { net_delta_b_minus_a: diffNet, mean_epoch_delta_b_minus_a: diffMean },
+    };
+    el.compareBox.textContent = JSON.stringify(payload, null, 2);
+
+    const clsNet = diffNet >= 0 ? 'delta-pos' : 'delta-neg';
+    const clsMean = diffMean >= 0 ? 'delta-pos' : 'delta-neg';
+    el.compareGrid.innerHTML = `
+      <article class="compare-card"><h3>Run A</h3><p>id=${String(state.compareA).slice(0, 12)}...</p><p>epochs=${a.epoch_count} accepted=${a.accepted_epochs}</p><p>net_delta=${fmt(netA,3)} mean_epoch_delta=${fmt(meanA,3)}</p></article>
+      <article class="compare-card"><h3>Run B</h3><p>id=${String(state.compareB).slice(0, 12)}...</p><p>epochs=${b.epoch_count} accepted=${b.accepted_epochs}</p><p>net_delta=${fmt(netB,3)} mean_epoch_delta=${fmt(meanB,3)}</p></article>
+      <article class="compare-card"><h3>B - A</h3><p class="${clsNet}">net_delta_diff=${fmt(diffNet,3)}</p><p class="${clsMean}">mean_epoch_delta_diff=${fmt(diffMean,3)}</p></article>
+    `;
+  };
+
+  const loadRuns = async () => {
+    const { payload, usingV3 } = await fetchCompat(`${V3_BASE}/runs`, '/training/runs', adaptRunsLegacy);
+    state.usingV3 = Boolean(usingV3);
+    state.runs = (payload && payload.runs) || [];
+    renderRuns();
+    renderComparePills();
+    if (!state.activeRunId && state.filteredRuns.length) {
+      await loadRun(state.filteredRuns[0].run_id);
+    }
+  };
+
+  const loadRun = async (runId) => {
+    state.activeRunId = runId;
+    state.activeEpoch = null;
+    state.activeEpochIndex = null;
+    renderRuns();
+
+    const [summaryRes, epochsRes] = await Promise.all([
+      fetchCompat(`${V3_BASE}/runs/${runId}/summary`, `/training/runs/${runId}/summary`, adaptSummaryLegacy),
+      fetchCompat(`${V3_BASE}/runs/${runId}/epochs`, `/training/runs/${runId}/epochs`, adaptEpochsLegacy),
+    ]);
+    const summary = summaryRes.payload || {};
+    const epochsPayload = epochsRes.payload || {};
+    if (summary.status !== 'ok') return;
+
+    const epochs = epochsPayload.epochs || [];
+    state.epochsByRun.set(runId, epochs);
+    renderSummaryMetrics(summary);
+    renderSummaryKv(summary);
+    renderEpochs(epochs);
+
+    if (epochs.length) {
+      await loadEpochDetails(runId, Number(epochs[0].epoch_number), Number(epochs[0].epoch_index));
+    }
+
+    await renderCompareDetails();
+  };
+
+  const loadEpochDetails = async (runId, epochNumber, epochIndex) => {
+    state.activeEpoch = epochNumber;
+    state.activeEpochIndex = epochIndex;
+    const idx = Number.isFinite(Number(epochIndex)) ? Number(epochIndex) : Math.max(0, Number(epochNumber) - 1);
+    const [themesRes, mutationsRes, selectionRes, gateRes, casesRes] = await Promise.all([
+      fetchCompat(`${V3_BASE}/runs/${runId}/epochs/${epochNumber}/rca`, `/training/runs/${runId}/epoch/${idx}/rca-themes`),
+      fetchCompat(`${V3_BASE}/runs/${runId}/epochs/${epochNumber}/mutations`, `/training/runs/${runId}/epoch/${idx}/mutation-decisions`),
+      fetchCompat(`${V3_BASE}/runs/${runId}/epochs/${epochNumber}/selection`, `/training/runs/${runId}/epoch/${idx}/selection-diagnostics`),
+      fetchCompat(`${V3_BASE}/runs/${runId}/epochs/${epochNumber}/gates`, `/training/runs/${runId}/epoch/${idx}/gate-timeline`),
+      fetchCompat(`${V3_BASE}/runs/${runId}/epochs/${epochNumber}/cases`, `/training/runs/${runId}/epoch/${idx}/cases`),
+    ]);
+    const themes = themesRes.payload || {};
+    const mutations = mutationsRes.payload || {};
+    const selection = selectionRes.payload || {};
+    const gate = gateRes.payload || {};
+    const cases = casesRes.payload || {};
+
+    renderGateWaterfall(gate);
+    el.gateJson.textContent = JSON.stringify(gate, null, 2);
+    renderThemes(themes);
+    renderMutations(mutations);
+    renderSelection(selection);
+    renderCasePairs(cases);
+  };
+
+  el.runSearch.addEventListener('input', renderRuns);
+  el.runSort.addEventListener('change', renderRuns);
+  el.refreshRuns.addEventListener('click', loadRuns);
+  el.clearCompare.addEventListener('click', async () => {
+    state.compareA = null;
+    state.compareB = null;
+    renderComparePills();
+    await renderCompareDetails();
+  });
+
+  renderTabs();
+  loadRuns().catch((err) => {
+    el.runsMeta.textContent = `Failed loading runs: ${String(err)}`;
+  });
+})();
+</script>
 </body>
 </html>
